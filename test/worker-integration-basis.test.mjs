@@ -18,6 +18,8 @@ function fixture(t) {
   fs.writeFileSync(path.join(root, "b.txt"), "dependency B");
   fs.mkdirSync(path.join(root, ".head"));
   fs.writeFileSync(path.join(root, ".head", "p2-sentinel.json"), '{"unchanged":true}\n');
+  fs.mkdirSync(path.join(root, ".lode"));
+  fs.writeFileSync(path.join(root, ".lode", "p2-sentinel.json"), '{"unchanged":true}\n');
   t.after(() => {
     assert.equal(path.dirname(root), parent);
     assert.match(path.basename(root), /^head-integration-basis-/);
@@ -60,6 +62,8 @@ test("selected source and integration effects remain distinct read-only evidence
   assert.notEqual(after.basisDigest, before.basisDigest);
   assert.equal(fs.readFileSync(path.join(f.root, ".head/p2-sentinel.json"), "utf8"), '{"unchanged":true}\n');
   assert.deepEqual(fs.readdirSync(path.join(f.root, ".head")), ["p2-sentinel.json"]);
+  assert.equal(fs.readFileSync(path.join(f.root, ".lode/p2-sentinel.json"), "utf8"), '{"unchanged":true}\n');
+  assert.deepEqual(fs.readdirSync(path.join(f.root, ".lode")), ["p2-sentinel.json"]);
   assert.ok(!JSON.stringify(after).includes("contentBase64"));
 });
 
@@ -180,4 +184,6 @@ test("unbounded input, duplicate member, forged bytes and missing stored intent 
   assert.throws(() => readWorkerIntegrationBasis({ root: f.root, integrationId: `worker-integration-${"e".repeat(24)}--${"f".repeat(24)}` }), { code: "ENOENT" });
   assert.throws(() => readWorkerIntegrationBasis({ root: f.root, integrationId: `worker-integration-${"e".repeat(24)}` }), { code: "WORKER_PATCH_INTEGRATION_CONFLICT" });
   assert.deepEqual(fs.readdirSync(path.join(f.root, ".head")), ["p2-sentinel.json"]);
+  assert.equal(fs.readFileSync(path.join(f.root, ".lode/p2-sentinel.json"), "utf8"), '{"unchanged":true}\n');
+  assert.deepEqual(fs.readdirSync(path.join(f.root, ".lode")), ["p2-sentinel.json"]);
 });

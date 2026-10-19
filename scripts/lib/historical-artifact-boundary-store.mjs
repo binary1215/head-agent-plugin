@@ -2,6 +2,8 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
+import { formatForVerifiedOwner, familyFormatForOriginal, relativeProjectArtifact } from "./project-storage-format.mjs";
+
 export const HISTORICAL_BOUNDARY_PROTOCOL_VERSION = "0.1.0";
 export const HISTORICAL_BOUNDARY_ROOT = ".head/onboarding/historical-boundaries";
 
@@ -19,19 +21,19 @@ const INTERPRETATION_MODES = new Set([
 const ROLE_PATH_SPECS = Object.freeze({
   "historical-candidate-set": {
     id: /^onboarding-candidates-[a-f0-9]{24}$/,
-    path: (artifactId) => `.head/onboarding/candidate-sets/${artifactId}.json`,
+    path: (artifactId, storage) => relativeProjectArtifact(storage, "onboarding", "candidate-sets", `${artifactId}.json`),
   },
   "historical-review": {
     id: /^onboarding-review-decision-[a-f0-9]{24}$/,
-    path: (artifactId) => `.head/onboarding/review-decisions/${artifactId}.json`,
+    path: (artifactId, storage) => relativeProjectArtifact(storage, "onboarding", "review-decisions", `${artifactId}.json`),
   },
   "historical-product-revision": {
     id: /^product-model-[a-f0-9]{24}$/,
-    path: (artifactId) => `.head/onboarding/product-model-revisions/${artifactId}.json`,
+    path: (artifactId, storage) => relativeProjectArtifact(storage, "onboarding", "product-model-revisions", `${artifactId}.json`),
   },
   "legacy-world-embedding-reference": {
     id: /^world-model-[a-f0-9]{24}$/,
-    path: (artifactId) => `.head/world-model/snapshots/${artifactId}.json`,
+    path: (artifactId, storage) => relativeProjectArtifact(storage, "world-model", "snapshots", `${artifactId}.json`),
   },
 });
 const MAX_ENTRIES = 512;
@@ -86,7 +88,8 @@ function safeProjectFile(projectRoot, relative, { mustExist = true } = {}) {
   return candidate;
 }
 
-export function verifyHistoricalInventoryEntries(entries, { projectRoot, projectId, verifyBytes = true } = {}) {
+export function verifyHistoricalInventoryEntries(entries, { projectRoot, projectId, verifyBytes = true, storage } = {}) {
+  const format = formatForVerifiedOwner(storage);
   if (!Array.isArray(entries) || !entries.length || entries.length > MAX_ENTRIES) fail("Historical inventory count is invalid.", "HISTORICAL_BOUNDARY_LIMIT");
   const seenPaths = new Set();
   const seenRoles = new Set();
@@ -119,7 +122,7 @@ export function verifyHistoricalInventoryEntries(entries, { projectRoot, project
       if (historicalBoundaryDigest(bytes) !== entry.sha256) fail(`Historical artifact digest changed: ${entry.path}`, "HISTORICAL_BOUNDARY_INTEGRITY_DRIFT");
     }
     const roleSpec = ROLE_PATH_SPECS[entry.role];
-    if (!roleSpec.id.test(entry.artifactId) || entry.path !== roleSpec.path(entry.artifactId)) {
+    if (!roleSpec.id.test(entry.artifactId) || entry.path !== roleSpec.path(entry.artifactId, storage)) {
       fail("Historical inventory role, path, and artifact identity do not agree.", "HISTORICAL_BOUNDARY_ROLE_PATH_MISMATCH");
     }
     seenRoles.add(entry.role);
@@ -129,7 +132,7 @@ export function verifyHistoricalInventoryEntries(entries, { projectRoot, project
   if (!seenRoles.has("historical-candidate-set") || !seenRoles.has("historical-review") || !seenRoles.has("historical-product-revision")) {
     fail("Historical inventory is incomplete for a completed approval chain.", "HISTORICAL_BOUNDARY_INCOMPLETE");
   }
-  if (projectId && !/^head-[a-f0-9]{20}$/.test(projectId)) fail("Historical boundary Project identity is invalid.", "INVALID_HISTORICAL_BOUNDARY");
+  if (projectId && !new RegExp(`^${format.projectPrefix}[a-f0-9]{20}$`).test(projectId)) fail("Historical boundary Project identity is invalid.", "INVALID_HISTORICAL_BOUNDARY");
   return entries;
 }
 
@@ -142,11 +145,12 @@ function verifyIdentity(document, { idField, hashField, prefix, label }) {
   return document;
 }
 
-export function verifyHistoricalArtifactBoundary(document, { projectRoot, projectId, verifyBytes = true } = {}) {
-  if (document?.kind !== "HistoricalArtifactBoundary" || document.protocol?.name !== "head-agent-core-historical-artifact-boundary"
+export function verifyHistoricalArtifactBoundary(document, { projectRoot, projectId, verifyBytes = true, storage } = {}) {
+  const format = familyFormatForOriginal("head-agent-core-historical-artifact-boundary", document, storage);
+  if (document?.kind !== "HistoricalArtifactBoundary" || !format
     || document.protocol?.version !== HISTORICAL_BOUNDARY_PROTOCOL_VERSION || document.schemaVersion !== 1
     || document.authorityClass !== "evidence" || document.instructionAuthority !== false || document.promotionAuthority !== false
-    || !/^head-[a-f0-9]{20}$/.test(document.projectId || "") || (projectId && document.projectId !== projectId)
+    || !new RegExp(`^${format.projectPrefix}[a-f0-9]{20}$`).test(document.projectId || "") || (projectId && document.projectId !== projectId)
     || !/^[a-f0-9]{64}$/.test(document.inventoryHash || "") || !document.appliedAtBasis || typeof document.appliedAtBasis !== "object"
     || !/^onboarding-candidates-[a-f0-9]{24}$/.test(document.validatedHistoricalApproval?.candidateSetId || "")
     || !/^onboarding-review-decision-[a-f0-9]{24}$/.test(document.validatedHistoricalApproval?.reviewDecisionId || "")
@@ -161,7 +165,7 @@ export function verifyHistoricalArtifactBoundary(document, { projectRoot, projec
   if (document.boundaryHash !== boundaryHash || document.boundaryId !== `historical-boundary-${document.inventoryHash.slice(0, 24)}`) {
     fail("Historical boundary identity is invalid.", "HISTORICAL_BOUNDARY_DIGEST_MISMATCH");
   }
-  verifyHistoricalInventoryEntries(document.entries, { projectRoot, projectId: document.projectId, verifyBytes });
+  verifyHistoricalInventoryEntries(document.entries, { projectRoot, projectId: document.projectId, verifyBytes, storage: format });
   if (!document.entries.some((entry) => entry.role === "historical-candidate-set" && entry.artifactId === document.validatedHistoricalApproval.candidateSetId)
     || !document.entries.some((entry) => entry.role === "historical-review" && entry.artifactId === document.validatedHistoricalApproval.reviewDecisionId)
     || !document.entries.some((entry) => entry.role === "historical-product-revision"
@@ -175,7 +179,7 @@ export function verifyHistoricalArtifactBoundary(document, { projectRoot, projec
 }
 
 export function verifyHistoricalBoundaryReceipt(document, boundary) {
-  if (document?.kind !== "HistoricalBoundaryApplicationReceipt" || document.protocol?.name !== "head-agent-core-historical-boundary-application"
+  if (document?.kind !== "HistoricalBoundaryApplicationReceipt" || !familyFormatForOriginal("head-agent-core-historical-boundary-application", document, familyFormatForOriginal("head-agent-core-historical-artifact-boundary", boundary))
     || document.protocol?.version !== HISTORICAL_BOUNDARY_PROTOCOL_VERSION || document.schemaVersion !== 1
     || document.projectId !== boundary.projectId || document.boundaryId !== boundary.boundaryId || document.boundaryHash !== boundary.boundaryHash
     || document.inventoryHash !== boundary.inventoryHash || document.appliedAtBasisHash !== historicalBoundaryDigest(historicalBoundaryCanonicalJson(boundary.appliedAtBasis))
@@ -200,7 +204,7 @@ export function historicalIntegrityBasis(boundary, receipt) {
 
 export function verifyHistoricalBoundaryCommit(document, boundary, receipt) {
   const basis = historicalIntegrityBasis(boundary, receipt);
-  if (document?.kind !== "HistoricalBoundaryCommitMarker" || document.protocol?.name !== "head-agent-core-historical-boundary-commit"
+  if (document?.kind !== "HistoricalBoundaryCommitMarker" || !familyFormatForOriginal("head-agent-core-historical-boundary-commit", document, familyFormatForOriginal("head-agent-core-historical-artifact-boundary", boundary))
     || document.protocol?.version !== HISTORICAL_BOUNDARY_PROTOCOL_VERSION || document.schemaVersion !== 1
     || document.projectId !== boundary.projectId || document.boundaryId !== boundary.boundaryId || document.boundaryHash !== boundary.boundaryHash
     || document.receiptId !== receipt.receiptId || document.receiptHash !== receipt.receiptHash || document.inventoryHash !== boundary.inventoryHash
@@ -217,8 +221,8 @@ function parseJson(file, label) {
   catch (error) { fail(`${label} is invalid JSON: ${error.message}`, "INVALID_HISTORICAL_BOUNDARY_JSON"); }
 }
 
-function boundaryDirectories(projectRoot) {
-  const root = safeProjectFile(projectRoot, HISTORICAL_BOUNDARY_ROOT, { mustExist: false });
+function boundaryDirectories(projectRoot, storage) {
+  const root = safeProjectFile(projectRoot, relativeProjectArtifact(storage, "onboarding", "historical-boundaries"), { mustExist: false });
   if (!fs.existsSync(root)) return [];
   if (!fs.lstatSync(root).isDirectory() || fs.lstatSync(root).isSymbolicLink()) fail("Historical boundary root is invalid.", "HISTORICAL_BOUNDARY_SYMLINK");
   const entries = fs.readdirSync(root, { withFileTypes: true });
@@ -229,9 +233,9 @@ function boundaryDirectories(projectRoot) {
   return entries.map((entry) => path.join(root, entry.name));
 }
 
-export function readHistoricalBoundaryApplication({ root = ".", projectId = "", allowAbsent = true, requireCommitted = false, verifyBytes = true } = {}) {
+export function readHistoricalBoundaryApplication({ root = ".", projectId = "", allowAbsent = true, requireCommitted = false, verifyBytes = true, storage } = {}) {
   const projectRoot = fs.realpathSync(path.resolve(root));
-  const directories = boundaryDirectories(projectRoot);
+  const directories = boundaryDirectories(projectRoot, storage);
   if (!directories.length) {
     if (allowAbsent) return null;
     fail("Historical boundary is absent.", "HISTORICAL_BOUNDARY_NOT_FOUND");
@@ -242,7 +246,7 @@ export function readHistoricalBoundaryApplication({ root = ".", projectId = "", 
   for (const entry of actual) if (!expected.has(entry.name) || !entry.isFile() || entry.isSymbolicLink()) fail("Historical boundary directory contains an unexpected entry.", "INVALID_HISTORICAL_BOUNDARY_PATH");
   const boundaryFile = path.join(directory, "boundary.json");
   if (!fs.existsSync(boundaryFile)) fail("Historical boundary directory is missing its boundary.", "INVALID_HISTORICAL_BOUNDARY");
-  const boundary = verifyHistoricalArtifactBoundary(parseJson(boundaryFile, "Historical boundary"), { projectRoot, projectId, verifyBytes });
+  const boundary = verifyHistoricalArtifactBoundary(parseJson(boundaryFile, "Historical boundary"), { projectRoot, projectId, verifyBytes, storage });
   if (path.basename(directory) !== boundary.boundaryId) fail("Historical boundary directory identity is invalid.", "HISTORICAL_BOUNDARY_IDENTITY_MISMATCH");
   const receiptFile = path.join(directory, "receipt.json");
   const commitFile = path.join(directory, "commit.json");
@@ -280,8 +284,8 @@ export function historicalEntryForPath(application, relativePath, role = null) {
   return entry && (!role || entry.role === role) ? entry : null;
 }
 
-export function historicalBoundaryStorageFiles(projectRoot, boundaryId) {
+export function historicalBoundaryStorageFiles(projectRoot, boundaryId, storage = undefined) {
   if (!/^historical-boundary-[a-f0-9]{24}$/.test(boundaryId || "")) fail("Historical boundary identity is invalid.", "INVALID_HISTORICAL_BOUNDARY");
-  const directory = safeProjectFile(projectRoot, `${HISTORICAL_BOUNDARY_ROOT}/${boundaryId}`, { mustExist: false });
+  const directory = safeProjectFile(projectRoot, relativeProjectArtifact(storage, "onboarding", "historical-boundaries", boundaryId), { mustExist: false });
   return { directory, boundary: path.join(directory, "boundary.json"), receipt: path.join(directory, "receipt.json"), commit: path.join(directory, "commit.json") };
 }

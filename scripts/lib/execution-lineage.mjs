@@ -2,9 +2,13 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { atomicCreateArtifact } from "./artifact-storage.mjs";
-import { inspectProject, SCHEMA_VERSION } from "./head-core.mjs";
+import { inspectProject, SCHEMA_VERSION } from "./lode-core.mjs";
 import { readContextCapsule } from "./context-compiler.mjs";
 import { artifactAuthorityBoundary, verifyArtifactAuthorityBoundary } from "./authority-plane-contract.mjs";
+
+import { formatForVerifiedOwner, familyFormatForOriginal } from "./project-storage-format.mjs";
+
+const projectStorage = new WeakMap();
 
 export const EXECUTION_LINEAGE_VERSION = "0.4.0";
 const FRESH_HEAD_REVIEW_VERSION = "0.1.0";
@@ -110,12 +114,14 @@ function projectForWrite(root) {
   if (inspected.status !== "ready") {
     fail(`Project must be ready to write lineage; current status: ${inspected.status}.`, "PROJECT_NOT_READY");
   }
+  projectStorage.set(inspected.project, inspected.storage);
   return inspected.project;
 }
 
 function projectForRead(root) {
   const inspected = inspectProject(root);
   if (inspected.status === "not_initialized") fail("HEAD Agent Core is not initialized.", "NOT_INITIALIZED");
+  projectStorage.set(inspected.project, inspected.storage);
   return inspected.project;
 }
 
@@ -126,8 +132,8 @@ function definitionForId(artifactId) {
   return { kind: match[0], ...match[1] };
 }
 
-function artifactFile(root, definition, artifactId) {
-  return path.join(root, ".head", "lineage", definition.directory, `${artifactId}.json`);
+function artifactFile(root, definition, artifactId, storage) {
+  return path.join(root, formatForVerifiedOwner(storage).directory, "lineage", definition.directory, `${artifactId}.json`);
 }
 
 function buildArtifact({ project, kind, body, parents = [] }) {
@@ -136,7 +142,7 @@ function buildArtifact({ project, kind, body, parents = [] }) {
   const payload = {
     schemaVersion: SCHEMA_VERSION,
     kind,
-    protocol: { name: "head-agent-core-execution-lineage", version: EXECUTION_LINEAGE_VERSION },
+    protocol: { name: formatForVerifiedOwner(projectStorage.get(project)).protocol("head-agent-core-execution-lineage"), version: EXECUTION_LINEAGE_VERSION },
     projectId: project.projectId,
     authorityBoundary: artifactAuthorityBoundary(kind),
     ...body,
@@ -147,11 +153,11 @@ function buildArtifact({ project, kind, body, parents = [] }) {
   return { ...payload, [definition.idField]: artifactId, artifactHash };
 }
 
-function persistArtifact(root, artifact, persist) {
+function persistArtifact(root, artifact, persist, storage) {
   const definition = DEFINITIONS[artifact.kind];
   const artifactId = artifact[definition.idField];
   if (!persist) return { status: "preview", artifact };
-  const file = artifactFile(root, definition, artifactId);
+  const file = artifactFile(root, definition, artifactId, storage);
   if (fs.existsSync(file)) {
     const existing = readLineageArtifact({ root, artifactId });
     return { status: "existing", file, artifact: existing.artifact };
@@ -167,7 +173,7 @@ function persistArtifact(root, artifact, persist) {
 export function readLineageArtifact({ root = ".", artifactId } = {}) {
   const project = projectForRead(root);
   const definition = definitionForId(artifactId);
-  const file = artifactFile(project.projectRoot, definition, artifactId);
+  const file = artifactFile(project.projectRoot, definition, artifactId, projectStorage.get(project));
   if (!fs.existsSync(file)) fail(`Lineage artifact not found: ${artifactId}`, "LINEAGE_ARTIFACT_NOT_FOUND");
   let artifact;
   try { artifact = JSON.parse(fs.readFileSync(file, "utf8")); }
@@ -176,7 +182,7 @@ export function readLineageArtifact({ root = ".", artifactId } = {}) {
     fail("Lineage artifact identity does not match this project.", "LINEAGE_IDENTITY_MISMATCH");
   }
   const lineageVersion = artifact.protocol?.version;
-  if (artifact.protocol?.name !== "head-agent-core-execution-lineage" || !new Set(["0.3.0", EXECUTION_LINEAGE_VERSION]).has(lineageVersion)) {
+  if (!familyFormatForOriginal("head-agent-core-execution-lineage", artifact, projectStorage.get(project)) || !new Set(["0.3.0", EXECUTION_LINEAGE_VERSION]).has(lineageVersion)) {
     fail("Lineage artifact protocol is invalid.", "INVALID_LINEAGE_ARTIFACT");
   }
   if (lineageVersion === EXECUTION_LINEAGE_VERSION) verifyArtifactAuthorityBoundary(artifact.kind, artifact.authorityBoundary);
@@ -197,21 +203,25 @@ function requireArtifact(root, artifactId, kind) {
   return result.artifact;
 }
 
-function verifiedFreshHeadReview(review) {
-  if (!review || review.kind !== "FreshHeadReview") fail("Fresh HEAD review context is required.", "INVALID_FRESH_HEAD_REVIEW");
+function verifiedFreshLodeReview(review, storage) {
+  const format = formatForVerifiedOwner(storage);
+  // Legacy review validation historically used kind/hash/prefix, not a new
+  // protocol/version readiness gate. Only the new family adds its tuple guard.
+  if (!review || review.kind !== format.kind("FreshHeadReview")
+    || format.dialect === "lode" && !familyFormatForOriginal("head-agent-core-fresh-head-review", review, storage)) fail("Fresh HEAD review context is required.", "INVALID_FRESH_HEAD_REVIEW");
   const recordedHash = review.reviewContextHash;
   const recordedId = review.reviewContextId;
   const payload = { ...review };
   delete payload.reviewContextId;
   delete payload.reviewContextHash;
   const actualHash = digest(canonicalJson(payload));
-  if (recordedHash !== actualHash || recordedId !== `fresh-head-review-${actualHash.slice(0, 24)}`) {
+  if (recordedHash !== actualHash || recordedId !== `${format.value("fresh-head-review")}-${actualHash.slice(0, 24)}`) {
     fail("Fresh HEAD review context digest verification failed.", "FRESH_HEAD_REVIEW_DIGEST_MISMATCH");
   }
   return review;
 }
 
-export function buildFreshHeadReview({ root = ".", wholePlanId, resultPacketId, sessionId = "", runId = "", historical = false } = {}) {
+export function buildFreshLodeReview({ root = ".", wholePlanId, resultPacketId, sessionId = "", runId = "", historical = false } = {}) {
   if (typeof historical !== "boolean") fail("Historical review projection mode must be explicit.", "INVALID_FRESH_HEAD_REVIEW");
   // Recompute immutable historical P4 evidence without requiring current role
   // projections or Session readiness. This never applies a ReviewDecision;
@@ -228,8 +238,8 @@ export function buildFreshHeadReview({ root = ".", wholePlanId, resultPacketId, 
   const capsule = readContextCapsule({ root: project.projectRoot, capsuleId: contract.capsuleId }).capsule;
   const payload = {
     schemaVersion: SCHEMA_VERSION,
-    kind: "FreshHeadReview",
-    protocol: { name: "head-agent-core-fresh-head-review", version: FRESH_HEAD_REVIEW_VERSION },
+    kind: formatForVerifiedOwner(projectStorage.get(project)).kind("FreshHeadReview"),
+    protocol: { name: formatForVerifiedOwner(projectStorage.get(project)).protocol("head-agent-core-fresh-head-review"), version: FRESH_HEAD_REVIEW_VERSION },
     projectId: project.projectId,
     sessionId: optionalText(sessionId),
     runId: optionalText(runId),
@@ -258,7 +268,7 @@ export function buildFreshHeadReview({ root = ".", wholePlanId, resultPacketId, 
   const reviewContextHash = digest(canonicalJson(payload));
   const review = {
     ...payload,
-    reviewContextId: `fresh-head-review-${reviewContextHash.slice(0, 24)}`,
+    reviewContextId: `${formatForVerifiedOwner(projectStorage.get(project)).value("fresh-head-review")}-${reviewContextHash.slice(0, 24)}`,
     reviewContextHash,
   };
   return { status: "ready_for_fresh_head_review", review };
@@ -280,7 +290,7 @@ export function createWholePlanSnapshot({ root = ".", objective, plan, invariant
     },
     parents: [],
   });
-  return persistArtifact(project.projectRoot, artifact, persist);
+  return persistArtifact(project.projectRoot, artifact, persist, projectStorage.get(project));
 }
 
 export function createNextWholePlanSnapshot({ root = ".", reviewDecisionId, plan, invariants, sources, persist = true } = {}) {
@@ -315,7 +325,7 @@ export function createNextWholePlanSnapshot({ root = ".", reviewDecisionId, plan
       { relation: "responds-to", targetId: review.reviewDecisionId },
     ],
   });
-  return persistArtifact(project.projectRoot, artifact, persist);
+  return persistArtifact(project.projectRoot, artifact, persist, projectStorage.get(project));
 }
 
 export function createExecutionContract({ root = ".", wholePlanId, capsuleId, scope, acceptanceCriteria, constraints = [], allowedActions = [], forbiddenActions = [], persist = true } = {}) {
@@ -331,9 +341,9 @@ export function createExecutionContract({ root = ".", wholePlanId, capsuleId, sc
       wholePlanId: planId,
       capsuleId: contextId,
       contextAcceptance: {
-        authority: "HEAD",
+        authority: formatForVerifiedOwner(projectStorage.get(project)).value("HEAD"),
         disposition: "accepted-for-this-execution-contract",
-        semanticJudgmentSource: "HEAD-not-context-compiler",
+        semanticJudgmentSource: formatForVerifiedOwner(projectStorage.get(project)).value("HEAD-not-context-compiler"),
       },
       scope: requiredText(scope, "Execution scope"),
       acceptanceCriteria: stringList(acceptanceCriteria, "Acceptance criteria", { required: true }),
@@ -346,7 +356,7 @@ export function createExecutionContract({ root = ".", wholePlanId, capsuleId, sc
       { relation: "context-from", targetId: contextId },
     ],
   });
-  return persistArtifact(project.projectRoot, artifact, persist);
+  return persistArtifact(project.projectRoot, artifact, persist, projectStorage.get(project));
 }
 
 export function createResultPacket({ root = ".", executionContractId, outcome, evidence, planDelta = "", impactRadius = [], verification, unknowns = [], knowledgeProposals = [], persist = true } = {}) {
@@ -377,7 +387,7 @@ export function createResultPacket({ root = ".", executionContractId, outcome, e
     },
     parents: [{ relation: "result-of", targetId: contractId }],
   });
-  return persistArtifact(project.projectRoot, artifact, persist);
+  return persistArtifact(project.projectRoot, artifact, persist, projectStorage.get(project));
 }
 
 export function createReviewDecision({ root = ".", wholePlanId, resultPacketId, reviewContext, disposition, rationale, nextActions = [], knowledgeProposalRecommendations = [], persist = true } = {}) {
@@ -390,7 +400,7 @@ export function createReviewDecision({ root = ".", wholePlanId, resultPacketId, 
   if (contract.wholePlanId !== planId) {
     fail("Result Packet and ReviewDecision do not reference the same WholePlanSnapshot.", "LINEAGE_CONFLICT");
   }
-  const review = verifiedFreshHeadReview(reviewContext);
+  const review = verifiedFreshLodeReview(reviewContext, projectStorage.get(project));
   if (review.projectId !== project.projectId || review.wholePlan?.wholePlanId !== planId || review.resultPacket?.resultPacketId !== resultId) {
     fail("Fresh HEAD review context does not match this ReviewDecision.", "FRESH_HEAD_REVIEW_CONFLICT");
   }
@@ -418,5 +428,8 @@ export function createReviewDecision({ root = ".", wholePlanId, resultPacketId, 
       { relation: "reviewed-through", targetId: review.reviewContextId },
     ],
   });
-  return persistArtifact(project.projectRoot, artifact, persist);
+  return persistArtifact(project.projectRoot, artifact, persist, projectStorage.get(project));
 }
+
+// Preserve the exact historical public export; one implementation owns both names.
+export { buildFreshLodeReview as buildFreshHeadReview };

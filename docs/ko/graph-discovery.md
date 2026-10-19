@@ -4,7 +4,7 @@
 
 ## 일반 사용
 
-사용자는 task를 한 번 말합니다. HEAD는 해당 논리 Session과 현재 공통 방향을
+사용자는 task를 한 번 말합니다. Lode는 해당 논리 Session과 현재 공통 방향을
 복구하고 새 정보 탐색 전에 가까운 프로젝트 관계를 조회합니다. 충분한 동일
 기준 결과는 재사용합니다. 없거나 실패한 그래프 층은 원본 파일과 기록으로
 보완합니다. 전체 World 갱신, Product 승인, Run/Capsule, 색인 완료나 DB는 일반
@@ -18,7 +18,7 @@
 
 ## 조회와 원본 보완
 
-기본 typed MCP 진입점은 `head_project_graph`입니다. HEAD가 task에서
+기본 typed MCP 진입점은 `lode_project_graph`입니다. Lode가 task에서
 `project_root`, `query`를 작성하며 필요할 때 `anchor_ids`, `paths`, `depth`,
 `max_nodes`, `max_edges`, `view` (`all`, `work`, `product`),
 `world_model_id`, `previous_result`, `include_candidates`, `session_id`를
@@ -36,7 +36,7 @@ provenance와 coverage를 보존하면서 반복되는 큰 payload를 생략합�
 
 ### 저장된 작업 이유와 남은 일
 
-이미 보존한 `SessionWorkEvidence`는 기존 `head_project_graph`와
+이미 보존한 `SessionWorkEvidence`는 기존 `lode_project_graph`와
 `graph-query` 경로로 찾습니다. 요약에 없는 용어라도 실제 판단의 assessment,
 이유·대안, 관측한 작업, 남은 일과 불확실성에서 검색할 수 있습니다. 정확한 경로,
 anchor, Session 또는 근거의 이웃 조회도 같은 typed 작업 노드와 실제 소유자를
@@ -97,7 +97,7 @@ MCP `structuredContent`, CLI `--json`, Hook, 선택과 proof는 그대로입니�
 일과 불확실성도 노드들에 걸쳐 표시합니다. `details`는 기존의 더 풍부한 표시를
 요청하며 어느 표시도 의미적 충분성을 판정하지 않습니다.
 
-`originalExpansion`은 기존 `head_session_work_read` 호출에 검증된 소유자의
+`originalExpansion`은 기존 `lode_session_work_read` 호출에 검증된 소유자의
 `session_id`, 정확한 `evidence_ids`, 한 건을 뜻하는 `max_records`, 실제 enriched
 record 배열 크기의 `max_characters`를 제공합니다. 같은 기준의 확장이 성공하면
 예산 생략 없이 그 원본 한 건을 반환합니다. 소유자·ID·`evidenceDigest`를 그래프
@@ -125,19 +125,19 @@ producer bytes와 소유자·관계 의존을 확인하므로 상수 시간·상
 자연어 질문은 권한 플래그나 리비전·출처 메타데이터가 아닌, 한정된 표시·도메인
 값을 검색합니다. 일치하는 드문 용어를 우선 정렬하고 전송 한도를 적용합니다.
 이는 재현 가능한 어휘 탐색이지 의미 추론이 아닙니다. 관련성과 부족한 맥락은
-HEAD가 판단합니다. 구두점, 식별자 구성 단어, 한국어 조사 별칭으로 탐색을 돕되
-원래 용어도 보존합니다. 필요한 정확한 경로·anchor는 HEAD가 작성하며 사용자가
+Lode가 판단합니다. 구두점, 식별자 구성 단어, 한국어 조사 별칭으로 탐색을 돕되
+원래 용어도 보존합니다. 필요한 정확한 경로·anchor는 Lode가 작성하며 사용자가
 질문이나 점수 양식을 다시 작성하지 않습니다.
 
 ```text
-head-agent graph-query <project> --query "<task>"
-head-agent graph-index <project>
-head-agent session-list <project>
-head-agent session-create <project> --purpose "<independent work>"
-head-agent graph-query <project> --session <logical-session> --query "<task>"
+lode-agent graph-query <project> --query "<task>"
+lode-agent graph-index <project>
+lode-agent session-list <project>
+lode-agent session-create <project> --purpose "<independent work>"
+lode-agent graph-query <project> --session <logical-session> --query "<task>"
 ```
 
-`head_project_graph_index` / `graph-index`는 교체 가능한 기존 관측 색인을
+`lode_project_graph_index` / `graph-index`는 교체 가능한 기존 관측 색인을
 명시적으로 갱신합니다. Core 초기화·재개와 원본·관측 저장 경로도 필요한 범위에서
 갱신합니다. 입력이 같으면 재사용하며 조회마다 receipt, 후보, 승인이나 checkpoint를
 만들지 않습니다.
@@ -164,7 +164,7 @@ identity/origin이 모호하거나 maxNodes 때문에 matched anchor가 빠지�
 기존 보수적 proof 또는 원본 fallback을 유지합니다. 같은 path에 필요한 역할이나 불확실한
 역할이 하나라도 있으면 생략하지 않습니다.
 
-반환된 node의 `detail`을 기존 `head_project_graph`의 `anchor_ids`, `details`, `depth`로
+반환된 node의 `detail`을 기존 `lode_project_graph`의 `anchor_ids`, `details`, `depth`로
 따라가며 추가 selector나 native binding은 필요하지 않습니다. 정규화 기본값은 상세의
 maxEdges120, compact의 maxEdges12 그대로입니다. 명시 maxEdges0은 별도 query key이지
 재사용 조건이 아닙니다. depth0도 incident boundary/다음 anchor를 공개합니다. 색인 부재·
@@ -230,13 +230,13 @@ token과 품질 개선은 측정 전까지 가설입니다.
 
 일반 `CONTAINS`, `HAS_REVISION`, `DECLARES` 경로는 기록·버전을 연결합니다.
 이를 확대하는 것은 코드 영향 분석이 아닙니다. 심볼의 import·call 이웃은 기존
-`head_world_query` 또는 다음 명령으로 조회합니다.
+`lode_world_query` 또는 다음 명령으로 조회합니다.
 
 ```text
-head-agent world-query <project> --query "<symbol>" --depth 3 --limit 20
+lode-agent world-query <project> --query "<symbol>" --depth 3 --limit 20
 ```
 
-World 기능이 제공될 때 한정된 `IMPORTS`·`CALLS`를 조회합니다. HEAD는 기존
+World 기능이 제공될 때 한정된 `IMPORTS`·`CALLS`를 조회합니다. Lode는 기존
 선택적 MCP 검색·호출 경로를 사용하므로 새 사용자 설정은 필요하지 않습니다.
 World가 없거나 관련 소스가 stale이면 현재 소스의 import·call을 직접 조사합니다.
 보존된 관계는 조사 단서이지 현재 영향의 증명이 아닙니다. 전체 World 갱신,
@@ -244,16 +244,16 @@ World가 없거나 관련 소스가 stale이면 현재 소스의 import·call을
 
 ## 통합 변경 뒤의 증거 갱신
 
-의미 있는 코드 수정이나 기능 추가 구간이 끝나면 HEAD는 통합 결과의 그래프 갱신
+의미 있는 코드 수정이나 기능 추가 구간이 끝나면 Lode는 통합 결과의 그래프 갱신
 필요를 확인합니다. 수정 파일뿐 아니라 추가·변경·삭제·이름 변경과 관련 참조·import·call도
-살핍니다. worker는 변경, 원본 근거와 미확인을 반환하고 HEAD가 최종 checkout을
+살핍니다. worker는 변경, 원본 근거와 미확인을 반환하고 Lode가 최종 checkout을
 조정한 뒤 갱신과 검증을 책임집니다. worker마다 무조정 전역 갱신을 수행하지 않습니다.
 
 | 기존 surface | 수행하는 일 | 수행하지 않는 일 |
 | --- | --- | --- |
-| `head_project_graph_index` / `graph-index` | 기존 검증 기록·관측의 교체 가능한 목록 색인을 갱신하고 동일 입력은 재사용합니다 | 저장소의 새 코드 관계를 추출하거나 기능 의미를 추론하지 않습니다 |
+| `lode_project_graph_index` / `graph-index` | 기존 검증 기록·관측의 교체 가능한 목록 색인을 갱신하고 동일 입력은 재사용합니다 | 저장소의 새 코드 관계를 추출하거나 기능 의미를 추론하지 않습니다 |
 | `world-refresh` | 이미 활성화된 World의 지원 코드 관계와 리비전 근거를 갱신합니다 | 없는 Product/World 기능을 활성화하거나 승인을 만들지 않습니다 |
-| `head_world_model`, `head_incremental_refresh_status`, `head_world_query` / `world-query` | 최신성·갱신 근거 또는 제한된 영향 관계를 읽습니다 | World 갱신을 실행하지 않습니다 |
+| `lode_world_model`, `lode_incremental_refresh_status`, `lode_world_query` / `world-query` | 최신성·갱신 근거 또는 제한된 영향 관계를 읽습니다 | World 갱신을 실행하지 않습니다 |
 
 Core 초기화·재개와 지원되는 원본·관측 저장 경로는 이미 관측 색인을 갱신합니다.
 충분히 최신인 결과는 재사용합니다. 관련 새 기록·누락 기록이나 통합 조정에 필요하면
@@ -265,7 +265,7 @@ Core 초기화·재개와 지원되는 원본·관측 저장 경로는 이미 �
 import·call과 다른 미확인은 보존합니다. 이름 변경은 삭제·추가로 관측될 수 있으며
 이름 일치만으로 의미적 동일성이나 검증된 이름 변경 계보를 만들지 않습니다.
 
-HEAD는 기능 목적·요구사항, 구현과 실제 검증을 기존 소스 문서, 사용자 방향, 코드 참조와
+Lode는 기능 목적·요구사항, 구현과 실제 검증을 기존 소스 문서, 사용자 방향, 코드 참조와
 해당 관측·결과·후보 기록으로 연결합니다. 원본 경로, digest·revision과 승인 상태를
 유지합니다. 테스트 존재는 PASS가 아닙니다. 실행에는 실제 명령, 검증한 기준, 결과와
 불확실성이 필요합니다. 일반 문서, 대화나 실행 성공을 색인한다고 Product Canon이나
@@ -278,9 +278,9 @@ HEAD는 기능 목적·요구사항, 구현과 실제 검증을 기존 소스 �
 그래프 갱신이 digest-bound 입력을 다시 쓰거나 다른 효과를 승인하지 않습니다.
 
 ```text
-head-agent graph-index <project>
-head-agent world-refresh <project>
-head-agent world-query <project> --query "<affected symbol>" --depth 3 --limit 20
+lode-agent graph-index <project>
+lode-agent world-refresh <project>
+lode-agent world-query <project> --query "<affected symbol>" --depth 3 --limit 20
 ```
 
 관련된 경로만 사용합니다. World/DB 활성화, 전체 재색인, Run/Capsule, watcher 설치나
@@ -298,10 +298,10 @@ head-agent world-query <project> --query "<affected symbol>" --depth 3 --limit 2
 ## 독립 진행 라우팅
 
 하나의 정식 Project가 공통 사용자 방향을 보유합니다. 기존
-`.head/sessions/current.json`은 기본 Session으로 유지하며 추가 Session은
-`.head/sessions/by-id/<session-id>/current.json`에 저장합니다. MCP `session_id`,
+`.lode/sessions/current.json`은 기본 Session으로 유지하며 추가 Session은
+`.lode/sessions/by-id/<session-id>/current.json`에 저장합니다. MCP `session_id`,
 CLI `--session`은 요청 대상만 선택하고 기본 Session을 바꾸거나 덮어쓰지 않습니다.
-`head_session_list`가 논리 Session을 조회하며 `head_session_create`는 선택적
+`lode_session_list`가 논리 Session을 조회하며 `lode_session_create`는 선택적
 `new_session_id`와 `purpose`를 받습니다. 기존 ID를 다른 목적으로 다시 결속하지
 않습니다. 공급자 session ID와는 별개입니다.
 
@@ -311,16 +311,16 @@ CLI `--session`은 요청 대상만 선택하고 기본 Session을 바꾸거나 
 
 ## 현재 공통 방향
 
-`head_project_direction_read` / `project-direction-read`는 현재
+`lode_project_direction_read` / `project-direction-read`는 현재
 `ProjectDirection` 또는 기록 부재를 반환합니다. `input`에 `goal`,
 `constraints`, `decisions`, `cancelledActions`를 담습니다. P2 현재 사용자
 방향이며 실행 authorization을 주지 않습니다. 현재 실제 사용자 방향을
-`head_project_direction_update`의 조회한 `expected_direction_id` (최초 null)와
+`lode_project_direction_update`의 조회한 `expected_direction_id` (최초 null)와
 `direction` 객체로 게시합니다. CLI는
 `project-direction-update --input <direction.json> --expected-direction <id>`입니다.
-HEAD가 대화에서 typed 입력을 작성하므로 사용자가 양식을 채우지 않습니다.
+Lode가 대화에서 typed 입력을 작성하므로 사용자가 양식을 채우지 않습니다.
 
-`.head/project-direction/current.json`은 불변 revision을 참조합니다. 정확한 기준
+`.lode/project-direction/current.json`은 불변 revision을 참조합니다. 정확한 기준
 비교로 경합한 갱신을 조정하고 시각이나 마지막 쓰기로 의미 충돌을 해결하지 않습니다.
 동일 갱신은 기존 방향을 재사용합니다.
 
@@ -348,4 +348,16 @@ HEAD가 대화에서 typed 입력을 작성하므로 사용자가 양식을 채�
 - worker 하나의 불명 효과는 확인하되 독립 작업을 막지 않습니다.
 
 [권한 평면](authority-plane-contract.md), [Session 복구](session-recovery.md),
-[런타임 구성](../../skills/head-agent-core/references/runtime-composition.md)을 참고하세요.
+[런타임 구성](../../skills/lode-agent-core/references/runtime-composition.md)을 참고하세요.
+
+## 경로 기준과 기존 Project
+
+Project 내부 참조는 검증된 Project root를 기준으로 한 `/` 상대경로입니다. 생성
+Markdown의 `relativePath`는 게시 root 기준이고, href는 해당 문서 위치 기준입니다.
+문서의 `../` 링크가 원본 selector의 `..`를 허용하는 것은 아닙니다.
+
+런타임 `project_root`, 저장된 `projectRoot`, 설치의 `pluginRoot`와 root 기반 식별자는
+검증된 절대 root와 실제 Session 소유자에 계속 결합됩니다. 새 Project는 `.lode/`를
+사용하고 기존 `.head/` 원문과 exact selector는 그대로 유지합니다. 이는 기존 경로
+계약의 설명이며, workspace 이동 지원이나 자동 repair 기능이 아닙니다.
+

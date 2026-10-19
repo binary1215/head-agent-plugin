@@ -7,7 +7,7 @@ import test from "node:test";
 import { createHeadSession, withSessionRoute, sessionStatePath } from "../scripts/lib/session-routing.mjs";
 import { recordSessionWorkEvidence } from "../scripts/lib/session-work-context.mjs";
 import { queryProjectGraph, indexProjectGraph } from "../scripts/lib/project-graph.mjs";
-import { PROJECT_GRAPH_INDEX_PATH, collectProjectGraphInventory } from "../scripts/lib/discovery-index.mjs";
+import { collectProjectGraphInventory } from "../scripts/lib/discovery-index.mjs";
 import { createSessionWorkReadContext } from "../scripts/lib/session-work-evidence-original.mjs";
 import { createWholePlanSnapshot } from "../scripts/lib/execution-lineage.mjs";
 import { fixture, exact, link, citation, snapshot, sha, encoded } from "./helpers/session-work-linkage-fixture.mjs";
@@ -32,7 +32,7 @@ test("work read cache saturation does not reject an otherwise valid reference", 
     assert.throws(() => context.read(names.at(-1), 65536), { code: "SESSION_WORK_REFERENCE_UNAVAILABLE" });
   } finally { fs.readFileSync = originalRead; }
 });
-const indexFile = f => path.join(f.root, PROJECT_GRAPH_INDEX_PATH);
+const indexFile = f => path.join(f.root, f.layout.directory, "graph-discovery/index.json");
 const q = (f, saved, extra = {}) => ({ root: f.root, anchorIds: [saved.evidence.evidenceId], view: "work", details: true,
   depth: 0, maxNodes: 1, maxEdges: 0, ...extra });
 const nodeFor = (result, saved) => result.nodes.find(node => node.nodeId === saved.evidence.evidenceId);
@@ -97,8 +97,8 @@ function changeValidHeader(saved) {
 test("new default/named public work publications add exact index paths without scanning unrelated work bodies", t => {
   const f = fixture(t), defaultSaved = recordSessionWorkEvidence({ root: f.root, input: { summary: "Default work original" } });
   const unrelated = f.save({ summary: "Unrelated named work" });
-  assert.ok(relative(f, defaultSaved.file).startsWith(".head/sessions/work-evidence/"));
-  assert.ok(relative(f, unrelated.file).startsWith(".head/sessions/by-id/" + f.session.sessionId + "/work-evidence/"));
+  assert.ok(relative(f, defaultSaved.file).startsWith(`${f.layout.directory}/sessions/work-evidence/`));
+  assert.ok(relative(f, unrelated.file).startsWith(`${f.layout.directory}/sessions/by-id/` + f.session.sessionId + "/work-evidence/"));
   const read = fs.readFileSync; let unrelatedReads = 0;
   fs.readFileSync = (file, ...args) => { if (file === unrelated.file) unrelatedReads++; return read(file, ...args); };
   let saved; try { saved = f.save({ summary: "New exact incremental work hint" }); } finally { fs.readFileSync = read; }
@@ -226,7 +226,7 @@ test("a damaged named owner restricts its own work without default adoption or l
   assert.ok(result.edges.some(edge => edge.type === "RECORDED_FOR_SESSION" && edge.from === good.evidence.evidenceId && edge.to === second.sessionId));
   assert.deepEqual(snapshot(f.base), before);
   // Existing exact named routing tolerates unrelated malformed default JSON.
-  fs.writeFileSync(path.join(f.root, ".head/sessions/current.json"), "{");
+  fs.writeFileSync(path.join(f.root, f.layout.directory, "sessions/current.json"), "{");
   const damagedDefault = snapshot(f.base), named = await queryProjectGraph(q(f, good));
   assertWork(named, good); assert.deepEqual(snapshot(f.base), damagedDefault);
 });
@@ -272,7 +272,7 @@ test("depth>0 keeps the conservative hidden-owner/nonselected-work proof even wi
   const other = createHeadSession({ root: f.root, purpose: "Unselected work owner" });
   const nonselected = withSessionRoute(f.root, other.sessionId, () => recordSessionWorkEvidence({ root: f.root, input: { summary: "Nonselected candidate" } }));
   const { request, reused } = await warm(f, selected, { depth: 1 }), before = snapshot(f.base);
-  for (const file of [selected.file, nonselected.file, f.route(() => sessionStatePath(f.root)), path.join(f.root, ".head/sessions/by-id", other.sessionId, "current.json")]) {
+  for (const file of [selected.file, nonselected.file, f.route(() => sessionStatePath(f.root)), path.join(f.root, f.layout.directory, "sessions/by-id", other.sessionId, "current.json")]) {
     assert.ok(reused.integrity.verifiedRecordPaths.includes(relative(f, file)), "Missing hidden proof " + relative(f, file));
   }
   assert.deepEqual(snapshot(f.base), before);
@@ -290,7 +290,7 @@ test("A1 exact depth0 omits only independent valid work bytes, retains hidden ow
   const { request, reused } = await warm(f, selected);
   assert.ok(!reused.integrity.verifiedRecordPaths.includes(relative(f, independent.file)));
   for (const file of [selected.file, f.route(() => sessionStatePath(f.root)),
-    path.join(f.root, ".head/sessions/by-id", other.sessionId, "current.json"), path.join(f.root, ".head/sessions/current.json")]) {
+    path.join(f.root, f.layout.directory, "sessions/by-id", other.sessionId, "current.json"), path.join(f.root, f.layout.directory, "sessions/current.json")]) {
     assert.ok(reused.integrity.verifiedRecordPaths.includes(relative(f, file)), "Required owner/default proof " + relative(f, file));
   }
   changeValidHeader(independent);
@@ -313,7 +313,7 @@ test("A1 exact depth0 omits only independent valid work bytes, retains hidden ow
 
 test("per-reference source/artifact kind and changed/missing facts do not overwrite intact work freshness", async t => {
   const f = fixture(t), sourceFile = path.join(f.root, "source.txt"), artifactFile = path.join(f.root, "retained.json");
-  const projectId = f.route(() => JSON.parse(fs.readFileSync(path.join(f.root, ".head/project.json"), "utf8")).projectId);
+  const projectId = f.route(() => JSON.parse(fs.readFileSync(path.join(f.root, f.layout.directory, "project.json"), "utf8")).projectId);
   fs.writeFileSync(sourceFile, "source version 11");
   fs.writeFileSync(artifactFile, JSON.stringify({ projectId, label: "Retained artifact" }));
   const source = { path: "source.txt", digest: sha(fs.readFileSync(sourceFile)), kind: "source" };
@@ -378,7 +378,7 @@ test("two retained file digests stay separate while exact work citations verify 
 
 test("identical file bytes cited as source and artifact preserve both explicit reference kinds", async t => {
   const f = fixture(t), file = path.join(f.root, "dual-kind.json");
-  const projectId = JSON.parse(fs.readFileSync(path.join(f.root, ".head/project.json"), "utf8")).projectId;
+  const projectId = JSON.parse(fs.readFileSync(path.join(f.root, f.layout.directory, "project.json"), "utf8")).projectId;
   fs.writeFileSync(file, JSON.stringify({ projectId, label: "Same physical bytes" }));
   const digest = sha(fs.readFileSync(file)), saved = f.save({ summary: "Explicit kinds are not interchangeable", references: [
     { path: "dual-kind.json", digest, kind: "source" }, { path: "dual-kind.json", digest, kind: "artifact" },
@@ -469,7 +469,7 @@ test("an externally appearing named Session plus work directory invalidates memb
   const f = fixture(t), selected = f.save({ summary: "Existing exact anchor" });
   const external = createHeadSession({ root: f.root, purpose: "New external named owner" });
   const saved = withSessionRoute(f.root, external.sessionId, () => recordSessionWorkEvidence({ root: f.root, input: { summary: "New named owner evidence" } }));
-  const directory = path.join(f.root, ".head/sessions/by-id", external.sessionId), parked = path.join(f.base, "parked-owner");
+  const directory = path.join(f.root, f.layout.directory, "sessions/by-id", external.sessionId), parked = path.join(f.base, "parked-owner");
   fs.renameSync(directory, parked); // Both exact paths belong to this fixture.
   const { request, reused } = await warm(f, selected);
   fs.renameSync(parked, directory);
@@ -492,9 +492,9 @@ test("same-path owner tampering invalidates warm proof instead of retaining a fo
 test("actual default Session identity is a hidden work dependency and a default/named collision cannot be adopted", async t => {
   const f = fixture(t), saved = recordSessionWorkEvidence({ root: f.root, input: { summary: "Default-owned original" } });
   const { request, reused } = await warm(f, saved);
-  assert.ok(reused.integrity.verifiedRecordPaths.includes(".head/sessions/current.json"));
+  assert.ok(reused.integrity.verifiedRecordPaths.includes(`${f.layout.directory}/sessions/current.json`));
   assert.equal(nodeFor(reused, saved).sessionId, saved.evidence.sessionId);
-  const file = path.join(f.root, ".head/sessions/current.json"), state = JSON.parse(fs.readFileSync(file, "utf8"));
+  const file = path.join(f.root, f.layout.directory, "sessions/current.json"), state = JSON.parse(fs.readFileSync(file, "utf8"));
   state.sessionId = f.session.sessionId; fs.writeFileSync(file, JSON.stringify(state));
   const before = snapshot(f.base), result = await queryProjectGraph({ ...request, previousResult: reused });
   assert.notEqual(result.reuse.status, "scoped-originals-reused"); assert.equal(nodeFor(result, saved), undefined);
@@ -509,11 +509,11 @@ test("old/no work index uses originals without query-time repair or Session sele
       index.entries = index.entries.filter(entry => !entry.path.includes("/work-evidence/"));
       fs.writeFileSync(indexFile(f), JSON.stringify(index));
     } else fs.unlinkSync(indexFile(f));
-    const before = snapshot(f.base), defaultState = fs.readFileSync(path.join(f.root, ".head/sessions/current.json"));
+    const before = snapshot(f.base), defaultState = fs.readFileSync(path.join(f.root, f.layout.directory, "sessions/current.json"));
     const selectedState = f.route(() => fs.readFileSync(sessionStatePath(f.root)));
     const result = await queryProjectGraph(q(f, saved)); assertWork(result, saved);
     assert.notEqual(result.reuse.status, "scoped-originals-reused");
-    assert.deepEqual(fs.readFileSync(path.join(f.root, ".head/sessions/current.json")), defaultState);
+    assert.deepEqual(fs.readFileSync(path.join(f.root, f.layout.directory, "sessions/current.json")), defaultState);
     assert.deepEqual(f.route(() => fs.readFileSync(sessionStatePath(f.root))), selectedState);
     assert.deepEqual(snapshot(f.base), before);
   }
@@ -580,7 +580,7 @@ test("A1 same-path invalid producer and unowned original restoration cannot be m
   const other = createHeadSession({ root: f.root, purpose: "Temporarily invalid owner" });
   const unowned = withSessionRoute(f.root, other.sessionId, () => recordSessionWorkEvidence({ root: f.root,
     input: { summary: "Unowned exact citation producer", references: [citation(f, selected)] } }));
-  const ownerPath = path.join(f.root, ".head/sessions/by-id", other.sessionId, "current.json");
+  const ownerPath = path.join(f.root, f.layout.directory, "sessions/by-id", other.sessionId, "current.json");
   const ownerBytes = fs.readFileSync(ownerPath), state = JSON.parse(ownerBytes);
   state.projectId = "head-" + "0".repeat(20); fs.writeFileSync(ownerPath, JSON.stringify(state));
   // A bad generic Session layer may make the existing proof unsupported; this
@@ -602,7 +602,7 @@ for (const field of ["activeRunId", "lastResultPacketId", "latestCheckpoint", "c
   const f = fixture(t), selected = f.save({ summary: "Incoming generic state target" });
   const other = createHeadSession({ root: f.root, purpose: "Mutable nonselected owner" });
   withSessionRoute(f.root, other.sessionId, () => recordSessionWorkEvidence({ root: f.root, input: { summary: "Independent owned work" } }));
-  const ownerPath = path.join(f.root, ".head/sessions/by-id", other.sessionId, "current.json");
+  const ownerPath = path.join(f.root, f.layout.directory, "sessions/by-id", other.sessionId, "current.json");
   const { request, reused } = await warm(f, selected);
   assert.ok(reused.integrity.verifiedRecordPaths.includes(relative(f, ownerPath)));
   const state = JSON.parse(fs.readFileSync(ownerPath)); state[field] = selected.evidence.evidenceId;

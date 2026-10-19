@@ -1,3 +1,6 @@
+import { workerSourcePathParts } from "./worker-source-basis.mjs";
+import { formatForVerifiedOwner, familyFormatForOriginal } from "./project-storage-format.mjs";
+const lineageFormat = record => familyFormatForOriginal({ sessionIdentity: true }, record);
 import fs from "node:fs";
 import path from "node:path";
 import { artifactAuthorityBoundary, verifyArtifactAuthorityBoundary } from "./authority-plane-contract.mjs";
@@ -17,8 +20,8 @@ const claimSuffix = ".effect-claim.json";
 const key = relative => process.platform === "win32" ? relative.toLowerCase() : relative;
 const image = value => value.kind === "absent" ? { kind: "absent" } : { kind: "file", content: value.contentBase64, mode: value.mode };
 
-function requireCurrentEffectAuthority(root, integrationId) {
-  const intent = requireCurrentWorkerPatchIntegration({ root, integrationId });
+function requireCurrentEffectAuthority(root, integrationId, storage) {
+  const intent = requireCurrentWorkerPatchIntegration({ root, integrationId, storage });
   // An empty proposal creates no file effect. Keep that observation usable
   // under read-only authority instead of adding a write gate to a no-op result.
   if (intent.composition.patches.length === 0) return intent;
@@ -50,17 +53,18 @@ function verify(value, kind) {
     || !same(Object.fromEntries(Object.keys(flags).map(name => [name, value[name]])), flags)) fail("Integration application evidence differs from its digest or authority.");
   return value;
 }
-function fileFor(root, integrationId, suffix) { return path.join(workerIntegrationDirectory(root), `${integrationId}${suffix}`); }
+function fileFor(root, intent, suffix) { return path.join(workerIntegrationDirectory(root, false, lineageFormat(intent.lineage)), `${intent.integrationId}${suffix}`); }
 function optional(file, kind) {
   try { return verify(JSON.parse(readIntegrationBytes(file)), kind); }
   catch (error) { if (error.code === "ENOENT") return null; throw error; }
 }
-function nativeEffect(root, patch, binding) {
+function nativeEffect(root, patch, binding, storage) {
+  workerSourcePathParts(patch.before.path, storage);
   return { root: fs.realpathSync(root), rootIdentity: binding.rootIdentity, ancestorIdentities: binding.ancestorIdentities,
     path: patch.before.path, before: image(patch.before), after: image(patch.after), maxBytes: (patch.before.bytes || 0) + (patch.after.bytes || 0) };
 }
 function attemptEffect(root, intent, effect, previousIntentId = null) {
-  const value = nativeEffect(root, intent.composition.patches[effect.index], effect.binding);
+  const value = nativeEffect(root, intent.composition.patches[effect.index], effect.binding, lineageFormat(intent.lineage));
   return previousIntentId ? { ...value, previousIntentId } : value;
 }
 function attemptSuffix(index, attemptNumber, phase) {
@@ -86,7 +90,7 @@ function knownNotPublished(current) {
     && response.result.intentId === receipt.nativeIntentId;
 }
 function readClaim(root, intent) {
-  const claim = optional(fileFor(root, intent.integrationId, claimSuffix), "WorkerIntegrationEffectClaim");
+  const claim = optional(fileFor(root, intent, claimSuffix), "WorkerIntegrationEffectClaim");
   if (!claim) return null;
   if (claim.integrationId !== intent.integrationId || claim.integrationHash !== intent.integrationHash || !same(claim.lineage, intent.lineage)
     || !Array.isArray(claim.effects) || claim.effects.length !== intent.composition.patches.length) fail("Effect claim differs from its integration.");
@@ -101,7 +105,7 @@ function readClaim(root, intent) {
   });
   return claim;
 }
-function readEffect(root, intent, claim, effect, directoryEntries = fs.readdirSync(workerIntegrationDirectory(root))) {
+function readEffect(root, intent, claim, effect, directoryEntries = fs.readdirSync(workerIntegrationDirectory(root, false, lineageFormat(intent.lineage)))) {
   // Sequence is an immutable linked history, not a mutable latest pointer.
   // Enumerate final names too: a missing middle attempt cannot hide later work.
   const prefix = `${intent.integrationId}.effect-${effect.index}.attempt-`;
@@ -116,9 +120,9 @@ function readEffect(root, intent, claim, effect, directoryEntries = fs.readdirSy
   const attempts = [];
   for (const [position, attemptNumber] of [...numbers].sort((a, b) => a - b).entries()) {
     if (position !== attemptNumber) fail("Linked effect attempt history has a gap.");
-    const started = optional(fileFor(root, intent.integrationId, attemptSuffix(effect.index, attemptNumber, "started")), "WorkerIntegrationEffectAttempt");
-    const initialReceipt = optional(fileFor(root, intent.integrationId, attemptSuffix(effect.index, attemptNumber, "receipt")), "WorkerIntegrationEffectReceipt");
-    const reconciliationReceipt = optional(fileFor(root, intent.integrationId, attemptSuffix(effect.index, attemptNumber, "reconciled.receipt")), "WorkerIntegrationEffectReceipt");
+    const started = optional(fileFor(root, intent, attemptSuffix(effect.index, attemptNumber, "started")), "WorkerIntegrationEffectAttempt");
+    const initialReceipt = optional(fileFor(root, intent, attemptSuffix(effect.index, attemptNumber, "receipt")), "WorkerIntegrationEffectReceipt");
+    const reconciliationReceipt = optional(fileFor(root, intent, attemptSuffix(effect.index, attemptNumber, "reconciled.receipt")), "WorkerIntegrationEffectReceipt");
     if (!started && !initialReceipt && !reconciliationReceipt && attemptNumber === 0 && numbers.size === 1) break;
     if (!started) fail("Effect receipt or retry lacks its durable attempt.");
     const previous = attempts.at(-1);
@@ -184,7 +188,7 @@ function knownNoWriteInspection(value, nativeIntentId) {
     && value.status === "preimage-observed" && value.appliedByThisRead === false;
 }
 function settlement(root, intent, claim, results) {
-  const value = optional(fileFor(root, intent.integrationId, ".settled-incomplete.json"), "WorkerIntegrationIncompleteSettlement");
+  const value = optional(fileFor(root, intent, ".settled-incomplete.json"), "WorkerIntegrationIncompleteSettlement");
   if (value && (value.integrationId !== intent.integrationId || value.claimId !== claim.recordId
     || !same(value.receiptIds, results.map(result => result.receipt?.recordId || null))
     || results.some(result => result.started && result.receipt?.ownerQuiescent !== true))) fail("Incomplete settlement lacks exact quiescent effects.");
@@ -192,10 +196,10 @@ function settlement(root, intent, claim, results) {
 }
 
 // P4 historical read: no provider, native process, status mutation, or P2 write.
-function readApplicationEvidence({ root, integrationId }, directoryEntries) {
-  const { intent } = readWorkerPatchIntegration({ root, integrationId });
+function readApplicationEvidence({ root, integrationId, storage }, directoryEntries) {
+  const { intent } = readWorkerPatchIntegration({ root, integrationId, storage });
   const claim = readClaim(root, intent);
-  const names = directoryEntries || fs.readdirSync(workerIntegrationDirectory(root));
+  const names = directoryEntries || fs.readdirSync(workerIntegrationDirectory(root, false, lineageFormat(intent.lineage)));
   const effectResults = claim ? claim.effects.map(effect => readEffect(root, intent, claim, effect, names)) : [];
   const settled = claim && settlement(root, intent, claim, effectResults);
   const allEffectsCompleted = !!claim && effectResults.every(result => result.status === "applied");
@@ -204,12 +208,12 @@ function readApplicationEvidence({ root, integrationId }, directoryEntries) {
       : effectResults.some(result => result.started) ? "incomplete" : "applying",
     outstanding: !!claim && !allEffectsCompleted && !settled, semanticVerification: "not-assessed", ...flags };
 }
-export function readWorkerPatchApplicationEvidence({ root = ".", integrationId } = {}) {
-  return readApplicationEvidence({ root, integrationId });
+export function readWorkerPatchApplicationEvidence({ root = ".", integrationId, storage } = {}) {
+  return readApplicationEvidence({ root, integrationId, storage });
 }
-export function readWorkerPatchApplication({ root = ".", integrationId } = {}) {
-  const view = readWorkerPatchApplicationEvidence({ root, integrationId });
-  const currentBasis = readWorkerIntegrationBasis({ root, integrationId });
+export function readWorkerPatchApplication({ root = ".", integrationId, storage } = {}) {
+  const view = readWorkerPatchApplicationEvidence({ root, integrationId, storage });
+  const currentBasis = readWorkerIntegrationBasis({ root, integrationId, storage });
   const unavailable = currentBasis.dependencies.filter(entry => entry.changedDuringObservation || entry.observed.kind === "unverifiable")
     .map(entry => ({ path: entry.path, role: entry.expectedEffect ? "effect-target" : "read-dependency",
       reason: entry.changedDuringObservation ? "changed-during-observation" : entry.observed.code || "unverifiable" }));
@@ -233,28 +237,28 @@ export function readWorkerPatchApplication({ root = ".", integrationId } = {}) {
 // A Run/Session change cannot erase an earlier possible file effect. Only actual
 // patch paths (not read dependencies or no-op ownership) participate. This is
 // an on-demand projection over durable P3, not a second authoritative registry.
-export function readOutstandingWorkerEffects({ root = ".", integrationId } = {}) {
-  const { intent } = readWorkerPatchIntegration({ root, integrationId });
+export function readOutstandingWorkerEffects({ root = ".", integrationId, storage } = {}) {
+  const { intent } = readWorkerPatchIntegration({ root, integrationId, storage });
   const conflicts = [];
-  const names = fs.readdirSync(workerIntegrationDirectory(root));
+  const names = fs.readdirSync(workerIntegrationDirectory(root, false, lineageFormat(intent.lineage)));
   for (const name of names) {
     if (!/^worker-integration-[a-f0-9]{24}--[a-f0-9]{24}\.effect-claim\.json$/.test(name)) continue;
     const priorId = name.slice(0, -claimSuffix.length);
     if (priorId === integrationId) continue;
-    const { intent: prior } = readWorkerPatchIntegration({ root, integrationId: priorId });
+    const { intent: prior } = readWorkerPatchIntegration({ root, integrationId: priorId, storage });
     if (prior.lineage.projectId !== intent.lineage.projectId || prior.lineage.projectRootDigest !== intent.lineage.projectRootDigest) fail("Durable effect claim scope cannot be verified.");
     // A damaged claim for an unrelated exact stored integration must not make
     // unrelated ordinary paths unusable. Only the immutable intent owns scope.
     const overlap = prior.composition.patches.filter(patch => intent.composition.patches.some(current => workerEffectPathsOverlap(patch.before.path, current.before.path)));
     if (!overlap.length) continue;
-    const previous = readApplicationEvidence({ root, integrationId: priorId }, names);
+    const previous = readApplicationEvidence({ root, integrationId: priorId, storage }, names);
     if (previous.outstanding) conflicts.push({ integrationId: priorId, claimId: previous.claim.recordId,
       paths: overlap.map(patch => patch.before.path), status: previous.status, runId: prior.lineage.runId });
   }
   return { conflicts, hasConflicts: conflicts.length > 0, authorityEffect: "none", ...flags };
 }
 function journalDirectory(root, intent, claim, create) {
-  let directory = resolveRuntimeOperationalStateRoot({ projectRoot: fs.realpathSync(root), create });
+  let directory = resolveRuntimeOperationalStateRoot({ projectRoot: fs.realpathSync(root), storage: lineageFormat(intent.lineage), create });
   for (const segment of ["worker-integrations", intent.lineage.projectId, claim.recordId]) {
     directory = path.join(directory, segment);
     if (create) { try { fs.mkdirSync(directory, { mode: 0o700 }); } catch (error) { if (error.code !== "EEXIST") throw error; } }
@@ -276,7 +280,7 @@ function hostTools(host) {
 function saveReceipt(root, intent, claim, effect, attempt, data, phase = "receipt") {
   const receipt = identify("WorkerIntegrationEffectReceipt", { integrationId: intent.integrationId, claimId: claim.recordId,
     index: effect.index, inputDigest: effect.inputDigest, attemptNumber: attempt.attemptNumber, attemptId: attempt.recordId, ...data });
-  publishIntegrationJson(fileFor(root, intent.integrationId, attemptSuffix(effect.index, attempt.attemptNumber, phase)), receipt);
+  publishIntegrationJson(fileFor(root, intent, attemptSuffix(effect.index, attempt.attemptNumber, phase)), receipt);
   return receipt;
 }
 function unchangedSelectedBasis(before, after, completedPath = null) {
@@ -306,14 +310,14 @@ export async function applyWorkerPatchIntegration(input = {}, host = {}) {
     nextStep: nextSteps[view.action] || "HEAD inspects the exact effect history, current basis and owned process state before any retry. Missing or unknown effect evidence is not permission to replay or overwrite." } };
 }
 
-async function applyWorkerPatchIntegrationInternal({ root = ".", integrationId, basisDigest, retryKnownNoWrite = false } = {}, host = {}) {
+async function applyWorkerPatchIntegrationInternal({ root = ".", integrationId, basisDigest, retryKnownNoWrite = false, storage } = {}, host = {}) {
   if (typeof retryKnownNoWrite !== "boolean") fail("Known-no-write retry must be an explicit boolean choice.");
   return withProjectMutationAsync({ root, scope: "session-recovery" }, async () => {
-    const intent = requireCurrentWorkerPatchIntegration({ root, integrationId });
-    let view = readWorkerPatchApplication({ root, integrationId });
+    const intent = requireCurrentWorkerPatchIntegration({ root, integrationId, storage });
+    let view = readWorkerPatchApplication({ root, integrationId, storage });
     if (view.allEffectsCompleted || view.settlement) return view;
-    requireCurrentEffectAuthority(root, integrationId);
-    const collisions = readOutstandingWorkerEffects({ root, integrationId });
+    requireCurrentEffectAuthority(root, integrationId, storage);
+    const collisions = readOutstandingWorkerEffects({ root, integrationId, storage });
     if (collisions.hasConflicts) return { ...view, action: "reconcile-overlapping-effects", collisions };
     if (!view.currentBasis.observationStable || !view.currentBasis.allDependenciesObservable) return { ...view, action: "inspect-unverifiable-basis" };
     if (basisDigest !== undefined && basisDigest !== view.currentBasis.basisDigest) return { ...view, action: "refresh-head-assessment" };
@@ -324,45 +328,45 @@ async function applyWorkerPatchIntegrationInternal({ root = ".", integrationId, 
       const effects = [];
       const unsupported = [];
       for (const [index, patch] of intent.composition.patches.entries()) {
-        const discovery = nativeEffect(root, patch, { rootIdentity: "", ancestorIdentities: [] });
+        const discovery = nativeEffect(root, patch, { rootIdentity: "", ancestorIdentities: [] }, lineageFormat(intent.lineage));
         // Preflight does not write a journal, so it may use the future parent.
         const preflight = await invoke({ operation: "image-preflight", payload: { effect: discovery,
-          journal: resolveRuntimeOperationalStateRoot({ projectRoot: fs.realpathSync(root), create: false }) } }, { ...options, onProcess });
+          journal: resolveRuntimeOperationalStateRoot({ projectRoot: fs.realpathSync(root), storage: lineageFormat(intent.lineage), create: false }) } }, { ...options, onProcess });
         if (preflight.status !== "ok" || preflight.result.status !== "supported") {
           unsupported.push({ path: patch.before.path, code: preflight.error?.code || preflight.result.reason }); continue;
         }
         const binding = { rootIdentity: preflight.result.rootIdentity, ancestorIdentities: preflight.result.ancestorIdentities };
-        const effect = nativeEffect(root, patch, binding);
+        const effect = nativeEffect(root, patch, binding, lineageFormat(intent.lineage));
         effects.push({ index, path: patch.before.path, binding, inputDigest: digest(json(effect)) });
       }
       if (unsupported.length) return { ...view, action: "unsupported-file-effects", unsupported };
       // Awaited preflight may have allowed source/pointer changes. Recheck both
       // before publishing a durable claim; native repeats exact path preimages.
-      requireCurrentEffectAuthority(root, integrationId);
-      if (readWorkerIntegrationBasis({ root, integrationId }).basisDigest !== view.currentBasis.basisDigest) return { ...readWorkerPatchApplication({ root, integrationId }), action: "refresh-head-assessment" };
+      requireCurrentEffectAuthority(root, integrationId, storage);
+      if (readWorkerIntegrationBasis({ root, integrationId, storage }).basisDigest !== view.currentBasis.basisDigest) return { ...readWorkerPatchApplication({ root, integrationId, storage }), action: "refresh-head-assessment" };
       claim = identify("WorkerIntegrationEffectClaim", { integrationId, integrationHash: intent.integrationHash,
         lineage: intent.lineage, preparedBasisDigest: view.currentBasis.basisDigest, effects });
-      publishIntegrationJson(fileFor(root, integrationId, claimSuffix), claim);
+      publishIntegrationJson(fileFor(root, intent, claimSuffix), claim);
     }
-    if (!claim.effects.length) return readWorkerPatchApplication({ root, integrationId });
+    if (!claim.effects.length) return readWorkerPatchApplication({ root, integrationId, storage });
     // Check durable attempted effects BEFORE recreating any Host directories.
     // Missing P5 is not permission to rerun a durable started effect.
     const unresolved = claim.effects.map(effect => readEffect(root, intent, claim, effect))
       .filter(result => result.started && result.receipt?.status !== "applied");
     if (unresolved.some(result => !retryKnownNoWrite || result.status !== "not-started"
       || result.receipt.ownerQuiescent !== true || !result.receipt.nativeIntentId)) {
-      return { ...readWorkerPatchApplication({ root, integrationId }), action: "reconcile-started-effect" };
+      return { ...readWorkerPatchApplication({ root, integrationId, storage }), action: "reconcile-started-effect" };
     }
     let journal;
     try { journal = journalDirectory(root, intent, claim, unresolved.length === 0); }
-    catch (error) { if (error.code === "ENOENT") return { ...readWorkerPatchApplication({ root, integrationId }), action: "host-effect-evidence-unavailable" }; throw error; }
+    catch (error) { if (error.code === "ENOENT") return { ...readWorkerPatchApplication({ root, integrationId, storage }), action: "host-effect-evidence-unavailable" }; throw error; }
     let acceptedBasis = view.currentBasis;
     for (const effect of claim.effects) {
       const current = readEffect(root, intent, claim, effect);
       if (current.receipt?.status === "applied") continue;
-      requireCurrentEffectAuthority(root, integrationId);
-      const beforeEffect = readWorkerIntegrationBasis({ root, integrationId });
-      if (!unchangedSelectedBasis(acceptedBasis, beforeEffect)) return { ...readWorkerPatchApplication({ root, integrationId }), action: "refresh-head-assessment" };
+      requireCurrentEffectAuthority(root, integrationId, storage);
+      const beforeEffect = readWorkerIntegrationBasis({ root, integrationId, storage });
+      if (!unchangedSelectedBasis(acceptedBasis, beforeEffect)) return { ...readWorkerPatchApplication({ root, integrationId, storage }), action: "refresh-head-assessment" };
       acceptedBasis = beforeEffect;
       let retryInspection = null;
       const retryBasisKind = current.started ? knownNotPublished(current) ? "not-published" : "native-no-write" : null;
@@ -373,27 +377,27 @@ async function applyWorkerPatchIntegrationInternal({ root = ".", integrationId, 
         // Quiescence comes from the prior effect owner, not this inspection's
         // exit, a matching preimage, or merely an absent P5 journal.
         if (!retryKnownNoWrite || current.status !== "not-started" || current.receipt.ownerQuiescent !== true) {
-          return { ...readWorkerPatchApplication({ root, integrationId }), action: "reconcile-started-effect" };
+          return { ...readWorkerPatchApplication({ root, integrationId, storage }), action: "reconcile-started-effect" };
         }
         if (retryBasisKind === "not-published") {
           // A prior exact terminal proves only that invocation did not offer an
           // intent. A fresh current preimage is still mandatory. Re-offering
           // keeps the same journal and CREATE_NEW collision protection.
           const selected = beforeEffect.dependencies.find(dependency => key(dependency.path) === key(effect.path));
-          if (!prepare || !selected?.expectedPreimagePresent) return { ...readWorkerPatchApplication({ root, integrationId }), action: "retry-basis-unavailable" };
+          if (!prepare || !selected?.expectedPreimagePresent) return { ...readWorkerPatchApplication({ root, integrationId, storage }), action: "retry-basis-unavailable" };
           if (current.started.preDispatchBinding.payloadDigest !== digest(JSON.stringify({ effect: requestEffect, journal }))) {
-            return { ...readWorkerPatchApplication({ root, integrationId }), action: "host-effect-evidence-unavailable", reason: "effect-journal-binding-changed" };
+            return { ...readWorkerPatchApplication({ root, integrationId, storage }), action: "host-effect-evidence-unavailable", reason: "effect-journal-binding-changed" };
           }
         } else {
           const response = await invoke({ operation: "image-inspect", payload: { effect: requestEffect, journal } }, { ...options, onProcess });
           if (response.status !== "ok" || !knownNoWriteInspection(response.result, current.receipt.nativeIntentId)) {
-            return { ...readWorkerPatchApplication({ root, integrationId }), action: "retry-basis-unavailable", retryObservation: response };
+            return { ...readWorkerPatchApplication({ root, integrationId, storage }), action: "retry-basis-unavailable", retryObservation: response };
           }
           retryInspection = response.result;
         }
-        requireCurrentEffectAuthority(root, integrationId);
-        if (readWorkerIntegrationBasis({ root, integrationId }).basisDigest !== beforeEffect.basisDigest) {
-          return { ...readWorkerPatchApplication({ root, integrationId }), action: "refresh-head-assessment" };
+        requireCurrentEffectAuthority(root, integrationId, storage);
+        if (readWorkerIntegrationBasis({ root, integrationId, storage }).basisDigest !== beforeEffect.basisDigest) {
+          return { ...readWorkerPatchApplication({ root, integrationId, storage }), action: "refresh-head-assessment" };
         }
         if (!same(readClaim(root, intent), claim) || !same(readEffect(root, intent, claim, effect), current)) fail("Effect retry evidence changed during inspection.");
       }
@@ -411,22 +415,22 @@ async function applyWorkerPatchIntegrationInternal({ root = ".", integrationId, 
         if (prepared.binding.payloadDigest !== digest(JSON.stringify(request.payload))) fail("Prepared dispatch differs from its exact effect journal.");
         // Preparation itself starts no child. A failed/changed preparation may
         // resume the same claim without inventing a started effect or receipt.
-        requireCurrentEffectAuthority(root, integrationId);
-        if (readWorkerIntegrationBasis({ root, integrationId }).basisDigest !== beforeEffect.basisDigest) {
-          return { ...readWorkerPatchApplication({ root, integrationId }), action: "refresh-head-assessment" };
+        requireCurrentEffectAuthority(root, integrationId, storage);
+        if (readWorkerIntegrationBasis({ root, integrationId, storage }).basisDigest !== beforeEffect.basisDigest) {
+          return { ...readWorkerPatchApplication({ root, integrationId, storage }), action: "refresh-head-assessment" };
         }
         if (!same(readClaim(root, intent), claim) || !same(readEffect(root, intent, claim, effect), current)) fail("Effect evidence changed before prepared dispatch.");
       }
       // No asynchronous work remains between this exact authority check and
       // publication/dispatch. A pre-dispatch denial must not become an unknown
       // native effect or consume the operation's retry history.
-      requireCurrentEffectAuthority(root, integrationId);
+      requireCurrentEffectAuthority(root, integrationId, storage);
       const attempt = identify("WorkerIntegrationEffectAttempt", { integrationId, claimId: claim.recordId,
         index: effect.index, inputDigest: effect.inputDigest, attemptNumber,
         operation, previousAttemptId: current.started?.recordId || null, retryBasisKind,
         previousNativeIntentId, nativeInputDigest: digest(json(attemptEffect(root, intent, effect, previousNativeIntentId))), retryInspection,
         preDispatchBinding: prepared?.binding || null });
-      publishIntegrationJson(fileFor(root, integrationId, attemptSuffix(effect.index, attemptNumber, "started")), attempt);
+      publishIntegrationJson(fileFor(root, intent, attemptSuffix(effect.index, attemptNumber, "started")), attempt);
       let response;
       let terminalProof = null;
       try {
@@ -442,29 +446,29 @@ async function applyWorkerPatchIntegrationInternal({ root = ".", integrationId, 
       } catch (error) {
         saveReceipt(root, intent, claim, effect, attempt, { status: "unknown", ownerQuiescent,
           nativeStatus: "transport-unknown", nativeIntentId: null, errorCode: String(error.code || "TRANSPORT_ERROR"), terminalProof: null });
-        return { ...readWorkerPatchApplication({ root, integrationId }), action: "inspect-incomplete-effects" };
+        return { ...readWorkerPatchApplication({ root, integrationId, storage }), action: "inspect-incomplete-effects" };
       }
       const status = response.status === "ok" && response.result?.status === "effect-observed" && ownerQuiescent ? "applied"
         : response.result?.status === "not-started" && ownerQuiescent ? "not-started" : "unknown";
       saveReceipt(root, intent, claim, effect, attempt, { status, ownerQuiescent, nativeStatus: response.result?.status || "unknown",
         nativeIntentId: response.result?.intentId || null, errorCode: response.error?.code || null, terminalProof });
-      if (status !== "applied") return { ...readWorkerPatchApplication({ root, integrationId }), action: "inspect-incomplete-effects" };
-      const afterEffect = readWorkerIntegrationBasis({ root, integrationId });
-      if (!unchangedSelectedBasis(acceptedBasis, afterEffect, effect.path)) return { ...readWorkerPatchApplication({ root, integrationId }), action: "refresh-head-assessment" };
+      if (status !== "applied") return { ...readWorkerPatchApplication({ root, integrationId, storage }), action: "inspect-incomplete-effects" };
+      const afterEffect = readWorkerIntegrationBasis({ root, integrationId, storage });
+      if (!unchangedSelectedBasis(acceptedBasis, afterEffect, effect.path)) return { ...readWorkerPatchApplication({ root, integrationId, storage }), action: "refresh-head-assessment" };
       // Only this verified exact postimage advances the accepted observation;
       // awaited provider/native work cannot silently accept other dependencies.
       acceptedBasis = afterEffect;
     }
-    return readWorkerPatchApplication({ root, integrationId });
+    return readWorkerPatchApplication({ root, integrationId, storage });
   });
 }
 
 // Reconciliation observes retained phases only. A postimage alone never creates
 // a success receipt. Crash recovery can add a receipt only for exact native
 // completion (no future source writes in that code path), not just same bytes.
-export async function reconcileWorkerPatchIntegration({ root = ".", integrationId } = {}, host = {}) {
+export async function reconcileWorkerPatchIntegration({ root = ".", integrationId, storage } = {}, host = {}) {
   return withProjectMutationAsync({ root, scope: "session-recovery" }, async () => {
-    const view = readWorkerPatchApplication({ root, integrationId });
+    const view = readWorkerPatchApplication({ root, integrationId, storage });
     if (!view.claim || view.settlement) return view;
     const { invoke, options, onProcess } = hostTools(host);
     let journal;
@@ -484,17 +488,21 @@ export async function reconcileWorkerPatchIntegration({ root = ".", integrationI
           current.receipt ? "reconciled.receipt" : "receipt");
       }
     }
-    return { ...readWorkerPatchApplication({ root, integrationId }), observations };
+    return { ...readWorkerPatchApplication({ root, integrationId, storage }), observations };
   });
+}
+
+export function validateWorkerIntegrationSettlementReason(reason) {
+  if (typeof reason !== "string" || !reason.trim() || reason.length > 4000 || /[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(reason)) fail("Incomplete handoff needs a bounded explanation, not executable instructions.");
 }
 
 // An explicit HEAD handoff may close a quiescent incomplete attempt. It cannot
 // call it success, retry its uncertain effects, or erase history. A later fresh
 // integration can use a new inspected basis without an eternal path reservation.
-export async function settleIncompleteWorkerPatchIntegration({ root = ".", integrationId, basisDigest, reason } = {}) {
-  if (typeof reason !== "string" || !reason.trim() || reason.length > 4000 || /[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(reason)) fail("Incomplete handoff needs a bounded explanation, not executable instructions.");
+export async function settleIncompleteWorkerPatchIntegration({ root = ".", integrationId, basisDigest, reason, storage } = {}) {
+  validateWorkerIntegrationSettlementReason(reason);
   return withProjectMutationAsync({ root, scope: "session-recovery" }, async () => {
-    const view = readWorkerPatchApplication({ root, integrationId });
+    const view = readWorkerPatchApplication({ root, integrationId, storage });
     if (view.settlement) {
       if (view.settlement.reason !== reason || view.settlement.basisDigest !== basisDigest) fail("Incomplete handoff retry differs from its recorded explanation or basis.");
       return view;
@@ -506,7 +514,7 @@ export async function settleIncompleteWorkerPatchIntegration({ root = ".", integ
     if (!effectsObservable || view.currentBasis.basisDigest !== basisDigest) return { ...view, action: "inspect-current-basis" };
     const value = identify("WorkerIntegrationIncompleteSettlement", { integrationId, claimId: view.claim.recordId,
       receiptIds: view.effectResults.map(result => result.receipt?.recordId || null), basisDigest, reason });
-    publishIntegrationJson(fileFor(root, integrationId, ".settled-incomplete.json"), value);
-    return readWorkerPatchApplication({ root, integrationId });
+    publishIntegrationJson(fileFor(root, view.intent, ".settled-incomplete.json"), value);
+    return readWorkerPatchApplication({ root, integrationId, storage });
   });
 }

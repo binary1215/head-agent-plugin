@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import path from "node:path";
 import { buildClaudeMarketplaceSnapshot } from "./lib/claude-marketplace.mjs";
+import { ARTIFACT_COMPOSITION } from "./lib/lode-artifact-composition.mjs";
 
 function option(name, fallback = "") {
   const index = process.argv.indexOf(name);
@@ -13,7 +14,7 @@ try {
   const report = buildClaudeMarketplaceSnapshot({
     sourceRoot: path.resolve(option("--source", ".")),
     outputRoot: path.resolve(output),
-    name: option("--marketplace-name", "head-agent-plugin"),
+    name: option("--marketplace-name", ARTIFACT_COMPOSITION.marketplaceName),
     repository: option("--source-repository", "local"),
     commit: option("--source-commit", "local"),
     nativeOverlayRoot: option("--native-root") ? path.resolve(option("--native-root")) : null,

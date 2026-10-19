@@ -53,14 +53,14 @@ ChangeSet -MATERIALIZED_AS-> VcsEvidence -REFERENCES-> GitCommit
 ## 명령
 
 ```text
-node scripts/head.mjs change-set-record <project> --input <change-set.json>
-node scripts/head.mjs change-set-status <project>
-node scripts/head.mjs change-set-read <project> --change-set <change-set-id>
-node scripts/head.mjs change-impact-candidates <project> --candidate-set <candidate-set-id>
-node scripts/head.mjs change-impact-review <project> --input <review.json>
-node scripts/head.mjs change-impact-review-read <project> --review <review-decision-id>
-node scripts/head.mjs change-set-vcs-attach <project> --input <vcs-evidence.json>
-node scripts/head.mjs change-set-vcs-read <project> --vcs-evidence <vcs-evidence-id>
+node scripts/lode.mjs change-set-record <project> --input <change-set.json>
+node scripts/lode.mjs change-set-status <project>
+node scripts/lode.mjs change-set-read <project> --change-set <change-set-id>
+node scripts/lode.mjs change-impact-candidates <project> --candidate-set <candidate-set-id>
+node scripts/lode.mjs change-impact-review <project> --input <review.json>
+node scripts/lode.mjs change-impact-review-read <project> --review <review-decision-id>
+node scripts/lode.mjs change-set-vcs-attach <project> --input <vcs-evidence.json>
+node scripts/lode.mjs change-set-vcs-read <project> --vcs-evidence <vcs-evidence-id>
 ```
 
 최소 recording input:
@@ -96,20 +96,20 @@ VCS evidence attachment input:
 }
 ```
 
-읽기 전용 MCP tool `head_change_set_status`와 `head_vcs_evidence`는 어떤 것도 기록, 검토 또는 promote하지 않고 검증된 state와 attachment를 노출합니다. 정확한 영속 impact decision이 있지만 state pointer 반영이 남았다면 status는 `requiresNewUserDecision: false`인 복구 상태를 표시하고 변경되지 않은 결정을 재시도하도록 안내합니다.
+읽기 전용 MCP tool `lode_change_set_status`와 `lode_vcs_evidence`는 어떤 것도 기록, 검토 또는 promote하지 않고 검증된 state와 attachment를 노출합니다. 정확한 영속 impact decision이 있지만 state pointer 반영이 남았다면 status는 `requiresNewUserDecision: false`인 복구 상태를 표시하고 변경되지 않은 결정을 재시도하도록 안내합니다.
 
 ## 프로젝트 아티팩트
 
 ```text
-.head/change-sets/current.json
-.head/change-sets/records/change-set-*.json
-.head/change-sets/impact-candidate-sets/change-impact-candidates-*.json
-.head/change-sets/impact-review-decisions/change-impact-review-decision-*.json
-.head/change-sets/vcs-evidence/vcs-evidence-*.json
+.lode/change-sets/current.json
+.lode/change-sets/records/change-set-*.json
+.lode/change-sets/impact-candidate-sets/change-impact-candidates-*.json
+.lode/change-sets/impact-review-decisions/change-impact-review-decision-*.json
+.lode/change-sets/vcs-evidence/vcs-evidence-*.json
 ```
 
 모든 artifact와 pointer는 콘텐츠에서 파생되고 다이제스트로 검증됩니다. source drift, 수락되지 않은 execution review, 일치하지 않는 ResultPacket/ReviewDecision, 누락된 pinned snapshot, stale candidate identity, tampering, active/pending Run conflict 및 빈 revision difference는 fail-closed 방식으로 실패합니다.
 
 ## 유예된 경계
 
-CI 또는 filesystem event로부터 ChangeSet 자동 생성, 추론된 commit-to-ChangeSet matching, 일반 execution-lineage graph projection, merge automation, imported ticket/backlog adapter, document review receipt를 이후 graph에 projection하는 작업, Obsidian/Notion projection 및 GraphDB acceleration은 계속 유예됩니다. 비차단 공급자 HEAD Conformance candidate는 별도의 P3/P4/P5 subsystem으로 활성화되며 이 blocking impact-review state pointer를 재사용하지 않습니다. [Conformance 재정](conformance-reconciliation.md)을 참고하세요. 명시적 DocumentChangeCandidate review/application은 활성화되어 있지만 ChangeSet을 생성하거나 ChangeSet authority를 변경하지 않습니다.
+CI 또는 filesystem event로부터 ChangeSet 자동 생성, 추론된 commit-to-ChangeSet matching, 일반 execution-lineage graph projection, merge automation, imported ticket/backlog adapter, document review receipt를 이후 graph에 projection하는 작업, Obsidian/Notion projection 및 GraphDB acceleration은 계속 유예됩니다. 비차단 공급자 Lode Conformance candidate는 별도의 P3/P4/P5 subsystem으로 활성화되며 이 blocking impact-review state pointer를 재사용하지 않습니다. [Conformance 재정](conformance-reconciliation.md)을 참고하세요. 명시적 DocumentChangeCandidate review/application은 활성화되어 있지만 ChangeSet을 생성하거나 ChangeSet authority를 변경하지 않습니다.

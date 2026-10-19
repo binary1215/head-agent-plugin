@@ -1,3 +1,4 @@
+import { formatForVerifiedOwner, familyFormatForOriginal } from "./project-storage-format.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import {
@@ -115,15 +116,16 @@ export function normalizeObservationSourceBinding(binding = {}) {
 }
 
 export class StructuredObservationAdapter {
-  constructor({ descriptor, input } = {}) {
+  constructor({ descriptor, input } = {}, storage = null) {
+    this.format = formatForVerifiedOwner(storage);
     this.adapterVersion = OBSERVATION_PROTOCOL_VERSION;
-    this.descriptor = descriptor?.kind === "ObservationTypeDescriptor" ? verifyObservationTypeDescriptor(descriptor) : createObservationTypeDescriptor(descriptor);
+    this.descriptor = descriptor?.kind === "ObservationTypeDescriptor" ? verifyObservationTypeDescriptor(descriptor, storage) : createObservationTypeDescriptor(descriptor, storage);
     this.input = input;
   }
 
   describe() {
     return {
-      adapterKey: "head.structured-host-observation",
+      adapterKey: this.format.value("head.structured-host-observation"),
       adapterVersion: this.adapterVersion,
       descriptorId: this.descriptor.descriptorId,
       descriptorHash: this.descriptor.descriptorHash,
@@ -139,9 +141,10 @@ export class StructuredObservationAdapter {
 }
 
 export class JsonEventFileObservationAdapter {
-  constructor({ descriptor, eventFile, maxBytes = MAX_EVENT_FILE_BYTES } = {}) {
+  constructor({ descriptor, eventFile, maxBytes = MAX_EVENT_FILE_BYTES } = {}, storage = null) {
+    this.format = formatForVerifiedOwner(storage);
     this.adapterVersion = OBSERVATION_PROTOCOL_VERSION;
-    this.descriptor = descriptor?.kind === "ObservationTypeDescriptor" ? verifyObservationTypeDescriptor(descriptor) : createObservationTypeDescriptor(descriptor);
+    this.descriptor = descriptor?.kind === "ObservationTypeDescriptor" ? verifyObservationTypeDescriptor(descriptor, storage) : createObservationTypeDescriptor(descriptor, storage);
     if (typeof eventFile !== "string" || !path.isAbsolute(eventFile)) fail("JSON Observation event file must be an absolute Host path.", "INVALID_OBSERVATION_EVENT_FILE");
     if (!Number.isInteger(maxBytes) || maxBytes < 1 || maxBytes > MAX_EVENT_FILE_BYTES) fail("JSON Observation event file byte bound is invalid.", "INVALID_OBSERVATION_EVENT_FILE_BOUND");
     this.eventFile = path.resolve(eventFile);
@@ -150,7 +153,7 @@ export class JsonEventFileObservationAdapter {
 
   describe() {
     return {
-      adapterKey: JSON_EVENT_FILE_ADAPTER_KEY,
+      adapterKey: this.format.value(JSON_EVENT_FILE_ADAPTER_KEY),
       adapterVersion: this.adapterVersion,
       descriptorId: this.descriptor.descriptorId,
       descriptorHash: this.descriptor.descriptorHash,
@@ -185,10 +188,10 @@ export class JsonEventFileObservationAdapter {
   }
 }
 
-export function assertObservationAdapter(adapter, binding, descriptor) {
+export function assertObservationAdapter(adapter, binding, descriptor, storage = undefined) {
   if (!adapter || typeof adapter !== "object" || typeof adapter.describe !== "function" || typeof adapter.collect !== "function") fail("ObservationAdapter is invalid.", "INVALID_OBSERVATION_ADAPTER");
   const selectedBinding = normalizeObservationSourceBinding(binding);
-  const selectedDescriptor = descriptor?.kind === "ObservationTypeDescriptor" ? verifyObservationTypeDescriptor(descriptor) : createObservationTypeDescriptor(descriptor);
+  const selectedDescriptor = descriptor?.kind === "ObservationTypeDescriptor" ? verifyObservationTypeDescriptor(descriptor, storage) : createObservationTypeDescriptor(descriptor, storage);
   const described = adapter.describe();
   if (described.adapterKey !== selectedBinding.adapterKey || described.adapterVersion !== selectedBinding.adapterVersion
     || described.descriptorId !== selectedDescriptor.descriptorId || described.descriptorHash !== selectedDescriptor.descriptorHash
@@ -206,7 +209,7 @@ export class ObservationAdapterRegistry {
     const normalizedSourceKey = stableKey(sourceKey, "Observation adapter source key", 192);
     const storageKey = `${inspected.project.projectId}:${normalizedSourceKey}`;
     if (this.#sources.has(storageKey)) fail("Observation adapter source key is already registered for this HEAD Project.", "DUPLICATE_OBSERVATION_ADAPTER_SOURCE");
-    const asserted = assertObservationAdapter(adapter, binding, descriptor);
+    const asserted = assertObservationAdapter(adapter, binding, descriptor, inspected.storage);
     const sourceId = `observation-source-${observationDigest({
       projectId: inspected.project.projectId,
       sourceKey: normalizedSourceKey,
@@ -285,6 +288,7 @@ export class ObservationAdapterRegistry {
     return {
       schemaVersion: 1,
       kind: "ObservationSourceDiscoveryProjection",
+      protocol: { name: formatForVerifiedOwner(inspected.storage).protocol("head-agent-core-observation"), version: OBSERVATION_PROTOCOL_VERSION },
       status: "available",
       projectId: inspected.project.projectId,
       projectionId: currentProjectionId,
@@ -339,7 +343,7 @@ export class ObservationAdapterRegistry {
 
 export async function collectObservation({ root = ".", binding, descriptor, adapter } = {}) {
   const inspected = assertObservationProjectReady(root);
-  const asserted = assertObservationAdapter(adapter, binding, descriptor);
+  const asserted = assertObservationAdapter(adapter, binding, descriptor, inspected.storage);
   const input = await asserted.adapter.collect({ root: inspected.project.projectRoot, sourceScopeDigest: asserted.binding.sourceScopeDigest, credentialReferenceNames: [...asserted.binding.credentialReferenceNames] });
   const recorded = recordCollectedObservation({ root: inspected.project.projectRoot, descriptor: asserted.descriptor, input, adapterDescriptor: asserted.described, sourceScopeDigest: asserted.binding.sourceScopeDigest });
   return {
@@ -360,12 +364,19 @@ export async function collectObservation({ root = ".", binding, descriptor, adap
 }
 
 export async function ingestStructuredObservation({ root = ".", binding, descriptor, input } = {}) {
-  return collectObservation({ root, binding, descriptor, adapter: new StructuredObservationAdapter({ descriptor, input }) });
+  // Preserve pure descriptor validation before the existing Project boundary.
+  // Only the subsequently verified owner selects the persisted wire family.
+  new StructuredObservationAdapter({ descriptor, input });
+  const inspected = assertObservationProjectReady(root);
+  return collectObservation({ root, binding, descriptor, adapter: new StructuredObservationAdapter({ descriptor, input }, inspected.storage) });
 }
 
 export async function ingestJsonObservationEventFile({ root = ".", sourceKey, binding, descriptor, eventFile, maxBytes } = {}) {
+  // Keep the original constructor's descriptor/path/byte-bound error order.
+  new JsonEventFileObservationAdapter({ descriptor, eventFile, maxBytes });
+  const inspected = assertObservationProjectReady(root);
   const registry = new ObservationAdapterRegistry();
-  const adapter = new JsonEventFileObservationAdapter({ descriptor, eventFile, maxBytes });
+  const adapter = new JsonEventFileObservationAdapter({ descriptor, eventFile, maxBytes }, inspected.storage);
   const selectedBinding = normalizeObservationSourceBinding(binding);
   const selectedSourceKey = String(sourceKey || "").trim() || `one-shot-${observationDigest({
     adapterKey: selectedBinding.adapterKey,
@@ -388,15 +399,16 @@ export async function collectRegisteredObservation({ root = ".", registry, sourc
   return registry.collect({ root, sourceId });
 }
 
-export function inspectObservationSources({ root = "", registry = null, typeKey = "", adapterKey = "", availabilityState = "", limit = MAX_INSPECTED_SOURCES, projectionId = "", cursor = "" } = {}) {
+export function inspectObservationSources({ root = "", registry = null, typeKey = "", adapterKey = "", availabilityState = "", limit = MAX_INSPECTED_SOURCES, projectionId = "", cursor = "" } = {}, storage = null) {
   if (registry != null && !(registry instanceof ObservationAdapterRegistry)) fail("Host Observation adapter registry is invalid.", "INVALID_OBSERVATION_ADAPTER_REGISTRY");
   const configured = registry == null ? null : registry.inspect({ root, typeKey, adapterKey, availabilityState, limit, projectionId, cursor });
+  const format = configured ? familyFormatForOriginal("head-agent-core-observation", configured) : formatForVerifiedOwner(storage);
   return {
     status: "available",
-    protocol: { name: "head-agent-core-observation", version: OBSERVATION_PROTOCOL_VERSION },
+    protocol: configured?.protocol ?? { name: formatForVerifiedOwner(storage).protocol("head-agent-core-observation"), version: OBSERVATION_PROTOCOL_VERSION },
     adapters: [
       {
-        adapterKey: "head.structured-host-observation",
+        adapterKey: format.value("head.structured-host-observation"),
         adapterVersion: OBSERVATION_PROTOCOL_VERSION,
         mode: "host-supplied-bounded-input",
         requiresExactSourceBinding: true,
@@ -405,7 +417,7 @@ export function inspectObservationSources({ root = "", registry = null, typeKey 
         providerNeutral: true,
       },
       {
-        adapterKey: JSON_EVENT_FILE_ADAPTER_KEY,
+        adapterKey: format.value(JSON_EVENT_FILE_ADAPTER_KEY),
         adapterVersion: OBSERVATION_PROTOCOL_VERSION,
         mode: "host-ci-json-event-file-once",
         requiresExactSourceBinding: true,
@@ -425,7 +437,7 @@ export function inspectObservationSources({ root = "", registry = null, typeKey 
       authority: "P5-host-configuration-only",
     },
     workflow: {
-      semanticSelectionOwner: "provider-head",
+      semanticSelectionOwner: format.value("provider-head"),
       existingEvidenceFirst: "query-exact-current-observations-before-collecting",
       collectOnlyWhenDurableEvidenceIsRequired: true,
       automaticProductInterpretation: false,

@@ -2,6 +2,8 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
+import { formatForVerifiedOwner, relativeProjectArtifact } from "./project-storage-format.mjs";
+
 export const PRODUCT_MODEL_V1_VERSION = "0.1.0";
 export const PRODUCT_MODEL_V2_VERSION = "0.2.0";
 export const PRODUCT_MODEL_VERSION = PRODUCT_MODEL_V2_VERSION;
@@ -201,7 +203,7 @@ export function emptyProductModelDocument({ schemaVersion = 1 } = {}) {
   return document;
 }
 
-export function normalizeProductModelDocument(document = emptyProductModelDocument()) {
+export function normalizeProductModelDocument(document = emptyProductModelDocument(), storage = null) {
   const schemaVersion = document?.schemaVersion;
   if (![1, 2].includes(schemaVersion)) fail("Product model schemaVersion must be 1 or 2.", "UNSUPPORTED_PRODUCT_MODEL_VERSION");
   const fields = ["schemaVersion", "featureGroups", "capabilities", "features", "requirements", "constraints", "decisions"];
@@ -269,7 +271,7 @@ export function normalizeProductModelDocument(document = emptyProductModelDocume
 
   const model = {
     schemaVersion,
-    protocol: { name: "head-agent-core-product-model", version: schemaVersion === 1 ? PRODUCT_MODEL_V1_VERSION : PRODUCT_MODEL_V2_VERSION },
+    protocol: { name: formatForVerifiedOwner(storage).protocol("head-agent-core-product-model"), version: schemaVersion === 1 ? PRODUCT_MODEL_V1_VERSION : PRODUCT_MODEL_V2_VERSION },
     featureGroups,
     capabilities,
     features,
@@ -312,9 +314,10 @@ export function upgradeProductModelDocument(model) {
   return document.schemaVersion === 2 ? document : { ...document, schemaVersion: 2, policies: [] };
 }
 
-export function readProductModelCanon({ projectRoot } = {}) {
+export function readProductModelCanon({ projectRoot, storage = null } = {}) {
   if (typeof projectRoot !== "string" || !projectRoot.trim()) fail("projectRoot is required.", "PRODUCT_MODEL_ROOT_REQUIRED");
-  const file = path.join(projectRoot, ...PRODUCT_MODEL_RELATIVE_PATH.split("/"));
+  const relativePath = relativeProjectArtifact(storage, "context", "product-model.json");
+  const file = path.join(projectRoot, ...relativePath.split("/"));
   let document;
   let status = "present";
   if (!fs.existsSync(file)) {
@@ -324,12 +327,12 @@ export function readProductModelCanon({ projectRoot } = {}) {
     try { document = JSON.parse(fs.readFileSync(file, "utf8")); }
     catch (error) { fail(`Product model canon is invalid JSON: ${error.message}`, "INVALID_PRODUCT_MODEL_JSON"); }
   }
-  const model = normalizeProductModelDocument(document);
-  const evidenceHash = digest(canonicalJson({ path: PRODUCT_MODEL_RELATIVE_PATH, productModelHash: model.productModelHash }));
+  const model = normalizeProductModelDocument(document, storage);
+  const evidenceHash = digest(canonicalJson({ path: relativePath, productModelHash: model.productModelHash }));
   return {
     status,
     file,
-    relativePath: PRODUCT_MODEL_RELATIVE_PATH,
+    relativePath,
     evidenceId: `evidence-${evidenceHash.slice(0, 24)}`,
     model,
   };

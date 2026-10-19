@@ -1,4 +1,4 @@
-import { inspectProject, isProjectRecoveryReadable } from "./head-core.mjs";
+import { inspectProject, isProjectRecoveryReadable } from "./lode-core.mjs";
 import fs from "node:fs";
 import { sessionStatePath, safeSessionPath } from "./session-routing.mjs";
 import { readProjectDirectionView, sameProjectDirectionView } from "./project-direction-view.mjs";
@@ -14,6 +14,9 @@ import {
 import { inspectConversationProjectExperience, recoveryReadiness } from "./project-bootstrap.mjs";
 import { actionability } from "./experience-projection.mjs";
 import { readSessionWorkContext } from "./session-work-context.mjs";
+
+import { formatForVerifiedOwner } from "./project-storage-format.mjs";
+import { ARTIFACT_COMPOSITION } from "./lode-artifact-composition.mjs";
 
 export const COMPACTION_LIFECYCLE_VERSION = "0.1.0";
 const EVENT_KINDS = new Set(["conversation-entry", "provider-replaced", "before-compaction", "after-compaction"]);
@@ -69,7 +72,7 @@ function adapterDescriptor(adapter) {
     "adapterKey", "adapterVersion", "authorityPlane", "deliverySemantics", "providerNeutral",
     "providerSessionIdentityPersisted", "recoveryAuthority", "instructionAuthority", "promotionAuthority",
   ], "Compaction lifecycle Host descriptor", "INVALID_COMPACTION_LIFECYCLE_HOST");
-  if (descriptor.adapterKey !== "head.compaction-lifecycle-host"
+  if (!new Set(["head.compaction-lifecycle-host", "lode.compaction-lifecycle-host"]).has(descriptor.adapterKey)
     || descriptor.adapterVersion !== COMPACTION_LIFECYCLE_VERSION
     || descriptor.authorityPlane !== "P5"
     || descriptor.deliverySemantics !== "journaled-no-uncertain-replay"
@@ -175,8 +178,8 @@ export function enterConversationRecovery({ root = ".", readRelatedNativeContext
   }
   const finish = (result) => {
     if (!readable) return result;
-    const afterProject = JSON.parse(fs.readFileSync(safeSessionPath(root, ".head", "project.json"), "utf8"));
-    const afterState = JSON.parse(fs.readFileSync(sessionStatePath(root), "utf8"));
+    const afterProject = JSON.parse(fs.readFileSync(safeSessionPath(root, formatForVerifiedOwner(inspected.storage).directory, "project.json"), "utf8"));
+    const afterState = JSON.parse(fs.readFileSync(sessionStatePath(root, inspected.storage), "utf8"));
     const afterDirection = readProjectDirectionView({ root });
     if (JSON.stringify(afterProject) === JSON.stringify(inspected.project)
       && JSON.stringify(afterState) === JSON.stringify(inspected.state)
@@ -618,7 +621,7 @@ export class InMemoryCompactionLifecycleHostAdapter {
 
   describe() {
     return {
-      adapterKey: "head.compaction-lifecycle-host",
+      adapterKey: ARTIFACT_COMPOSITION.identity === "lode" ? "lode.compaction-lifecycle-host" : "head.compaction-lifecycle-host",
       adapterVersion: COMPACTION_LIFECYCLE_VERSION,
       authorityPlane: "P5",
       deliverySemantics: "journaled-no-uncertain-replay",

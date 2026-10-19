@@ -25,7 +25,8 @@ function fixture(t) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "head-boundary-consistency-")));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
-  return root;
+  const layout = inspectProject(root).storage;
+  return { root, layout };
 }
 function snapshot(root) {
   return fs.readdirSync(root, { recursive: true, withFileTypes: true }).filter(item => item.isFile()).map(item => {
@@ -35,9 +36,9 @@ function snapshot(root) {
 }
 const directionInput = { goal: "Inspect synthetic records only", constraints: ["No external effects"], cancelledActions: ["deploy"] };
 const recoveryInput = { purpose: "Retain local reasoning", approvedDecisions: [], currentPosition: "Local inspection", nextExpectedResult: "Explain the existing result" };
-function loseDirection(root) {
+function loseDirection(root, layout) {
   const saved = updateProjectDirection({ root, input: directionInput });
-  const pointer = path.join(root, ".head/project-direction/current.json"), bytes = fs.readFileSync(pointer);
+  const pointer = path.join(root, layout.directory, "project-direction/current.json"), bytes = fs.readFileSync(pointer);
   fs.unlinkSync(pointer); return { saved, pointer, bytes };
 }
 async function mcp(root, name, args = {}, options = {}, routed = false, write = false) {
@@ -51,11 +52,11 @@ async function mcp(root, name, args = {}, options = {}, routed = false, write = 
 }
 
 test("metric CLI normal/lost context and MCP direct/router share Project facts without replacing selection", async t => {
-  const root = fixture(t);
+  const { root, layout } = fixture(t);
   await defineMetric({ root, metricKey: "request-latency", unit: "milliseconds", direction: "decrease" });
   const context = createSessionCallContext(); context.lose(root);
   const binding = context.read(root), before = snapshot(root);
-  const defaultFile = path.join(root, ".head/sessions/current.json"), originalRead = fs.readFileSync;
+  const defaultFile = path.join(root, layout.directory, "sessions/current.json"), originalRead = fs.readFileSync;
   const readinessReads = [];
   let reads = 0;
   fs.readFileSync = (file, ...args) => { if (file === defaultFile) reads++; return originalRead(file, ...args); };
@@ -80,10 +81,10 @@ test("metric CLI normal/lost context and MCP direct/router share Project facts w
 });
 
 for (const hasCheckpoint of [false, true]) test(`lost common direction preserves independent entry with checkpoint=${hasCheckpoint}`, async t => {
-  const root = fixture(t);
+  const { root, layout } = fixture(t);
   const checkpoint = hasCheckpoint ? createRecoveryCheckpoint({ root, ...recoveryInput }).checkpoint : null;
   const evidence = recordSessionWorkEvidence({ root, input: { summary: "Retain synthetic reason", judgments: [{ assessment: "Keep exact keys", reason: "Case is meaningful" }] } }).evidence;
-  loseDirection(root); const before = snapshot(root);
+  loseDirection(root, layout); const before = snapshot(root);
   const entry = enterConversationRecovery({ root }), status = inspectProjectExperience({ root });
   for (const view of [entry, status, (await mcp(root, "head_conversation_enter")).structuredContent]) {
     assert.equal(view.ordinaryWorkBlocked, false); assert.equal(view.userDecisionRequired, false);
@@ -117,7 +118,7 @@ for (const hasCheckpoint of [false, true]) test(`lost common direction preserves
     assert.match(formatCliResult("session-restore", restored), /current common direction remains unavailable/i);
   } else assert.equal(diagnosis.artifactRecovery.status, "not-applicable");
   const context = createSessionCallContext(); context.lose(root);
-  const originalRead = fs.readFileSync, defaultFile = path.join(root, ".head/sessions/current.json");
+  const originalRead = fs.readFileSync, defaultFile = path.join(root, layout.directory, "sessions/current.json");
   let unresolved;
   fs.readFileSync = (file, ...args) => { assert.notEqual(file, defaultFile, "Lost-selection Project facts must not inspect default"); return originalRead(file, ...args); };
   try { unresolved = await runCommand(["conversation-enter", root], { sessionContext: context }); }
@@ -129,14 +130,14 @@ for (const hasCheckpoint of [false, true]) test(`lost common direction preserves
 });
 
 for (const missingDirection of [false, true]) test(`diagnosis never combines an outer checkpoint A with independently restored B; unavailable=${missingDirection}`, t => {
-  const root = fixture(t);
+  const { root, layout } = fixture(t);
   updateProjectDirection({ root, input: directionInput });
   const checkpointA = createRecoveryCheckpoint({ root, ...recoveryInput, purpose: "Synthetic checkpoint A" }).checkpoint;
-  const sessionFile = path.join(root, ".head/sessions/current.json"), stateA = fs.readFileSync(sessionFile);
+  const sessionFile = path.join(root, layout.directory, "sessions/current.json"), stateA = fs.readFileSync(sessionFile);
   const checkpointB = createRecoveryCheckpoint({ root, ...recoveryInput, purpose: "Synthetic checkpoint B" }).checkpoint;
   const stateB = fs.readFileSync(sessionFile);
   fs.writeFileSync(sessionFile, stateA);
-  if (missingDirection) fs.unlinkSync(path.join(root, ".head/project-direction/current.json"));
+  if (missingDirection) fs.unlinkSync(path.join(root, layout.directory, "project-direction/current.json"));
   assert.notEqual(checkpointA.checkpointDigest, checkpointB.checkpointDigest);
   const before = snapshot(root), originalRead = fs.readFileSync;
   let restoreReads = 0, diagnosis;
@@ -170,9 +171,9 @@ for (const missingDirection of [false, true]) test(`diagnosis never combines an 
 });
 
 test("direction loss never masks corrupt checkpoint verification", t => {
-  const root = fixture(t), checkpoint = createRecoveryCheckpoint({ root, ...recoveryInput }).checkpoint;
-  loseDirection(root);
-  const file = path.join(root, ".head/sessions/ledger", `${checkpoint.checkpointId}.json`);
+  const { root, layout } = fixture(t), checkpoint = createRecoveryCheckpoint({ root, ...recoveryInput }).checkpoint;
+  loseDirection(root, layout);
+  const file = path.join(root, layout.directory, "sessions/ledger", `${checkpoint.checkpointId}.json`);
   assert.ok(fs.existsSync(file));
   fs.appendFileSync(file, "invalid"); const before = snapshot(root);
   const entry = enterConversationRecovery({ root });
@@ -182,7 +183,7 @@ test("direction loss never masks corrupt checkpoint verification", t => {
 });
 
 test("direction availability changes during entry are not published as stable context", t => {
-  const root = fixture(t); createRecoveryCheckpoint({ root, ...recoveryInput }); const lost = loseDirection(root);
+  const { root, layout } = fixture(t); createRecoveryCheckpoint({ root, ...recoveryInput }); const lost = loseDirection(root, layout);
   const read = fs.readFileSync; let restoredPointer = false;
   fs.readFileSync = (file, ...args) => {
     if (!restoredPointer && String(file).includes(`${path.sep}sessions${path.sep}ledger${path.sep}`)) {
@@ -198,10 +199,10 @@ test("direction availability changes during entry are not published as stable co
 });
 
 test("lost current direction rejects valid continuation before one-shot consumption; healthy/duplicate/supersede stay exact", t => {
-  const root = fixture(t); updateProjectDirection({ root, input: directionInput });
+  const { root, layout } = fixture(t); updateProjectDirection({ root, input: directionInput });
   const prepared = prepareCompaction({ root, ...recoveryInput, runtime: "codex", userTurnIdAtPrepare: 7 });
   verifyCompaction({ root, epochId: prepared.epoch.epochId, checkpointDigest: prepared.checkpoint.checkpointDigest, currentUserTurnId: 7, providerCompacted: true });
-  const pointer = path.join(root, ".head/project-direction/current.json"), bytes = fs.readFileSync(pointer); fs.unlinkSync(pointer);
+  const pointer = path.join(root, layout.directory, "project-direction/current.json"), bytes = fs.readFileSync(pointer); fs.unlinkSync(pointer);
   const before = snapshot(root), input = { root, epochId: prepared.epoch.epochId, continuationToken: prepared.continuationToken, currentUserTurnId: 7 };
   assert.throws(() => continueCompaction(input), { code: "PROJECT_DIRECTION_UNAVAILABLE" });
   assert.deepEqual(snapshot(root), before); assert.equal(inspectCompaction({ root }).epoch.state, "verified");
@@ -209,21 +210,21 @@ test("lost current direction rejects valid continuation before one-shot consumpt
   fs.writeFileSync(pointer, bytes);
   assert.equal(continueCompaction(input).status, "compaction_continuation_consumed");
   assert.throws(() => continueCompaction(input), { code: "COMPACTION_TOKEN_CONSUMED" });
-  const other = fixture(t); updateProjectDirection({ root: other, input: directionInput });
+  const { root: other, layout: otherLayout } = fixture(t); updateProjectDirection({ root: other, input: directionInput });
   const later = prepareCompaction({ root: other, ...recoveryInput, runtime: "codex", userTurnIdAtPrepare: 7 });
   verifyCompaction({ root: other, epochId: later.epoch.epochId, checkpointDigest: later.checkpoint.checkpointDigest, currentUserTurnId: 7, providerCompacted: true });
-  fs.unlinkSync(path.join(other, ".head/project-direction/current.json"));
+  fs.unlinkSync(path.join(other, otherLayout.directory, "project-direction/current.json"));
   assert.throws(() => continueCompaction({ root: other, epochId: later.epoch.epochId, continuationToken: later.continuationToken, currentUserTurnId: 8 }), { code: "COMPACTION_SUPERSEDED" });
   assert.equal(inspectCompaction({ root: other }).epoch.state, "superseded");
 });
 
 for (const disposition of ["accept", "reject"]) test(`committed ${disposition} review exposes deferred projection in CLI/MCP text and structured results`, async t => {
-  const root = fixture(t); await buildWorldModel({ root, persist: true });
+  const { root, layout } = fixture(t); await buildWorldModel({ root, persist: true });
   const signal = await recordProductSignal({ root, statement: "Synthetic interface observation", observedAt: "2026-10-16T00:00:00.000Z" });
   const hypothesis = await recordProductHypothesis({ root, statement: "Synthetic interface hypothesis", signalIds: [signal.signal.signalId] });
   const proposed = await proposeProductInitiative({ root, title: "Improve synthetic interface", hypothesisIds: [hypothesis.hypothesis.hypothesisId],
     featureResolution: { kind: "candidate", feature: { key: "interface", name: "Interface", capabilityKeys: [] } } });
-  const pointer = path.join(root, ".head/world-model/current.json"); fs.writeFileSync(pointer, "{broken-world");
+  const pointer = path.join(root, layout.directory, "world-model/current.json"); fs.writeFileSync(pointer, "{broken-world");
   const request = { initiativeCandidateId: proposed.initiativeCandidate.initiativeCandidateId, disposition, rationale: "Synthetic exact user review fixture" };
   const inputFile = path.join(root, "synthetic-review-input.json"); fs.writeFileSync(inputFile, JSON.stringify(request));
   const cli = await runCommand(["product-initiative-review", root, "--input", inputFile]);

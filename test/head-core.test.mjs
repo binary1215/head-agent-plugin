@@ -8,6 +8,8 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { initializeProject, inspectProject, inspectRuntimeAdapters } from "../scripts/lib/head-core.mjs";
+import { ARTIFACT_COMPOSITION, publicToolName } from "../scripts/lib/lode-artifact-composition.mjs";
+import { formatForVerifiedOwner } from "../scripts/lib/project-storage-format.mjs";
 import { createRecoveryCheckpoint } from "../scripts/lib/compaction-recovery.mjs";
 import { compileContext, readContextCapsule } from "../scripts/lib/context-compiler.mjs";
 import {
@@ -262,19 +264,20 @@ test("initializes Claude, Codex, and OpenCode projections and verifies managed c
   const root = temporaryProject();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const result = initializeProject({ root, pluginRoot, runtimes: ["claude", "codex", "opencode"] });
+  const layout = inspectProject(root).storage;
   assert.equal(result.status, "ready");
   assert.ok(fs.existsSync(path.join(root, "CLAUDE.md")));
   assert.ok(fs.existsSync(path.join(root, ".mcp.json")));
   assert.ok(fs.existsSync(path.join(root, "AGENTS.md")));
   assert.ok(fs.existsSync(path.join(root, "opencode.json")));
-  const generatedInstructions = fs.readFileSync(path.join(root, ".head", "generated", "head-instructions.md"), "utf8");
+  const generatedInstructions = fs.readFileSync(path.join(root, layout.directory, "generated", "lode-instructions.md"), "utf8");
   assert.match(generatedInstructions, /Keep the user's original task as the active objective/u);
   assert.match(generatedInstructions, /Do not initialize an unrelated repository/u);
   assert.match(generatedInstructions, /Never infer a disposition from keyword matching, silence, or a default/u);
   assert.match(generatedInstructions, /distinguish mechanical coverage from semantic sufficiency/u);
   const claudeMcp = JSON.parse(fs.readFileSync(path.join(root, ".mcp.json"), "utf8"));
-  assert.equal(claudeMcp.mcpServers.head_core.command, process.execPath);
-  assert.match(claudeMcp.mcpServers.head_core.args[0], /mcp-server\.mjs$/);
+  assert.equal(claudeMcp.mcpServers.lode_core.command, process.execPath);
+  assert.match(claudeMcp.mcpServers.lode_core.args[0], /mcp-server\.mjs$/);
   const inspected = inspectProject(root);
   assert.equal(inspected.status, "ready");
   assert.equal(inspected.project.runtimes.join(","), "claude,codex,opencode");
@@ -310,6 +313,7 @@ test("defaults to the constitutional core without activating Product or Graph go
   assert.equal(absent.authority.mutatesProject, false);
 
   const first = await initializeOrResumeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const layout = inspectProject(root).storage;
   assert.equal(first.status, "core_ready");
   assert.equal(first.profile, "core");
   assert.equal(first.profileSemantics, "operation-choice-not-persisted-project-mode");
@@ -323,8 +327,8 @@ test("defaults to the constitutional core without activating Product or Graph go
       repositoryEvidence: "requires-explicit-product-world",
       worldModelId: null,
       entrypoint: {
-        cli: "head-agent context-prepare <project> --task <exact-task>",
-        mcpTool: "head_context_prepare",
+        cli: `${ARTIFACT_COMPOSITION.identity}-agent context-prepare <project> --task <exact-task>`,
+        mcpTool: publicToolName("head_context_prepare"),
       },
     },
     recovery: {
@@ -364,21 +368,21 @@ test("defaults to the constitutional core without activating Product or Graph go
   assert.equal(first.onboarding.status, "initialized");
   assert.equal(first.onboarding.candidateSetId, null);
   assert.equal(first.onboarding.sourceSnapshotId, null);
-  assert.equal(fs.existsSync(path.join(root, ".head", "project.json")), true);
-  assert.equal(fs.existsSync(path.join(root, ".head", "sessions", "current.json")), true);
+  assert.equal(fs.existsSync(path.join(root, layout.directory, "project.json")), true);
+  assert.equal(fs.existsSync(path.join(root, layout.directory, "sessions", "current.json")), true);
 
-  const onboardingBeforeResume = fs.readFileSync(path.join(root, ".head", "onboarding", "current.json"), "utf8");
+  const onboardingBeforeResume = fs.readFileSync(path.join(root, layout.directory, "onboarding", "current.json"), "utf8");
   const resumed = await initializeOrResumeProject({ root, pluginRoot, runtimes: ["codex"] });
   assert.equal(resumed.status, "core_ready");
   assert.equal(resumed.project.projectId, first.project.projectId);
   assert.equal(resumed.project.sessionId, first.project.sessionId);
-  assert.equal(fs.readFileSync(path.join(root, ".head", "onboarding", "current.json"), "utf8"), onboardingBeforeResume);
+  assert.equal(fs.readFileSync(path.join(root, layout.directory, "onboarding", "current.json"), "utf8"), onboardingBeforeResume);
 
   const projected = inspectProjectExperience({ root });
   assert.equal(projected.status, "core_ready");
   assert.equal(projected.state.sessionId, first.project.sessionId);
   assert.equal(projected.capabilities.find((item) => item.id === "bounded-workers").availability, "requires-session-or-run-authorization");
-  assert.equal(fs.readFileSync(path.join(root, ".head", "onboarding", "current.json"), "utf8"), onboardingBeforeResume);
+  assert.equal(fs.readFileSync(path.join(root, layout.directory, "onboarding", "current.json"), "utf8"), onboardingBeforeResume);
   assert.equal(runCommand(["status", root]).status, "core_ready");
   const mcpStatus = await dispatchMcp({
     jsonrpc: "2.0",
@@ -390,7 +394,7 @@ test("defaults to the constitutional core without activating Product or Graph go
   assert.deepEqual(mcpStatus.result.structuredContent.readiness, projected.readiness);
   assert.deepEqual(mcpStatus.result.structuredContent.nextAction.entrypoint, first.nextAction.entrypoint);
   assert.equal(Buffer.byteLength(JSON.stringify(mcpStatus.result.structuredContent), "utf8") < 64 * 1024, true);
-  assert.match(mcpStatus.result.content[0].text, /HEAD is ready — continue the task/u);
+  assert.match(mcpStatus.result.content[0].text, /Lode is ready — continue the task/u);
   assert.equal(mcpStatus.result.content[0].text.trimStart().startsWith("{"), false);
   const mcpContract = await dispatchMcp({
     jsonrpc: "2.0",
@@ -403,7 +407,7 @@ test("defaults to the constitutional core without activating Product or Graph go
 
   const humanStatus = spawnSync(process.execPath, [path.join(pluginRoot, "scripts", "head.mjs"), "status", root], { encoding: "utf8" });
   assert.equal(humanStatus.status, 0, humanStatus.stderr);
-  assert.match(humanStatus.stdout, /HEAD is ready — continue the task/u);
+  assert.match(humanStatus.stdout, /Lode is ready — continue the task/u);
   assert.doesNotMatch(humanStatus.stdout, /Project:|Product knowledge:|Context:|Recovery:/u);
   assert.equal(humanStatus.stdout.includes(`Active package: ${pluginVersion}`), false);
   assert.equal(humanStatus.stdout.trimStart().startsWith("{"), false);
@@ -436,7 +440,7 @@ test("defaults to the constitutional core without activating Product or Graph go
 
   const humanFailure = spawnSync(process.execPath, [path.join(pluginRoot, "scripts", "head.mjs"), "not-a-command", root], { encoding: "utf8" });
   assert.notEqual(humanFailure.status, 0);
-  assert.match(humanFailure.stdout, /HEAD could not complete that step/u);
+  assert.match(humanFailure.stdout, /Lode could not complete that step/u);
   assert.equal(humanFailure.stdout.trimStart().startsWith("{"), false);
 
   const jsonFailure = spawnSync(process.execPath, [path.join(pluginRoot, "scripts", "head.mjs"), "not-a-command", root, "--json"], { encoding: "utf8" });
@@ -448,14 +452,15 @@ test("reports loaded versus configured package state without blocking ordinary w
   const root = temporaryProject();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   await initializeOrResumeProject({ root, pluginRoot, runtimes: ["codex"] });
-  const manifestFile = path.join(root, ".head", "generated", "manifest.json");
+  const layout = inspectProject(root).storage;
+  const manifestFile = path.join(root, layout.directory, "generated", "manifest.json");
   const manifest = JSON.parse(fs.readFileSync(manifestFile, "utf8"));
-  const generatedInstructionsFile = path.join(root, ".head", "generated", "head-instructions.md");
+  const generatedInstructionsFile = path.join(root, layout.directory, "generated", "lode-instructions.md");
   const currentInstructions = fs.readFileSync(generatedInstructionsFile, "utf8");
   const oldInstructions = "# Old managed instructions\n";
   fs.writeFileSync(generatedInstructionsFile, oldInstructions);
   const oldInstructionDigest = crypto.createHash("sha256").update(oldInstructions).digest("hex");
-  const oldManaged = manifest.managed.map((item) => item.path === ".head/generated/head-instructions.md"
+  const oldManaged = manifest.managed.map((item) => item.path === `${layout.directory}/generated/lode-instructions.md`
     ? { ...item, sha256: oldInstructionDigest }
     : item);
   fs.writeFileSync(manifestFile, `${JSON.stringify({ ...manifest, packageVersion: "0.0.0-fixture", managed: oldManaged }, null, 2)}\n`);
@@ -485,6 +490,7 @@ test("requires an explicit product profile before applying onboarding input", as
     { code: "PROJECT_BOOTSTRAP_PROFILE_REQUIRED" },
   );
   assert.equal(fs.existsSync(path.join(root, ".head")), false);
+  assert.equal(fs.existsSync(path.join(root, ".lode")), false);
 });
 
 test("rejects invalid source scope before project initialization mutates the target", async (t) => {
@@ -507,6 +513,7 @@ test("rejects invalid source scope before project initialization mutates the tar
     { code: "INVALID_REPOSITORY_SOURCE_SCOPE_PATH" },
   );
   assert.equal(fs.existsSync(path.join(root, ".head")), false);
+  assert.equal(fs.existsSync(path.join(root, ".lode")), false);
 });
 
 test("resume requires a fresh semantic reproposal for stale non-authoritative onboarding candidates", async (t) => {
@@ -650,7 +657,7 @@ test("defines deterministic provider-neutral runtime contracts while every contr
   assert.equal(hasOwnKeyDeep(first, "stderr"), false);
   assert.equal(hasOwnKeyDeep(first, "projectRoot"), false);
   assert.deepEqual(await runCommand(["runtime-adapters", root]), first);
-  assert.ok(mcpTools.some((tool) => tool.name === "head_runtime_adapters"));
+  assert.ok(mcpTools.some((tool) => tool.name === "lode_runtime_adapters"));
   const mcp = await dispatchMcp({
     jsonrpc: "2.0",
     id: 91,
@@ -665,9 +672,10 @@ test("preserves existing host files and emits manual projections", (t) => {
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.writeFileSync(path.join(root, "AGENTS.md"), "project owned\n");
   const result = initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const layout = inspectProject(root).storage;
   assert.equal(result.status, "ready_with_manual_integration");
   assert.equal(fs.readFileSync(path.join(root, "AGENTS.md"), "utf8"), "project owned\n");
-  assert.ok(fs.existsSync(path.join(root, ".head", "generated", "head-instructions.md")));
+  assert.ok(fs.existsSync(path.join(root, layout.directory, "generated", "lode-instructions.md")));
 });
 
 test("preserves existing Claude host files and emits generated instruction and MCP projections", (t) => {
@@ -676,17 +684,19 @@ test("preserves existing Claude host files and emits generated instruction and M
   fs.writeFileSync(path.join(root, "CLAUDE.md"), "project owned\n");
   fs.writeFileSync(path.join(root, ".mcp.json"), "{\"mcpServers\":{}}\n");
   const result = initializeProject({ root, pluginRoot, runtimes: ["claude"] });
+  const layout = inspectProject(root).storage;
   assert.equal(result.status, "ready_with_manual_integration");
   assert.equal(fs.readFileSync(path.join(root, "CLAUDE.md"), "utf8"), "project owned\n");
   assert.equal(fs.readFileSync(path.join(root, ".mcp.json"), "utf8"), "{\"mcpServers\":{}}\n");
-  assert.ok(fs.existsSync(path.join(root, ".head", "generated", "head-instructions.md")));
-  assert.ok(fs.existsSync(path.join(root, ".head", "generated", "claude.mcp.json")));
+  assert.ok(fs.existsSync(path.join(root, layout.directory, "generated", "lode-instructions.md")));
+  assert.ok(fs.existsSync(path.join(root, layout.directory, "generated", "claude.mcp.json")));
 });
 
 test("binds a Run to an Execution Contract, Result Packet, and ReviewDecision", (t) => {
   const root = temporaryProject();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const layout = inspectProject(root).storage;
   assert.throws(() => startRun({ root }), { code: "EXECUTION_CONTRACT_REQUIRED" });
   const compiled = compileContext({ root, task: "Produce a verified plugin", budget: 32_768, persist: true });
   const plan = createWholePlanSnapshot({
@@ -724,7 +734,7 @@ test("binds a Run to an Execution Contract, Result Packet, and ReviewDecision", 
     { code: "INVALID_LINEAGE_INPUT" },
   );
   assert.equal(inspectProject(root).state.activeRunId, started.run.runId);
-  const knowledgeFile = path.join(root, ".head", "context", "knowledge.json");
+  const knowledgeFile = path.join(root, layout.directory, "context", "knowledge.json");
   const knowledgeBefore = fs.readFileSync(knowledgeFile, "utf8");
   const finished = finishRun({
     root,
@@ -908,6 +918,7 @@ test("builds an incremental, freshness-aware Repository World Model", async (t) 
   fs.writeFileSync(path.join(root, "src", "service.mjs"), 'import value from "dependency-a";\nimport { double } from "./math.mjs";\nexport function serve() { return double(value); }\n');
   fs.writeFileSync(path.join(root, "README.md"), "# Test project\n\nRepository World Model fixture.\n");
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const layout = inspectProject(root).storage;
   const gitHistoryAdapter = new MemoryGitHistoryAdapter({
     adapterKind: "world-model-fixture",
     commits: [
@@ -957,7 +968,7 @@ test("builds an incremental, freshness-aware Repository World Model", async (t) 
   assert.equal(call.confidence, "heuristic");
   const fullInspection = inspectWorldModel({ root });
   assert.equal(fullInspection.status, "current");
-  const headBeforeStatus = directoryFileDigests(path.join(root, ".head"));
+  const headBeforeStatus = directoryFileDigests(path.join(root, layout.directory));
   const statusProjection = inspectWorldModelStatus({ root });
   assert.equal(statusProjection.kind, "WorldModelStatusProjection");
   assert.equal(statusProjection.status, "current");
@@ -979,7 +990,7 @@ test("builds an incremental, freshness-aware Repository World Model", async (t) 
   assert.equal(mcpStatus.result.structuredContent.statusProjectionId, statusProjection.statusProjectionId);
   assert.equal(Object.hasOwn(mcpStatus.result.structuredContent, "snapshot"), false);
   assert.ok(Buffer.byteLength(JSON.stringify(mcpStatus), "utf8") < WORLD_MODEL_STATUS_MCP_MAX_BYTES);
-  assert.deepEqual(directoryFileDigests(path.join(root, ".head")), headBeforeStatus);
+  assert.deepEqual(directoryFileDigests(path.join(root, layout.directory)), headBeforeStatus);
 
   {
     const oversizedSnapshot = { ...fullInspection.snapshot, transportLimitFixture: "x".repeat((64 * 1024 * 1024) + 1) };
@@ -1042,7 +1053,7 @@ test("builds an incremental, freshness-aware Repository World Model", async (t) 
     maxNodes: 20,
     maxEdges: 20,
   };
-  const headBeforeExactGraphCompilation = directoryFileDigests(path.join(root, ".head"));
+  const headBeforeExactGraphCompilation = directoryFileDigests(path.join(root, layout.directory));
   const exactGraphCapsule = compileContext({
     root,
     task: "an unrelated natural-language task with no source vocabulary overlap",
@@ -1060,7 +1071,7 @@ test("builds an incremental, freshness-aware Repository World Model", async (t) 
   assert.deepEqual(exactGraphCapsule.capsule.evidenceGaps, []);
   assert.equal(Object.hasOwn(exactGraphCapsule.capsule, "coverageAssessment"), false);
   assert.equal(exactGraphCapsule.capsule.graphTraversalEvidence.length, 1);
-  assert.equal(exactGraphCapsule.capsule.graphTraversalEvidence[0].temporalTraversal.traversalQuerySummary.anchorMode, "exact-head-proposed");
+  assert.equal(exactGraphCapsule.capsule.graphTraversalEvidence[0].temporalTraversal.traversalQuerySummary.anchorMode, formatForVerifiedOwner(layout).value("exact-head-proposed"));
   assert.deepEqual(exactGraphCapsule.capsule.graphTraversalEvidence[0].temporalTraversal.traversalQuerySummary.allowedRelations, [serviceRelation.type]);
   assert.equal(exactGraphCapsule.capsule.graphTraversalEvidence[0].temporalTraversal.traversalQuerySummary.maxDepth, graphAnchor.depth);
   assert.equal(exactGraphCapsule.capsule.graphTraversalEvidence[0].temporalTraversal.traversalQuerySummary.maxNodes, graphAnchor.maxNodes);
@@ -1071,7 +1082,7 @@ test("builds an incremental, freshness-aware Repository World Model", async (t) 
   assert.equal(exactGraphCapsule.capsule.evidenceNeedContract.instructionAuthority, false);
   assert.equal(exactGraphCapsule.capsule.evidenceNeedContract.reviewAuthority, false);
   assert.equal(exactGraphCapsule.capsule.evidenceNeedContract.recoveryAuthority, false);
-  assert.deepEqual(directoryFileDigests(path.join(root, ".head")), headBeforeExactGraphCompilation);
+  assert.deepEqual(directoryFileDigests(path.join(root, layout.directory)), headBeforeExactGraphCompilation);
   assert.throws(() => compileContext({
     root,
     task: "cross-project graph anchor",
@@ -1328,6 +1339,7 @@ test("refreshes observed state incrementally with immutable ancestry and active-
   fs.writeFileSync(path.join(root, "src", "stable.mjs"), "export const stable = true;\n");
   fs.writeFileSync(path.join(root, "src", "remove.mjs"), "export const remove = true;\n");
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const layout = inspectProject(root).storage;
   const first = await buildWorldModel({ root });
   assert.equal(first.snapshot.git.status, "not-a-git-repository");
   const memoryStore = new MemoryWorldModelStoreAdapter();
@@ -1336,10 +1348,11 @@ test("refreshes observed state incrementally with immutable ancestry and active-
 
   const incremental = await executeIncrementalRepositoryScan({
     projectRoot: root,
-    managedRootFiles: ["AGENTS.md"],
+    storage: layout,
+    managedRootFiles: ["AGENTS.md", layout.directory],
     previousSnapshot: first.snapshot,
   });
-  const reference = scanRepositoryReference(buildRepositoryScanInput({ projectRoot: root, managedRootFiles: ["AGENTS.md"] }));
+  const reference = scanRepositoryReference(buildRepositoryScanInput({ projectRoot: root, storage: layout, managedRootFiles: ["AGENTS.md", layout.directory] }));
   assert.deepEqual(incremental.result, reference);
   assert.equal(incremental.diagnostics.analyzedFileCount, 0);
   assert.equal(incremental.diagnostics.reusedFileCount, first.snapshot.files.length);
@@ -1349,7 +1362,7 @@ test("refreshes observed state incrementally with immutable ancestry and active-
   assert.equal(unchanged.receipt.next.worldModelId, first.snapshot.worldModelId);
   assert.equal(unchanged.receipt.projectionDisposition.documents, "not-regenerated-by-refresh-core-post-policy-evaluated-separately");
   assert.equal(unchanged.postRefreshProjection.status, "manual-deferred");
-  assert.equal(fs.existsSync(path.join(root, ".head", "generated", "knowledge")), false);
+  assert.equal(fs.existsSync(path.join(root, layout.directory, "generated", "knowledge")), false);
   assert.equal(inspectIncrementalRefresh({ root }).status, "current");
   const legacyRequest = reidentify({ ...clone(unchanged.request), protocol: { ...unchanged.request.protocol, version: "0.1.0" } }, {
     prefix: "incremental-refresh-request",
@@ -1473,6 +1486,7 @@ test("coalesces bounded filesystem and CI triggers into serialized authority-fre
   fs.mkdirSync(path.join(root, "src"), { recursive: true });
   fs.writeFileSync(path.join(root, "src", "service.mjs"), "export const service = true;\n");
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const layout = inspectProject(root).storage;
   const first = await buildWorldModel({ root });
   assert.equal(first.snapshot.git.status, "not-a-git-repository");
 
@@ -1549,7 +1563,7 @@ test("coalesces bounded filesystem and CI triggers into serialized authority-fre
     hashKey: "triggerDeliveryHash",
   });
   verifyRefreshTriggerDelivery(legacyDelivery);
-  assert.equal(fs.existsSync(path.join(root, ".head", "generated", "knowledge")), false);
+  assert.equal(fs.existsSync(path.join(root, layout.directory, "generated", "knowledge")), false);
   assert.equal(readRefreshTriggerDelivery({ root, triggerDeliveryId: delivered.delivery.triggerDeliveryId }).delivery.triggerDeliveryId, delivered.delivery.triggerDeliveryId);
   assert.equal(inspectRefreshTriggers({ root }).status, "current");
   assert.equal(inspectRefreshTriggers({ root }).writer.status, "idle");
@@ -1567,7 +1581,7 @@ test("coalesces bounded filesystem and CI triggers into serialized authority-fre
   assert.equal(readWorldModel({ root }).snapshot.worldModelId, currentAfterCi);
 
   fs.appendFileSync(path.join(root, "src", "service.mjs"), "export const changedThroughCli = true;\n");
-  const cliInput = path.join(root, ".head", "ci-events.json");
+  const cliInput = path.join(root, layout.directory, "ci-events.json");
   fs.writeFileSync(cliInput, `${JSON.stringify({
     sourceKind: "ci",
     events: [{ kind: "project-signal", operation: "build", path: null, evidenceId: "ci-build-0002" }],
@@ -1872,6 +1886,7 @@ test("builds deterministic Git-independent temporal provenance with multiple par
   fs.writeFileSync(path.join(root, "src", "service.mjs"), "export function serve() { return true; }\n");
   fs.writeFileSync(path.join(root, "test", "service.test.mjs"), "export function checksService() { return true; }\n");
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const layout = inspectProject(root).storage;
   const indexed = await buildWorldModel({ root, parentSourceSnapshotIds: [first.sourceSnapshotId, `source-snapshot-${"e".repeat(24)}`] });
   assert.equal(indexed.snapshot.git.status, "not-a-git-repository");
   assert.equal(indexed.snapshot.temporalProvenanceGraph.summary.sourceParentCount, 2);
@@ -1902,7 +1917,7 @@ test("builds deterministic Git-independent temporal provenance with multiple par
       edge_limit: 50,
     } },
   });
-  assert.equal(mcpExactTemporal.result.structuredContent.traversalQuery.anchorMode, "exact-head-proposed");
+  assert.equal(mcpExactTemporal.result.structuredContent.traversalQuery.anchorMode, formatForVerifiedOwner(layout).value("exact-head-proposed"));
   const cliExactTemporal = runCommand([
     "world-temporal", root,
     "--anchor-ids", indexedFile.nodeId,
@@ -1921,6 +1936,7 @@ test("materializes and queries temporal graphs through an authority-free replace
   fs.mkdirSync(path.join(root, "src"), { recursive: true });
   fs.writeFileSync(path.join(root, "src", "service.mjs"), "export function serve() { return true; }\n");
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const layout = inspectProject(root).storage;
 
   const memory = new InMemoryGraphProjectionAdapter({ adapterKind: "conformance-memory" });
   const indexed = await buildWorldModel({ root, graphProjectionAdapter: memory });
@@ -1950,8 +1966,9 @@ test("materializes and queries temporal graphs through an authority-free replace
 
   const conformance = verifyGraphProjectionAdapterConformance({
     projectRoot: root,
+    storage: layout,
     graph,
-    referenceAdapter: new LocalJsonGraphProjectionAdapter({ projectRoot: root }),
+    referenceAdapter: new LocalJsonGraphProjectionAdapter({ projectRoot: root, storage: layout }),
     candidateAdapter: new InMemoryGraphProjectionAdapter({ adapterKind: "conformance-candidate" }),
     queries: [{ name: "service-neighborhood", query: queryInput }],
   });
@@ -1976,7 +1993,7 @@ test("materializes and queries temporal graphs through an authority-free replace
 
 
   const mismatching = new InMemoryGraphProjectionAdapter({ adapterKind: "mismatching-query" });
-  materializeGraphProjection({ projectRoot: root, graph, adapter: mismatching });
+  materializeGraphProjection({ projectRoot: root, storage: layout, graph, adapter: mismatching });
   const mismatchingDescribe = mismatching.describe.bind(mismatching);
   mismatching.describe = () => {
     const { preparedTraversalProtocolVersion, preparedTraversalMode, ...legacy } = mismatchingDescribe();
@@ -1987,22 +2004,22 @@ test("materializes and queries temporal graphs through an authority-free replace
     const result = originalQuery(graphSnapshotId, options);
     return { ...result, truncated: !result.truncated };
   };
-  assert.throws(() => queryGraphProjection({ projectRoot: root, graph, adapter: mismatching, query: queryInput }), { code: "GRAPH_PROJECTION_QUERY_MISMATCH" });
+  assert.throws(() => queryGraphProjection({ projectRoot: root, storage: layout, graph, adapter: mismatching, query: queryInput }), { code: "GRAPH_PROJECTION_QUERY_MISMATCH" });
 
   const preparedTampering = new InMemoryGraphProjectionAdapter({ adapterKind: "tampered-prepared-verification" });
-  materializeGraphProjection({ projectRoot: root, graph, adapter: preparedTampering });
+  materializeGraphProjection({ projectRoot: root, storage: layout, graph, adapter: preparedTampering });
   const originalPreparedQuery = preparedTampering.queryPrepared.bind(preparedTampering);
   preparedTampering.queryPrepared = (request) => {
     const verification = originalPreparedQuery(request);
     return { ...verification, nodeCount: verification.nodeCount + 1 };
   };
   assert.throws(
-    () => queryGraphProjection({ projectRoot: root, graph, adapter: preparedTampering, query: queryInput }),
+    () => queryGraphProjection({ projectRoot: root, storage: layout, graph, adapter: preparedTampering, query: queryInput }),
     { code: "PREPARED_TRAVERSAL_VERIFICATION_DIGEST_MISMATCH" },
   );
 
   const tampered = new InMemoryGraphProjectionAdapter({ adapterKind: "tampered-snapshot" });
-  materializeGraphProjection({ projectRoot: root, graph, adapter: tampered });
+  materializeGraphProjection({ projectRoot: root, storage: layout, graph, adapter: tampered });
   tampered.snapshots.get(graph.graphSnapshotId).summary.nodeCount += 1;
   assert.throws(() => inspectWorldGraphProjection({ root, graphProjectionAdapter: tampered }), { code: "TEMPORAL_GRAPH_DIGEST_MISMATCH" });
 
@@ -2012,7 +2029,7 @@ test("materializes and queries temporal graphs through an authority-free replace
     document.summary.nodeCount += 1;
     return writeSnapshot(graphSnapshotId, document);
   };
-  assert.throws(() => materializeGraphProjection({ projectRoot: root, graph, adapter: mutating }), { code: "TEMPORAL_GRAPH_DIGEST_MISMATCH" });
+  assert.throws(() => materializeGraphProjection({ projectRoot: root, storage: layout, graph, adapter: mutating }), { code: "TEMPORAL_GRAPH_DIGEST_MISMATCH" });
   verifyTemporalProvenanceGraph(graph);
 
   fs.appendFileSync(path.join(root, "src", "service.mjs"), "export class Worker {}\n");
@@ -2340,9 +2357,9 @@ test("activates an ArcadeDB projection only after adapter-neutral conformance an
   assert.equal(runCommand(["help"]).laneRecommendationRequired, false);
   assert.equal(runCommand(["help-all"]).commands.includes("head world-graph-remote-activate <project>"), true);
   assert.equal(runCommand(["help-all"]).surface, "ordinary-complete");
-  assert.equal(mcpTools.some((tool) => tool.name === "head_graphdb_projection_status"), true);
-  assert.equal(mcpTools.some((tool) => tool.name === "head_graphdb_database_initialize"), true);
-  assert.equal(mcpTools.some((tool) => tool.name === "head_graphdb_projection_activate"), true);
+  assert.equal(mcpTools.some((tool) => tool.name === "lode_graphdb_projection_status"), true);
+  assert.equal(mcpTools.some((tool) => tool.name === "lode_graphdb_database_initialize"), true);
+  assert.equal(mcpTools.some((tool) => tool.name === "lode_graphdb_projection_activate"), true);
   assert.equal(inspectArcadeDbGraphProjectionActivation({ projectRoot: root }).status, "pending-activation");
 
   const transport = new MockArcadeDbTransport();
@@ -2609,10 +2626,11 @@ test("renders deterministic Markdown projections and captures edits as non-autho
   fs.mkdirSync(path.join(root, "src"), { recursive: true });
   fs.writeFileSync(path.join(root, "src", "service.mjs"), "export function serve() { return true; }\n");
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const layout = inspectProject(root).storage;
   const indexed = await buildWorldModel({ root });
   const graph = indexed.snapshot.temporalProvenanceGraph;
 
-  const rendered = buildMarkdownDocumentProjection(graph);
+  const rendered = buildMarkdownDocumentProjection(graph, layout);
   assert.match(rendered.documentProjectionId, /^document-projection-[a-f0-9]{24}$/);
   assert.equal(rendered.authority, "derived-human-view-only");
   assert.equal(rendered.instructionAuthority, false);
@@ -2629,8 +2647,9 @@ test("renders deterministic Markdown projections and captures edits as non-autho
 
   const conformance = verifyDocumentProjectionAdapterConformance({
     projectRoot: root,
+    storage: layout,
     graph,
-    referenceAdapter: new LocalMarkdownProjectionAdapter({ projectRoot: root }),
+    referenceAdapter: new LocalMarkdownProjectionAdapter({ projectRoot: root, storage: layout }),
     candidateAdapter: new InMemoryMarkdownProjectionAdapter({ adapterKind: "candidate-memory-markdown" }),
   });
   assert.match(conformance.conformanceReportId, /^document-projection-conformance-[a-f0-9]{24}$/);
@@ -2674,12 +2693,12 @@ test("renders deterministic Markdown projections and captures edits as non-autho
     remote: false,
     durable: false,
   });
-  assert.throws(() => materializeMarkdownProjection({ projectRoot: root, graph, adapter: authorityViolating }), { code: "INVALID_DOCUMENT_PROJECTION_AUTHORITY" });
+  assert.throws(() => materializeMarkdownProjection({ projectRoot: root, storage: layout, graph, adapter: authorityViolating }), { code: "INVALID_DOCUMENT_PROJECTION_AUTHORITY" });
 
   const tampered = new InMemoryMarkdownProjectionAdapter({ adapterKind: "tampered-document-projection" });
-  const tamperedResult = materializeMarkdownProjection({ projectRoot: root, graph, adapter: tampered });
+  const tamperedResult = materializeMarkdownProjection({ projectRoot: root, storage: layout, graph, adapter: tampered });
   tampered.projections.get(tamperedResult.projection.documentProjectionId).summary.documentCount += 1;
-  assert.throws(() => inspectMarkdownProjection({ projectRoot: root, graph, adapter: tampered }), { code: "DOCUMENT_PROJECTION_DIGEST_MISMATCH" });
+  assert.throws(() => inspectMarkdownProjection({ projectRoot: root, storage: layout, graph, adapter: tampered }), { code: "DOCUMENT_PROJECTION_DIGEST_MISMATCH" });
 
   const mutating = new InMemoryMarkdownProjectionAdapter({ adapterKind: "mutating-publisher" });
   const originalPublish = mutating.publishDocuments.bind(mutating);
@@ -2687,15 +2706,15 @@ test("renders deterministic Markdown projections and captures edits as non-autho
     documents[0].content += "mutated\n";
     return originalPublish(documents, options);
   };
-  assert.throws(() => materializeMarkdownProjection({ projectRoot: root, graph, adapter: mutating }), { code: "DOCUMENT_PROJECTION_PUBLISH_MISMATCH" });
-  assert.equal(buildMarkdownDocumentProjection(graph).documentProjectionId, rendered.documentProjectionId);
+  assert.throws(() => materializeMarkdownProjection({ projectRoot: root, storage: layout, graph, adapter: mutating }), { code: "DOCUMENT_PROJECTION_PUBLISH_MISMATCH" });
+  assert.equal(buildMarkdownDocumentProjection(graph, layout).documentProjectionId, rendered.documentProjectionId);
 
-  const indexFile = path.join(root, ".head", "generated", "knowledge", "index.md");
+  const indexFile = path.join(root, layout.directory, "generated", "knowledge", "index.md");
   fs.appendFileSync(indexFile, "\nUser-proposed documentation change.\n");
   const removedDocument = rendered.documents.find((item) => item.relativePath.startsWith("nodes/"));
-  fs.unlinkSync(path.join(root, ".head", "generated", "knowledge", ...removedDocument.relativePath.split("/")));
-  fs.mkdirSync(path.join(root, ".head", "generated", "knowledge", "notes"), { recursive: true });
-  fs.writeFileSync(path.join(root, ".head", "generated", "knowledge", "notes", "proposal.md"), "# Proposed note\n");
+  fs.unlinkSync(path.join(root, layout.directory, "generated", "knowledge", ...removedDocument.relativePath.split("/")));
+  fs.mkdirSync(path.join(root, layout.directory, "generated", "knowledge", "notes"), { recursive: true });
+  fs.writeFileSync(path.join(root, layout.directory, "generated", "knowledge", "notes", "proposal.md"), "# Proposed note\n");
   const modified = inspectWorldMarkdownProjection({ root });
   assert.equal(modified.status, "modified");
   assert.equal(modified.projection.candidateRequired, true);
@@ -2728,8 +2747,8 @@ test("renders deterministic Markdown projections and captures edits as non-autho
   fs.writeFileSync(captured.file, `${JSON.stringify(captured.candidateSet, null, 2)}\n`);
 
   fs.writeFileSync(indexFile, rendered.documents.find((item) => item.relativePath === "index.md").content);
-  fs.writeFileSync(path.join(root, ".head", "generated", "knowledge", ...removedDocument.relativePath.split("/")), removedDocument.content);
-  fs.unlinkSync(path.join(root, ".head", "generated", "knowledge", "notes", "proposal.md"));
+  fs.writeFileSync(path.join(root, layout.directory, "generated", "knowledge", ...removedDocument.relativePath.split("/")), removedDocument.content);
+  fs.unlinkSync(path.join(root, layout.directory, "generated", "knowledge", "notes", "proposal.md"));
   assert.equal(inspectWorldMarkdownProjection({ root }).status, "current");
   fs.appendFileSync(path.join(root, "src", "service.mjs"), "export class Worker {}\n");
   await buildWorldModel({ root });
@@ -2742,11 +2761,12 @@ test("promotes document edits only through explicit structured Product Canon rev
   fs.mkdirSync(path.join(root, "src"), { recursive: true });
   fs.writeFileSync(path.join(root, "src", "service.mjs"), "export function serve() { return true; }\n");
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const layout = inspectProject(root).storage;
   const indexed = await buildWorldModel({ root });
   assert.equal(indexed.snapshot.git.status, "not-a-git-repository");
-  const initialCanon = fs.readFileSync(path.join(root, ".head", "context", "product-model.json"), "utf8");
+  const initialCanon = fs.readFileSync(path.join(root, layout.directory, "context", "product-model.json"), "utf8");
   const rendered = materializeWorldMarkdownProjection({ root });
-  const indexFile = path.join(root, ".head", "generated", "knowledge", "index.md");
+  const indexFile = path.join(root, layout.directory, "generated", "knowledge", "index.md");
   fs.appendFileSync(indexFile, "\nProposal: add an auditable document review feature.\n");
   const captured = captureWorldMarkdownChanges({ root, persist: true });
   const resultingProductModel = {
@@ -2777,7 +2797,7 @@ test("promotes document edits only through explicit structured Product Canon rev
   assert.equal(reviewed.status, "reviewed-awaiting-application");
   assert.equal(reviewed.reviewDecision.instructionAuthority, true);
   assert.equal(reviewed.reviewDecision.promotionAuthority, true);
-  assert.equal(fs.readFileSync(path.join(root, ".head", "context", "product-model.json"), "utf8"), initialCanon);
+  assert.equal(fs.readFileSync(path.join(root, layout.directory, "context", "product-model.json"), "utf8"), initialCanon);
   assert.equal(inspectDocumentChangeReviewStatus({ root, candidateSetId: captured.candidateSet.candidateSetId }).status, "reviewed-awaiting-application");
   assert.equal(readDocumentChangeReviewDecision({ root, reviewDecisionId: reviewed.reviewDecision.reviewDecisionId }).resultingProductModelRevision.productModelId, reviewed.reviewDecision.resultingProductModelId);
   assert.equal(runCommand(["world-docs-review-status", root, "--candidate-set", captured.candidateSet.candidateSetId]).status, "reviewed-awaiting-application");
@@ -2797,7 +2817,7 @@ test("promotes document edits only through explicit structured Product Canon rev
   });
   assert.equal(mcpReview.result.structuredContent.reviewDecision.reviewDecisionId, reviewed.reviewDecision.reviewDecisionId);
 
-  const canonFile = path.join(root, ".head", "context", "product-model.json");
+  const canonFile = path.join(root, layout.directory, "context", "product-model.json");
   const canonBeforeFaults = fs.readFileSync(canonFile, "utf8");
   const canonTemporary = `${canonFile}.tmp-${process.pid}`;
   const preexistingTemporary = "preexisting temporary owned by another operation\n";
@@ -2900,10 +2920,10 @@ test("promotes document edits only through explicit structured Product Canon rev
   assert.equal(mcpApplication.result.structuredContent.applicationReceipt.applicationReceiptId, applied.applicationReceipt.applicationReceiptId);
   assert.equal((await applyDocumentChangeReview({ root, reviewDecisionId: reviewed.reviewDecision.reviewDecisionId })).status, "already-applied");
 
-  const appliedCanon = fs.readFileSync(path.join(root, ".head", "context", "product-model.json"), "utf8");
+  const appliedCanon = fs.readFileSync(path.join(root, layout.directory, "context", "product-model.json"), "utf8");
   fs.appendFileSync(indexFile, "\nProposal that the user rejects.\n");
   const rejectedCandidateSet = captureWorldMarkdownChanges({ root, persist: true }).candidateSet;
-  const rejectionInput = path.join(root, ".head", "document-change-rejection-input.json");
+  const rejectionInput = path.join(root, layout.directory, "document-change-rejection-input.json");
   fs.writeFileSync(rejectionInput, `${JSON.stringify({
     candidateSetId: rejectedCandidateSet.candidateSetId,
     disposition: "reject",
@@ -2914,7 +2934,7 @@ test("promotes document edits only through explicit structured Product Canon rev
   assert.equal(rejected.reviewDecision.promotionAuthority, false);
   assert.equal(rejected.applicationReceipt.canonChanged, false);
   assert.equal(rejected.applicationReceipt.canonMutation, "none");
-  assert.equal(fs.readFileSync(path.join(root, ".head", "context", "product-model.json"), "utf8"), appliedCanon);
+  assert.equal(fs.readFileSync(path.join(root, layout.directory, "context", "product-model.json"), "utf8"), appliedCanon);
   assert.equal(inspectWorldMarkdownProjection({ root }).status, "current");
   assert.equal(inspectDocumentChangeReviewStatus({ root, candidateSetId: rejectedCandidateSet.candidateSetId }).status, "rejected-and-reconciled");
 
@@ -2928,7 +2948,7 @@ test("promotes document edits only through explicit structured Product Canon rev
     rationale: "This must fail because the published proposal changed after capture.",
   }), { code: "DOCUMENT_CHANGE_CANDIDATE_PUBLISHED_DRIFT" });
 
-  const reviewFile = path.join(root, ".head", "document-changes", "review-decisions", `${reviewed.reviewDecision.reviewDecisionId}.json`);
+  const reviewFile = path.join(root, layout.directory, "document-changes", "review-decisions", `${reviewed.reviewDecision.reviewDecisionId}.json`);
   const reviewDocument = JSON.parse(fs.readFileSync(reviewFile, "utf8"));
   const tamperedReview = clone(reviewDocument);
   tamperedReview.rationale = "tampered";
@@ -2936,7 +2956,7 @@ test("promotes document edits only through explicit structured Product Canon rev
   assert.throws(() => readDocumentChangeReviewDecision({ root, reviewDecisionId: reviewed.reviewDecision.reviewDecisionId }), { code: "DOCUMENT_CHANGE_REVIEW_DIGEST_MISMATCH" });
   fs.writeFileSync(reviewFile, `${JSON.stringify(reviewDocument, null, 2)}\n`);
 
-  const applicationFile = path.join(root, ".head", "document-changes", "applications", `${applied.applicationReceipt.applicationReceiptId}.json`);
+  const applicationFile = path.join(root, layout.directory, "document-changes", "applications", `${applied.applicationReceipt.applicationReceiptId}.json`);
   const applicationDocument = JSON.parse(fs.readFileSync(applicationFile, "utf8"));
   const tamperedApplication = clone(applicationDocument);
   tamperedApplication.applicationReceiptHash = "f".repeat(64);
@@ -2951,18 +2971,19 @@ test("applies explicit post-refresh Markdown policy without overwriting edited p
   fs.mkdirSync(path.join(root, "src"), { recursive: true });
   fs.writeFileSync(path.join(root, "src", "service.mjs"), "export function serve() { return true; }\n");
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const layout = inspectProject(root).storage;
   const indexed = await buildWorldModel({ root });
   assert.equal(indexed.snapshot.git.status, "not-a-git-repository");
-  const productCanonBefore = fs.readFileSync(path.join(root, ".head", "context", "product-model.json"), "utf8");
+  const productCanonBefore = fs.readFileSync(path.join(root, layout.directory, "context", "product-model.json"), "utf8");
 
   const implicit = inspectPostRefreshProjectionPolicy({ root });
   assert.equal(implicit.status, "implicit-default");
   assert.equal(implicit.policy.mode, "manual");
   const manual = await refreshWorldModel({ root });
   assert.equal(manual.postRefreshProjection.status, "manual-deferred");
-  assert.equal(fs.existsSync(path.join(root, ".head", "generated", "knowledge")), false);
+  assert.equal(fs.existsSync(path.join(root, layout.directory, "generated", "knowledge")), false);
 
-  const policyInput = path.join(root, ".head", "automatic-markdown-policy.json");
+  const policyInput = path.join(root, layout.directory, "automatic-markdown-policy.json");
   fs.writeFileSync(policyInput, `${JSON.stringify({ mode: "automatic" }, null, 2)}\n`);
   const configured = runCommand(["world-docs-policy-set", root, "--input", policyInput]);
   assert.equal(configured.policy.mode, "automatic");
@@ -3007,7 +3028,7 @@ test("applies explicit post-refresh Markdown policy without overwriting edited p
   });
   assert.equal(mcpReceipt.result.structuredContent.receipt.refresh.refreshReceiptId, projected.receipt.refreshReceiptId);
 
-  const indexFile = path.join(root, ".head", "generated", "knowledge", "index.md");
+  const indexFile = path.join(root, layout.directory, "generated", "knowledge", "index.md");
   const projectedIndex = fs.readFileSync(indexFile, "utf8");
   const editedIndex = `${projectedIndex}\nUser-authored projection proposal.\n`;
   fs.writeFileSync(indexFile, editedIndex);
@@ -3031,7 +3052,7 @@ test("applies explicit post-refresh Markdown policy without overwriting edited p
   assert.equal(recovered.status, "unchanged");
   assert.equal(recovered.postRefreshProjection.status, "projected");
   assert.equal(inspectWorldMarkdownProjection({ root }).status, "current");
-  assert.equal(fs.readFileSync(path.join(root, ".head", "context", "product-model.json"), "utf8"), productCanonBefore);
+  assert.equal(fs.readFileSync(path.join(root, layout.directory, "context", "product-model.json"), "utf8"), productCanonBefore);
   assert.equal(inspectPostRefreshProjectionStatus({ root }).receipt.canonMutation, "none");
 
   fs.appendFileSync(path.join(root, "src", "service.mjs"), "export const triggeredProjection = true;\n");
@@ -3124,11 +3145,13 @@ test("projects user-owned product canon into immutable temporal revisions and bo
   const root = temporaryProject();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
-  const productFile = path.join(root, ".head", "context", "product-model.json");
+  const layout = inspectProject(root).storage;
+  const productFile = path.join(root, layout.directory, "context", "product-model.json");
   assert.ok(fs.existsSync(productFile));
   fs.writeFileSync(productFile, `${JSON.stringify(productDocument, null, 2)}\n`);
   const indexed = await buildWorldModel({ root });
-  assert.equal(indexed.snapshot.productModel.productModelId, productModel.productModelId);
+  const ownedProductModel = normalizeProductModelDocument(productDocument, layout);
+  assert.equal(indexed.snapshot.productModel.productModelId, ownedProductModel.productModelId);
   assert.equal(indexed.snapshot.summary.featureCount, 1);
   assert.equal(indexed.snapshot.temporalProvenanceGraph.summary.productRevisionCount, 6);
   const query = queryWorldTemporalGraph({
@@ -3141,7 +3164,7 @@ test("projects user-owned product canon into immutable temporal revisions and bo
   assert.ok(query.edges.some((edge) => edge.type === "REALIZES"));
   const capsule = compileContext({ root, task: "Change Message delivery without discarding chat input", budget: 32_768, persist: false });
   assert.equal(capsule.capsule.productContext.length, 1, JSON.stringify(capsule.capsule.selection));
-  assert.equal(capsule.capsule.productContext[0].productModelId, productModel.productModelId);
+  assert.equal(capsule.capsule.productContext[0].productModelId, ownedProductModel.productModelId);
   assert.equal(capsule.capsule.productContext[0].instructionAuthority, false);
 
   const reordered = clone(productDocument);
@@ -3471,6 +3494,7 @@ test("indexes adapter-neutral external runtime observations without granting con
   const root = temporaryProject();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   initializeProject({ root, pluginRoot, runtimes: ["codex", "opencode"] });
+  const layout = inspectProject(root).storage;
   const exported = {
     schemaVersion: 1,
     kind: "HeadRuntimeStateExport",
@@ -3519,7 +3543,7 @@ test("indexes adapter-neutral external runtime observations without granting con
   });
   await assert.rejects(buildWorldModel({ root, persist: false, runtimeStateAdapter: invalidAdapter }), { code: "INVALID_RUNTIME_STATE_AUTHORITY" });
 
-  const inputDirectory = path.join(root, ".head", "world-model", "inputs");
+  const inputDirectory = path.join(root, layout.directory, "world-model", "inputs");
   const inputFile = path.join(inputDirectory, "runtime-state.json");
   fs.mkdirSync(inputDirectory, { recursive: true });
   fs.writeFileSync(inputFile, `${JSON.stringify(exported, null, 2)}\n`);
@@ -3577,7 +3601,8 @@ test("compiles a reproducible HEAD-guided Context Capsule without lexical eligib
   const root = temporaryProject();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
-  const knowledgeFile = path.join(root, ".head", "context", "knowledge.json");
+  const layout = inspectProject(root).storage;
+  const knowledgeFile = path.join(root, layout.directory, "context", "knowledge.json");
   const knowledge = JSON.parse(fs.readFileSync(knowledgeFile, "utf8"));
   knowledge.evidence.push({ id: "evidence-auth-ttl", sourceKind: "source", uri: "src/auth/session.ts:44", digest: "abc123", summary: "Session TTL is read from the active policy." });
   knowledge.claims.push({ id: "claim-session-ttl", statement: "Session TTL is controlled by the active authentication policy.", status: "active", importance: 4, tags: ["auth", "session", "ttl"], evidenceIds: ["evidence-auth-ttl"] });

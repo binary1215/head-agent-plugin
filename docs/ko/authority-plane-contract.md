@@ -10,7 +10,7 @@
 
 다이제스트가 유효한 `0.1.0`, `0.2.0`, `0.3.0`, `0.4.0`, `0.5.0`, `0.6.0`, `0.7.0`, `0.8.0` 내장 경계는 업그레이드 연속성을 위해 계속 읽을 수 있으며, 새 builder는 `0.9.0`을 내보냅니다. reader가 유지하는 유일한 레거시 분류는 과거의 일반 Feature/Policy 명명이며, 새 artifact를 승격하는 데는 절대 사용되지 않습니다.
 
-`WorkerPatchIntegrationIntent`는 P3입니다. HEAD가 선택한 조합의 정확한 dispatch,
+`WorkerPatchIntegrationIntent`는 P3입니다. Lode가 선택한 조합의 정확한 dispatch,
 authorization, 종료된 receipt, owner가 동결한 patch 출처를 연결합니다. 경로를
 예약하거나 파일을 적용하거나 새 실행을 승인하거나 Run을 완료하거나 복구 방향을
 작성하지 않습니다. 소스·Session이 변경되고 Host 임시 파일이 없어져도 과거 증거는
@@ -25,22 +25,22 @@ Run·Session을 넘어 확인하지만 읽기 의존성이나 변경하지 않�
 고치거나 재실행을 승인하지 않습니다. native journal·프로세스 식별자·실시간 소유권은
 P5에 남습니다.
 
-`WorkerIntegrationVerification`은 현재 통합 상태에 대한 HEAD의 판단을 동결합니다.
+`WorkerIntegrationVerification`은 현재 통합 상태에 대한 Lode의 판단을 동결합니다.
 `WorkerIntegrationResultApplication`은 하나의 전체 ResultPacket을 기존 Run 완료와
-Fresh HEAD 검토에 연결합니다. 둘 다 P3이며 ReviewDecision이나 P2 checkpoint 통합을
-생성하지 않습니다. 근거가 바뀌면 HEAD가 다시 판단하지만 사용자 승인 절차를 추가하거나
+Fresh Lode 검토에 연결합니다. 둘 다 P3이며 ReviewDecision이나 P2 checkpoint 통합을
+생성하지 않습니다. 근거가 바뀌면 Lode가 다시 판단하지만 사용자 승인 절차를 추가하거나
 소스를 영구적으로 잠그지는 않습니다.
 
 ## 이 경계가 존재하는 이유
 
-HEAD Agent Core는 한 표현이 다른 표현의 권한을 물려받게 하지 않으면서 의미, 복구, 증거, 파생 검색, 실시간 효과를 조정합니다. 아래 다섯 평면은 의미 artifact를 분류합니다. `Distribution`과 `Host`는 별도의 아키텍처 평면입니다. 이들은 이러한 계약을 패키징하거나 실행하지만 제품 의미나 복구 방향의 추가 출처가 되지는 않습니다.
+Lode Agent Core는 한 표현이 다른 표현의 권한을 물려받게 하지 않으면서 의미, 복구, 증거, 파생 검색, 실시간 효과를 조정합니다. 아래 다섯 평면은 의미 artifact를 분류합니다. `Distribution`과 `Host`는 별도의 아키텍처 평면입니다. 이들은 이러한 계약을 패키징하거나 실행하지만 제품 의미나 복구 방향의 추가 출처가 되지는 않습니다.
 
 | 평면 | 소유 범위 | 대표 artifact | 금지된 추론 |
 |---|---|---|---|
 | P1 Normative Authority | 승인된 제품 의미, 정책, 명시적 결정 | Product Canon, ProductModelRevision, ProductCanonFeature/ReviewedFeature, PolicyCanon/ReviewedPolicy, ReviewDecision, accepted ProductPolicyReviewDecision | 그래프, 메시지, 결과 또는 host에 존재한다는 사실만으로 승인을 만들 수 없음 |
-| P2 Canonical Recovery/Lineage Record | Project, Session, Run, 계획, context, contract와 다음 방향의 provider 독립적 복구 | Project, ProjectDirection, HeadSession, Run, WholePlanSnapshot, ContextCapsule, ExecutionContract, SessionRunCheckpoint | 증거 삭제나 provider 요약이 checkpoint 필드를 다시 쓸 수 없음 |
+| P2 Canonical Recovery/Lineage Record | Project, Session, Run, 계획, context, contract와 다음 방향의 provider 독립적 복구 | Project, ProjectDirection, LodeSession, Run, WholePlanSnapshot, ContextCapsule, ExecutionContract, SessionRunCheckpoint | 증거 삭제나 provider 요약이 checkpoint 필드를 다시 쓸 수 없음 |
 | P3 Evidence Record | 검토 가능한 결과, 관찰, 후보, claim, 소유권 레코드와 감사 receipt | ResultPacket, WorkerReport, BoundedWorkerDispatch, BoundedWorkerWave/Seal/Abandonment, CandidateSet, FeatureCandidate/ProductFeatureCandidate, PolicyCandidate/ProductPolicyCandidate, Evidence, ObservationTypeDescriptor/ObservationRecord/DerivedObservationRecord/ObservationCollectionReceipt, MetricDefinitionProjection, ProductHypothesis, ConformanceFindingCandidate/DispositionReceipt/ResolutionCandidate, BranchStateObservation, DeploymentResultObservation, ReleaseObservation, DocumentCanonApplicationReceipt, RunResultIntegrationRequest/Receipt | 증거가 스스로 승격되거나 복구 Canon이 될 수 없음 |
-| P4 Derived Relation/View | 재현 가능한 검색과 사람 대상 view | ProjectGraphDiscoveryProjection, ProjectGraphObservationIndex, GraphSnapshot, GraphDB projection, TraversalResult, GraphLineageStatusProjection/TraceProjection/DiffProjection, MeasurementLineageProjection, DeliveryStateProjection, Markdown/Document projection, HEADContinuitySnapshot, SessionRestoreProjection, RecoveryCheckpointDiagnosisProjection, WorkerWaveStatusProjection/ResultProjection, ObservationStatusProjection, ObservationSourceDiscoveryProjection, ObservationPreparationProjection, ConformancePreparationProjection/QueueProjection/FindingGraphProjection/TriggerBatchProjection | projection이 Canon을 변경하거나 지시 권한을 부여하거나 유일한 복구 출처가 될 수 없음 |
+| P4 Derived Relation/View | 재현 가능한 검색과 사람 대상 view | ProjectGraphDiscoveryProjection, ProjectGraphObservationIndex, GraphSnapshot, GraphDB projection, TraversalResult, GraphLineageStatusProjection/TraceProjection/DiffProjection, MeasurementLineageProjection, DeliveryStateProjection, Markdown/Document projection, LodeContinuitySnapshot, SessionRestoreProjection, RecoveryCheckpointDiagnosisProjection, WorkerWaveStatusProjection/ResultProjection, ObservationStatusProjection, ObservationSourceDiscoveryProjection, ObservationPreparationProjection, ConformancePreparationProjection/QueueProjection/FindingGraphProjection/TriggerBatchProjection | projection이 Canon을 변경하거나 지시 권한을 부여하거나 유일한 복구 출처가 될 수 없음 |
 | P5 Operational Effect | host 로컬 process, continuation, wait와 delivery 효과 | PID, token, proof, lease, endpoint, inbox, delivery receipt, ContinuationOutcome, BoundedWorkerWaitOutcome, BoundedWorkerWaveWaitOutcome, ObservationSourceBinding, ConformanceTriggerBinding, provider-session reference | continuation, wait, delivery 또는 process 제어의 성공이 실행, 검토, 승격 또는 복구를 승인할 수 없음 |
 
 `scripts/lib/authority-plane-contract.mjs`는 내용에서 파생된 하나의 `AuthorityPlaneContract`를 내보내고, 위에서 구현된 artifact를 정확한 평면에 할당하며, 내장된 artifact 경계를 검증합니다. 이 평면들은 지속성 계층이 아니라 의미 클래스입니다. P2는 복구에 대한 권한을 갖지만 P1의 제품 의미를 소유하지 않으며, P1 검토는 P2 checkpoint 상태를 대체하지 않습니다.
@@ -52,7 +52,7 @@ HEAD Agent Core는 한 표현이 다른 표현의 권한을 물려받게 하지 
 승인 경계는 로컬 호출자가 실제 사용자 결정을 전달한다고 신뢰합니다.
 Core는 정확한 대상, 처분, digest와 허용된 전이를 검증하지만, 요청이 사용자를
 지칭하거나 확인 플래그를 설정했다는 이유로 사람의 의사를 인증하지는 않습니다.
-Host와 provider HEAD는 보호된 변경을 호출하기 전에 현재 사용자 결정을
+Host와 provider Lode는 보호된 변경을 호출하기 전에 현재 사용자 결정을
 변경되지 않은 후보에 연결해야 합니다. 도구 annotation은 효과를 설명할 뿐
 승인이 아닙니다. 더 강한 인증이 필요한 Host는 Core 호출 전에 자체 사용자 행동
 영수증을 검증할 수 있으며, 영수증과 provider identity는 Host 경계에 남습니다.
@@ -64,16 +64,16 @@ Host와 provider HEAD는 보호된 변경을 호출하기 전에 현재 사용�
 
 accepted Product Policy ReviewDecision은 정확히 candidate에 결속된 Product Canon revision만 변경합니다. 그 P4 graph copy, Observation comparison, metric assessment 및 follow-up candidate는 해당 authority를 반복하거나 넓힐 수 없습니다. Measurement collection condition의 difference와 unknown은 silent equivalence claim이나 새 blocking gate가 아니라 disclosure된 evidence로 남습니다.
 
-P3 증거, P4 파생 view, P5 운영 효과는 어떤 경우에도 P2 복구 권한으로 승격될 수 없습니다. checkpoint가 감사를 위해 증거를 참조할 수는 있지만, 그 복구 필드는 명시적인 HEAD/사용자 방향과 검증된 P2 lineage에서만 옵니다. ResultPacket, GraphSnapshot, continuity, inbox 또는 provider-session 상태는 그 필드를 제공하거나 다시 쓸 수 없습니다.
+P3 증거, P4 파생 view, P5 운영 효과는 어떤 경우에도 P2 복구 권한으로 승격될 수 없습니다. checkpoint가 감사를 위해 증거를 참조할 수는 있지만, 그 복구 필드는 명시적인 Lode/사용자 방향과 검증된 P2 lineage에서만 옵니다. ResultPacket, GraphSnapshot, continuity, inbox 또는 provider-session 상태는 그 필드를 제공하거나 다시 쓸 수 없습니다.
 
 context와 조정에도 같은 규칙이 적용됩니다.
 
-- provider HEAD semantic product proposal은 P3 evidence입니다. Core는 이를 검증하고
+- provider Lode semantic product proposal은 P3 evidence입니다. Core는 이를 검증하고
   immutable candidate set으로 정규화할 수 있지만 Product Canon이나 ReviewDecision을
   생성할 수 없습니다.
 - Capsule은 지시 및 승격 권한이 false인 제한된 그래프 순회만 포함할 수 있습니다.
-- 지속되지 않는 ContextWorkflowProjection은 P4 selection 안내입니다. 출처·누락·불확실성을 제공하며 고정 tier나 포함 증명 gate는 없습니다. HEAD가 충분성과 유용한 확대를 판단합니다. 의미 선택, provider 호출, 상태 변경, 승인 또는 복구 방향 쓰기는 할 수 없습니다.
-- 지속되지 않는 ContextPreparationProjection은 의미 추론이 아니라 P4 candidate visibility입니다. task text만 받아 제한된 현재 identity와 lexical discovery material을 보여주고 provider HEAD가 사용자 JSON 없이 구조화 proposal을 작성하게 합니다. EvidenceNeeds나 graph anchor를 선택하거나 provider/session identity를 영속화하거나 P2 방향을 쓸 수 없습니다. 이후 preview는 Project/World/Graph drift를 다시 검증합니다.
+- 지속되지 않는 ContextWorkflowProjection은 P4 selection 안내입니다. 출처·누락·불확실성을 제공하며 고정 tier나 포함 증명 gate는 없습니다. Lode가 충분성과 유용한 확대를 판단합니다. 의미 선택, provider 호출, 상태 변경, 승인 또는 복구 방향 쓰기는 할 수 없습니다.
+- 지속되지 않는 ContextPreparationProjection은 의미 추론이 아니라 P4 candidate visibility입니다. task text만 받아 제한된 현재 identity와 lexical discovery material을 보여주고 provider Lode가 사용자 JSON 없이 구조화 proposal을 작성하게 합니다. EvidenceNeeds나 graph anchor를 선택하거나 provider/session identity를 영속화하거나 P2 방향을 쓸 수 없습니다. 이후 preview는 Project/World/Graph drift를 다시 검증합니다.
 - 검토 전 후보는 Canon context compilation에서 제외됩니다. 일반 탐색은 원래 후보·거절 상태를 표시한 P3 자료를 포함할 수 있지만 관계 확장에서도 승격하지 않습니다.
 - provider 요약, continuity view, inbox message와 reply는 checkpoint 필드를 변경하거나 ReviewDecision을 만들 수 없습니다.
 - 원격 GraphDB는 검증된 query를 가속할 수 있지만, 로컬 규범 레코드와 복구 레코드가 손실된 뒤 Product Canon을 재구성할 수는 없습니다.
@@ -90,14 +90,14 @@ Product Initiative review는 exact candidate와 Feature selection을 담은 scop
 
 제품의 의미 Canon은 P1에 남습니다. Core의 시간적 `GraphSnapshot`은 P4입니다. 이는 검증된 Canon과 레코드 위에 구축된, 내용에서 파생되고 재구축 가능한 관계 및 검색 index입니다. `productModelId`와 hash는 projection의 출처를 결속할 뿐, Product Canon 권한을 그래프로 이전하지 않습니다. GraphDB는 그 정확한 snapshot을 대체 가능하게 구체화한 것일 뿐입니다. GraphDB와 생성된 Markdown을 삭제해도 Product Canon, Session/Run 복구, ReviewDecision lineage가 온전해야 합니다.
 
-이 구분은 두 제품을 혼동하지 않으면서 원래 Product Graph의 통찰을 보존합니다. 제품 지식 model은 의미 Canon을 담을 수 있지만, HEAD Core의 시간적 그래프는 Canon과 실행 레코드 위에 구축된 파생 index입니다. 전자만 의미를 소유하고, 후자는 탐색을 담당합니다.
+이 구분은 두 제품을 혼동하지 않으면서 원래 Product Graph의 통찰을 보존합니다. 제품 지식 model은 의미 Canon을 담을 수 있지만, Lode Core의 시간적 그래프는 Canon과 실행 레코드 위에 구축된 파생 index입니다. 전자만 의미를 소유하고, 후자는 탐색을 담당합니다.
 
 ## 결과와 checkpoint 경계
 
 `ResultPacket`과 `WorkerReport`는 P3 증거입니다. P2 `SessionRunCheckpoint`에 이미 고정된 정확한 `nextExpectedResult`를 변경하지 않고도 이를 검토하거나 첨부하거나 삭제할 수 있습니다. `ReviewDecision`은 P1 규범 레코드이고, checkpoint는 복구 레코드입니다. 어느 것도 다른 하나를 대신하지 않습니다.
 
 수락된 검토 결과는 명시적 integration으로 복구에 연결됩니다.
-HEAD가 방향을 제공하며 검증된 ResultPacket과 ReviewDecision은 참조이지 필드 작성자가 아닙니다.
+Lode가 방향을 제공하며 검증된 ResultPacket과 ReviewDecision은 참조이지 필드 작성자가 아닙니다.
 lock 안의 checkpoint 발행 한 번이 exact reviewed Run과 정규화한 방향을 결속합니다.
 동일 재시도는 재사용하고 다른 방향은 충돌하며, 중단 시 누락된 Session pointer 갱신만
 재개합니다. 별도의 integration request나 receipt는 새로 만들지 않습니다.
@@ -106,25 +106,25 @@ lock 안의 checkpoint 발행 한 번이 exact reviewed Run과 정규화한 방�
 
 비지속 recovery checkpoint basis는 P4 비증폭 규칙을 따릅니다. Core가 오래됐거나 이미
 수렴한 게시 요청을 구분할 수 있도록 정확한 현재 P2 identity와 전이 상태만 결속합니다.
-자연어 복구 방향은 계속 provider HEAD만 도출하며, 해당 basis를 읽은 뒤 도출해야 합니다.
+자연어 복구 방향은 계속 provider Lode만 도출하며, 해당 basis를 읽은 뒤 도출해야 합니다.
 basis의 존재, 바뀐 basis ID, Run result, open epoch 또는 운영 Host event는 checkpoint
-field의 출처가 될 수 없습니다. lock을 사용하는 sync는 명시적인 HEAD 방향으로 P2
+field의 출처가 될 수 없습니다. lock을 사용하는 sync는 명시적인 Lode 방향으로 P2
 checkpoint 하나를 만들거나, 정확한 현재 byte를 재사용하거나, 미완료 전이를 연기하거나,
 오래된 상태를 거부할 수 있을 뿐입니다.
 
-선택적 live continuation도 같은 경계를 따릅니다. Core가 먼저 정확한 P2 checkpoint를 복원한 뒤, P5 WorkspaceHost adapter가 이미 실행 중인 endpoint 하나를 fresh-verify할 수 있습니다. 지속되지 않는 `ContinuationOutcome`은 `attached` 또는 공개된 새 논리 HEAD fallback을 보고합니다. 이는 SessionRestoreProjection을 변경하거나, provider identity를 지속하거나, 복구 권한을 주장할 수 없습니다.
+선택적 live continuation도 같은 경계를 따릅니다. Core가 먼저 정확한 P2 checkpoint를 복원한 뒤, P5 WorkspaceHost adapter가 이미 실행 중인 endpoint 하나를 fresh-verify할 수 있습니다. 지속되지 않는 `ContinuationOutcome`은 `attached` 또는 공개된 새 논리 Lode fallback을 보고합니다. 이는 SessionRestoreProjection을 변경하거나, provider identity를 지속하거나, 복구 권한을 주장할 수 없습니다.
 
 `RecoveryCheckpointDiagnosisProjection`도 P4입니다. 제한된
 `basis B0 -> restore -> basis B1` 순서를 검증하고 현재 pointer, artifact 복구와 기계적인
 sync 가능 여부에 관한 사실을 보고합니다. basis를 cache하거나 mutation lock을 획득하거나,
-증거를 repair하거나, provider HEAD를 호출하거나, 의미적 최신성을 판단하거나, checkpoint
+증거를 repair하거나, provider Lode를 호출하거나, 의미적 최신성을 판단하거나, checkpoint
 field를 제공할 수 없습니다. 순차 관찰의 일치는 원자적 filesystem snapshot이 아니며 ABA를
 감지할 수 없습니다. 관찰이 바뀌면 새로 읽어야 하고 integrity 실패와 필수 artifact 누락은
 선택적 증거 누락으로 다시 표시되지 않습니다.
 
-독립적으로 소유 가능한 worker 실행은 정확한 Session 또는 Run `ExecutionAuthorization` 위에 하나의 P3 `BoundedWorkerDispatch`를 기록합니다. Session 결과는 wait/result 조회를 통해 HEAD가 증거로 소비하며, Run 적용이나 필수 영속 Capsule, P1/P2 진행을 요구하지 않습니다. P5 lease/process/wait는 at-most-once 사용을 강제하지만 WholePlan을 바꾸거나 ReviewDecision을 만들 수 없습니다. Run 결과는 기존 P3 ResultPacket → Fresh HEAD → 명시적 P1 검토 → reviewed-result integration을 유지합니다. Wave와 worker-apply는 Run 전용입니다.
+독립적으로 소유 가능한 worker 실행은 정확한 Session 또는 Run `ExecutionAuthorization` 위에 하나의 P3 `BoundedWorkerDispatch`를 기록합니다. Session 결과는 wait/result 조회를 통해 Lode가 증거로 소비하며, Run 적용이나 필수 영속 Capsule, P1/P2 진행을 요구하지 않습니다. P5 lease/process/wait는 at-most-once 사용을 강제하지만 WholePlan을 바꾸거나 ReviewDecision을 만들 수 없습니다. Run 결과는 기존 P3 ResultPacket → Fresh Lode → 명시적 P1 검토 → reviewed-result integration을 유지합니다. Wave와 worker-apply는 Run 전용입니다.
 
-`BoundedWorkerWave`는 정확한 Project, HEAD Session, active Run, WholePlan, ExecutionContract, Capsule lineage가 모두 동일할 때만 여러 dispatch를 묶을 수 있습니다. 이는 어떤 승인도 부여하지 않으며 각 lease는 독립적으로 유지됩니다. P3 seal에는 모든 member에 대한 검증된 소비가 필요하고, P4 status는 그 seal을 만들 수 없습니다. Wave의 실패, 완료, abandonment, result projection과 P5 wait는 P1 review나 P2 recovery direction을 만들 수 없습니다.
+`BoundedWorkerWave`는 정확한 Project, Lode Session, active Run, WholePlan, ExecutionContract, Capsule lineage가 모두 동일할 때만 여러 dispatch를 묶을 수 있습니다. 이는 어떤 승인도 부여하지 않으며 각 lease는 독립적으로 유지됩니다. P3 seal에는 모든 member에 대한 검증된 소비가 필요하고, P4 status는 그 seal을 만들 수 없습니다. Wave의 실패, 완료, abandonment, result projection과 P5 wait는 P1 review나 P2 recovery direction을 만들 수 없습니다.
 
 실행 가능한 복구 test는 ResultPacket을 만들고 checkpoint를 준비한 다음 ResultPacket 파일을 삭제하고도 checkpoint가 정확한 다음 예상 결과를 계속 재현하는지 검증합니다. 이는 증거/복구 경계에 대한 삭제 test이지, 정상 운영에서 증거를 폐기해도 된다는 허가가 아닙니다.
 

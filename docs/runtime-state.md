@@ -8,7 +8,7 @@ this boundary.
 
 `RuntimeStateAdapter` version `0.1.0` imports a point-in-time host observation into the Repository World Model. It is a read-only evidence adapter, not an `AgentRuntimeAdapter`, process controller, session restorer, or authority source.
 
-The separate runtime-control plane has `PlatformAdapter`, `AgentRuntimeAdapter`, and `WorkspaceHostAdapter` references plus privacy-preserving current-host CLI discovery. It records candidate availability and content-derived path identities without exposing raw paths. Distinct bounded probes may execute the fixed non-session version and provider-specific help surfaces and retain only normalized versions, allowlisted capability signals, output digests/sizes, and lifecycle facts. `RuntimeProjectBinding` connects those observations to canonical HEAD project and Session identities without passing project content. These artifacts create no provider session and grant no control. See [`runtime-adapters.md`](runtime-adapters.md).
+The separate runtime-control plane has `PlatformAdapter`, `AgentRuntimeAdapter`, and `WorkspaceHostAdapter` references plus privacy-preserving current-host CLI discovery. It records candidate availability and content-derived path identities without exposing raw paths. Distinct bounded probes may execute the fixed non-session version and provider-specific help surfaces and retain only normalized versions, allowlisted capability signals, output digests/sizes, and lifecycle facts. `RuntimeProjectBinding` connects those observations to canonical Lode project and Session identities without passing project content. These artifacts create no provider session and grant no control. See [`runtime-adapters.md`](runtime-adapters.md).
 
 Every adapter must declare:
 
@@ -17,7 +17,7 @@ Every adapter must declare:
 - `uniqueAuthority: false`;
 - `readOnly: true`.
 
-Observed capabilities describe what a host reported. They never authorize HEAD or an executor to start, resume, interrupt, message, fence, or close anything. HEAD Session and Run identities remain canonical and distinct from provider session identifiers.
+Observed capabilities describe what a host reported. They never authorize Lode or an executor to start, resume, interrupt, message, fence, or close anything. Lode Session and Run identities remain canonical and distinct from provider session identifiers.
 
 ## Host export contract
 
@@ -26,7 +26,7 @@ The active adapter reads a regular non-symlink JSON file no larger than 1 MiB wi
 ```json
 {
   "schemaVersion": 1,
-  "kind": "HeadRuntimeStateExport",
+  "kind": "LodeRuntimeStateExport",
   "observedAt": "2026-08-18T12:00:00Z",
   "observations": [
     {
@@ -54,15 +54,15 @@ The schema intentionally rejects arbitrary fields. Raw commands, endpoints, envi
 
 ## Commands
 
-Place the host-produced file outside the repository or under the excluded derived-input directory `.head/world-model/inputs/`, then build and query:
+Place the host-produced file outside the repository or under the excluded derived-input directory `.lode/world-model/inputs/`, then build and query:
 
 ```text
-node scripts/head.mjs world-index <project> --runtime-state <host-exported-json-file>
-node scripts/head.mjs world-status <project>
-node scripts/head.mjs world-runtime <project> --runtime codex --state active --kind session --limit 20
+node scripts/lode.mjs world-index <project> --runtime-state <host-exported-json-file>
+node scripts/lode.mjs world-status <project>
+node scripts/lode.mjs world-runtime <project> --runtime codex --state active --kind session --limit 20
 ```
 
-The read-only MCP tool is `head_runtime_state`.
+The read-only MCP tool is `lode_runtime_state`.
 
 The physical source path and adapter descriptor are recorded only in the mutable World Model pointer so the source can be re-read for freshness checks. They are excluded from the semantic snapshot hash. The normalized observations, timestamp, coverage, and protocol versions determine the content-derived `runtimeStateId` and World Model ID.
 
@@ -90,6 +90,6 @@ widen this import adapter into a control plane.
 
 Provider-session hydration or hidden-session restoration, general resume/stream,
 provider-session messaging, and subscription remain deferred optional Runtime
-Adapter capabilities. P2-first optional exact HEAD attachment and exact-owned
+Adapter capabilities. P2-first optional exact Lode attachment and exact-owned
 one-shot interrupt/close belong to the separate active host/runtime boundaries,
 not this observation adapter.

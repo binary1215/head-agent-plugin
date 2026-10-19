@@ -1,3 +1,4 @@
+import { formatForVerifiedOwner, familyFormatForOriginal, relativeProjectArtifact } from "./project-storage-format.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { createObservationTypeDescriptor, createObservationRecord, verifyObservationRecord, observationDigest } from "./observation-contract.mjs";
@@ -6,7 +7,7 @@ import { artifactAuthorityBoundary, verifyArtifactAuthorityBoundary } from "./au
 import { sourceDigest, sourceObjectDigest, readSourceBytes, sourceCurrent, sourceError, preparePythonObservation, preparePythonDeclarations } from "./python-source-collector.mjs";
 import { noteProjectGraphChange } from "./discovery-index.mjs";
 
-const DIRECTORY = ".head/observations/source-bundles";
+
 export const SOURCE_OBSERVATION_TYPE = "source.structural-context";
 const adapterDescriptor = Object.freeze({ adapterKey: "python-stdlib-ast", adapterVersion: "1" });
 const observationDataErrors = new Set(["INVALID_OBSERVATION_ARTIFACT", "INVALID_OBSERVATION_COVERAGE", "INVALID_OBSERVATION_DESCRIPTOR", "INVALID_OBSERVATION_INPUT", "INVALID_OBSERVATION_PAYLOAD", "INVALID_OBSERVATION_RECORD", "OBSERVATION_CONTRACT_ERROR", "OBSERVATION_DIGEST_MISMATCH", "UNPROVEN_COMPLETE_OBSERVATION_COVERAGE",
@@ -49,11 +50,13 @@ const formats = Object.freeze({
   "1:source": sourceObservationDescriptor, "1:outgoing-calls": sourceObservationDescriptor,
   "2:declarations": declarationObservationDescriptor, "2:selected-source": declarationObservationDescriptor,
 });
-function descriptorFor(evidence) {
+function descriptorFor(evidence, storage) {
   if (![1, 2].includes(evidence.version)) throw sourceError("SOURCE_OBSERVATION_INVALID");
   const descriptor = formats[`${evidence.version}:${evidence.kind}`];
   if (!descriptor) throw sourceError("SOURCE_OBSERVATION_INVALID");
-  return descriptor;
+  if (formatForVerifiedOwner(storage).dialect === "head") return descriptor;
+  const { typeKey, typeVersion, forms, payloadSchema } = descriptor;
+  return createObservationTypeDescriptor({ typeKey, typeVersion, forms, payloadSchema }, storage);
 }
 function declarationResult(evidence) {
   try {
@@ -93,24 +96,26 @@ function observationInput(evidence) {
   } };
 }
 
-export function createSourceObservation(evidence) {
-  const descriptor = descriptorFor(evidence);
+export function createSourceObservation(evidence, storage = null) {
+  const descriptor = descriptorFor(evidence, storage);
   const { sourceScopeDigest, input } = observationInput(evidence);
   const observation = createObservationRecord({ projectId: evidence.projectId, descriptor,
-    ...input, source: { ...adapterDescriptor, sourceScopeDigest, sourceEventKeyDigest: input.sourceEventKeyDigest, sourceEvidenceDigest: input.sourceEvidenceDigest } });
+    ...input, source: { ...adapterDescriptor, sourceScopeDigest, sourceEventKeyDigest: input.sourceEventKeyDigest, sourceEvidenceDigest: input.sourceEvidenceDigest } }, storage);
   return { evidence, descriptor, observation };
 }
 
 // This verifies both content and current source bytes for persisted AND ephemeral
 // Context consumption. A hash alone is never treated as currentness or truth.
-export function verifySourceObservation(root, projectId, bundle, { requireCurrent = true } = {}) {
+export function verifySourceObservation(root, projectId, bundle, { requireCurrent = true, storage } = {}) {
   if (!recordShape(bundle) || !recordShape(bundle.evidence) || !recordShape(bundle.descriptor) || !recordShape(bundle.observation)) throw sourceError("SOURCE_OBSERVATION_INVALID");
   const { evidence, descriptor, observation } = bundle;
-  if (descriptor.descriptorId !== descriptorFor(evidence).descriptorId || evidence.projectId !== projectId
+  const format = familyFormatForOriginal("head-agent-core-observation", observation, storage);
+  if (!format) throw sourceError("SOURCE_OBSERVATION_INVALID");
+  if (descriptor.descriptorId !== descriptorFor(evidence, format).descriptorId || evidence.projectId !== projectId
     || !Array.isArray(evidence.sources) || evidence.sources.length !== 1 || !Array.isArray(evidence.query) || evidence.query.length !== 1
     || !recordShape(evidence.profile) || !recordShape(evidence.query[0]) || typeof evidence.query[0].path !== "string"
     || typeof evidence.query[0].symbol !== "string") throw sourceError("SOURCE_OBSERVATION_INVALID");
-  verifyObservationRecord(observation, descriptor, projectId);
+  verifyObservationRecord(observation, descriptor, projectId, format);
   for (const source of evidence.sources) {
     if (!recordShape(source) || typeof source.path !== "string" || typeof source.base64 !== "string" || !/^[a-f0-9]{64}$/.test(source.digest ?? "")) throw sourceError("SOURCE_OBSERVATION_INVALID");
     if (sourceDigest(Buffer.from(source.base64, "base64")) !== source.digest || source.path !== evidence.query[0].path) throw sourceError("SOURCE_OBSERVATION_INVALID");
@@ -129,15 +134,15 @@ export function verifySourceObservation(root, projectId, bundle, { requireCurren
     const prepared = declarationResult(evidence);
     if (prepared.status !== "ready" || prepared.evidenceHash !== evidence.envelopeHash) throw sourceError("SOURCE_OBSERVATION_INVALID");
   }
-  const expected = createSourceObservation(evidence);
+  const expected = createSourceObservation(evidence, format);
   if (expected.observation.observationHash !== observation.observationHash) throw sourceError("SOURCE_OBSERVATION_INVALID");
   if (requireCurrent && !sourceCurrent(root, evidence.sources)) throw sourceError("SOURCE_DRIFT");
   return observation;
 }
 
-function directory(root) {
+function directory(root, storage) {
   let current = fs.realpathSync(root);
-  for (const segment of DIRECTORY.split("/")) {
+  for (const segment of relativeProjectArtifact(storage, "observations", "source-bundles").split("/")) {
     current = path.join(current, segment);
     try { fs.mkdirSync(current); } catch (error) { if (error.code !== "EEXIST") throw error; }
     const stat = fs.lstatSync(current);
@@ -146,18 +151,19 @@ function directory(root) {
   return current;
 }
 
-export function retainSourceObservation(root, bundle) {
-  verifySourceObservation(root, bundle.evidence.projectId, bundle);
+export function retainSourceObservation(root, bundle, storage = null) {
+  storage = formatForVerifiedOwner(storage);
+  verifySourceObservation(root, bundle.evidence.projectId, bundle, { storage });
   const key = sourceBundleKey(bundle.evidence);
-  retainBundle(root, key, bundle);
+  retainBundle(root, key, bundle, storage);
   const { sourceScopeDigest, input } = observationInput(bundle.evidence);
   recordCollectedObservation({ root, descriptor: bundle.descriptor, input, adapterDescriptor, sourceScopeDigest });
-  noteProjectGraphChange(root, [`${DIRECTORY}/${key}.json`]);
+  noteProjectGraphChange(root, [`${relativeProjectArtifact(storage, "observations", "source-bundles")}/${key}.json`]);
   return key;
 }
 
-function retainBundle(root, key, bundle) {
-  const dir = directory(root);
+function retainBundle(root, key, bundle, storage) {
+  const dir = directory(root, storage);
   const encoded = Buffer.from(JSON.stringify(bundle));
   if (encoded.length > 16 * 1024 * 1024) throw sourceError("SOURCE_BYTE_LIMIT");
   const destination = path.join(dir, `${key}.json`);
@@ -166,41 +172,43 @@ function retainBundle(root, key, bundle) {
     fs.writeFileSync(temporary, encoded, { flag: "wx" });
     try { fs.linkSync(temporary, destination); }
     catch (error) { if (error.code !== "EEXIST") throw error;
-      if (!readSourceBytes(root, `${DIRECTORY}/${key}.json`, 16 * 1024 * 1024).equals(encoded)) throw sourceError("SOURCE_STORAGE_CONFLICT"); }
+      if (!readSourceBytes(root, `${relativeProjectArtifact(storage, "observations", "source-bundles")}/${key}.json`, 16 * 1024 * 1024).equals(encoded)) throw sourceError("SOURCE_STORAGE_CONFLICT"); }
   } finally { if (fs.existsSync(temporary)) fs.unlinkSync(temporary); }
 }
 function cryptoRandom() { return sourceDigest(`${process.hrtime.bigint()}-${Math.random()}`).slice(0, 24); }
 
 export function readSourceObservation(root, projectId, key, options) {
+  if (options === undefined) options = {};
   if (!/^[a-f0-9]{64}$/.test(key)) throw sourceError("SOURCE_BUNDLE_KEY_INVALID");
-  const bundle = parseStoredJson(readSourceBytes(root, `${DIRECTORY}/${key}.json`, 16 * 1024 * 1024));
+  const storage = formatForVerifiedOwner(options?.storage);
+  const bundle = parseStoredJson(readSourceBytes(root, `${relativeProjectArtifact(storage, "observations", "source-bundles")}/${key}.json`, 16 * 1024 * 1024));
   if (!recordShape(bundle) || !recordShape(bundle.evidence)) throw sourceError("SOURCE_OBSERVATION_INVALID");
   if (sourceBundleKey(bundle.evidence) !== key) throw sourceError("SOURCE_OBSERVATION_INVALID");
-  verifySourceObservation(root, projectId, bundle, options);
+  verifySourceObservation(root, projectId, bundle, options === null ? null : { ...options, storage });
   return bundle;
 }
 
-export function sourceObservationNode(root, projectId, bundle) {
-  const record = verifySourceObservation(root, projectId, bundle);
+export function sourceObservationNode(root, projectId, bundle, storage = undefined) {
+  const record = verifySourceObservation(root, projectId, bundle, { storage });
   return { ...record, nodeId: record.observationId, semanticAuthority: false, contextEligibility: "exact-evidence-need-only",
     observationProjectionId: `source-projection-${record.observationHash.slice(0, 24)}`, observationProjectionHash: observationDigest(record) };
 }
 
-export function retainSourceFailure(root, input) {
+export function retainSourceFailure(root, input, storage = null) {
   const failure = { kind: "SourceCollectionFailure", version: 1, ...input,
     authority: "P3-failed-observation-evidence", authorityBoundary: artifactAuthorityBoundary("SourceCollectionFailure"),
     instructionAuthority: false, promotionAuthority: false, recoveryAuthority: false, mutatesCanon: false };
   const key = sourceObjectDigest(failure);
   // Identical source/profile/query/outcome coalesces; polling does not create
   // one artifact per attempt. This is not an execution or retry authorization.
-  retainBundle(root, key, { failure });
-  noteProjectGraphChange(root, [`${DIRECTORY}/${key}.json`]);
+  retainBundle(root, key, { failure }, storage);
+  noteProjectGraphChange(root, [`${relativeProjectArtifact(storage, "observations", "source-bundles")}/${key}.json`]);
   return key;
 }
 
-export function readSourceFailure(root, projectId, key) {
+export function readSourceFailure(root, projectId, key, storage = undefined) {
   if (!/^[a-f0-9]{64}$/.test(key)) throw sourceError("SOURCE_BUNDLE_KEY_INVALID");
-  const parsed = parseStoredJson(readSourceBytes(root, `${DIRECTORY}/${key}.json`, 16 * 1024 * 1024));
+  const parsed = parseStoredJson(readSourceBytes(root, `${relativeProjectArtifact(storage, "observations", "source-bundles")}/${key}.json`, 16 * 1024 * 1024));
   if (!recordShape(parsed)) throw sourceError("SOURCE_OBSERVATION_INVALID");
   const { failure } = parsed;
   if (!failure || sourceObjectDigest(failure) !== key || failure.projectId !== projectId

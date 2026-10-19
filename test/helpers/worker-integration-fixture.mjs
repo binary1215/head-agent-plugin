@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { initializeProject, inspectProject } from "../../scripts/lib/head-core.mjs";
+import { formatForVerifiedOwner } from "../../scripts/lib/project-storage-format.mjs";
 import { compileContext } from "../../scripts/lib/context-compiler.mjs";
 import { createExecutionContract, createWholePlanSnapshot } from "../../scripts/lib/execution-lineage.mjs";
 import { startRun } from "../../scripts/lib/run-lineage.mjs";
@@ -70,6 +71,8 @@ export async function workerIntegrationFixture(t, options = {}) {
   const publicationDiagnostics = createFixturePublicationDiagnostics(container, { sink: options.publicationDiagnosticSink });
   t.after(() => publicationDiagnostics.close());
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const storage = inspectProject(root).storage;
+  const layout = formatForVerifiedOwner(storage);
   const capsule = compileContext({ root, task: "Verify a bounded synthetic whole worker integration", persist: true }).capsule;
   const plan = createWholePlanSnapshot({ root, objective: "Integrate exact worker evidence once", plan: [{ id: "integrate", outcome: "One reviewed whole result" }] }).artifact;
   const contract = createExecutionContract({ root, wholePlanId: plan.wholePlanId, capsuleId: capsule.capsuleId,
@@ -101,7 +104,7 @@ export async function workerIntegrationFixture(t, options = {}) {
     for (const worker of selected) ensureSource(worker.path, worker.before === undefined ? `original ${worker.path}\n` : worker.before, worker.beforeMode);
     const inspected = inspectProject(root);
     const projectBinding = buildRuntimeProjectBinding({ projectId: inspected.project.projectId, headSessionId: inspected.state.sessionId,
-      projectRoot: fs.realpathSync(root), projectStatus: "ready", versionEvidence, protocolEvidence });
+      projectRoot: fs.realpathSync(root), projectStatus: "ready", versionEvidence, protocolEvidence, storage });
     const records = [];
     for (const [index, worker] of selected.entries()) {
       const maxBytes = 1024 * 1024;
@@ -134,11 +137,11 @@ export async function workerIntegrationFixture(t, options = {}) {
         dispatchHash: dispatch.dispatchHash, lifecycleReceiptId: receipt.receiptId, draftId: draft.draftId,
         executionLeaseConsumptionId: draft.executionLeaseConsumptionId, executionLeaseReleaseId: draft.executionLeaseReleaseId,
         actualProviderInvoked: false, candidate };
-      records.push({ ...readRuntimeInvocationRecord({ root, authorizationId: authorization.authorizationId }), member, candidate, binding });
+      records.push({ ...readRuntimeInvocationRecord({ root, authorizationId: authorization.authorizationId, storage }), member, candidate, binding });
     }
     records.sort((a, b) => a.authorizationId < b.authorizationId ? -1 : a.authorizationId > b.authorizationId ? 1 : 0);
     const first = records[0].authorization;
-    const lineage = { projectId: first.projectId, projectRootDigest: first.projectRootDigest, headSessionId: first.headSessionId,
+    const lineage = { projectId: first.projectId, projectRootDigest: first.projectRootDigest, [layout.sessionIdField]: first[layout.sessionIdField],
       runId: first.scope.runId, wholePlanId: first.scope.wholePlanId, executionContractId: first.scope.executionContractId, contextCapsuleId: first.scope.contextCapsuleId };
     const members = records.map(record => record.member);
     const composition = composeWorkerPatchCandidates({ candidates: members.map(member => member.candidate), maxBytes: Number.MAX_SAFE_INTEGER });
@@ -146,11 +149,11 @@ export async function workerIntegrationFixture(t, options = {}) {
     const integrationHash = hash(json(payload));
     const integrationId = `worker-integration-${hash(json(members.map(member => member.authorizationId))).slice(0, 24)}--${integrationHash.slice(0, 24)}`;
     const intent = verifyWorkerPatchIntegrationIntent({ ...payload, integrationId, integrationHash });
-    publishIntegrationJson(path.join(workerIntegrationDirectory(root, true), `${integrationId}.json`), intent);
-    assert.deepEqual(readWorkerPatchIntegration({ root, integrationId }).intent, intent);
+    publishIntegrationJson(path.join(workerIntegrationDirectory(root, true, storage), `${integrationId}.json`), intent);
+    assert.deepEqual(readWorkerPatchIntegration({ root, integrationId, storage }).intent, intent);
     return { intent, integrationId, members, records, readBasis: () => readWorkerIntegrationBasis({ root, integrationId }) };
   }
   const integration = await addIntegration(options);
-  return { root: fs.realpathSync(root), container, operational, run, plan, contract, capsule, ...integration, addIntegration,
-    sessionFile: path.join(root, ".head/sessions/current.json"), runFile: path.join(root, ".head/sessions/runs", run.runId, "run.json") };
+  return { root: fs.realpathSync(root), storage, layout, container, operational, run, plan, contract, capsule, ...integration, addIntegration,
+    sessionFile: path.join(root, layout.directory, "sessions/current.json"), runFile: path.join(root, layout.directory, "sessions/runs", run.runId, "run.json") };
 }

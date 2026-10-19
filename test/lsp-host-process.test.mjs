@@ -193,6 +193,7 @@ processTest("P05/P06 allowed notifications and server requests do not create aut
     assert.equal(result.candidates.length, 0);
   }
   assert.equal(fs.existsSync(path.join(root, ".head")), false);
+  assert.equal(fs.existsSync(path.join(root, ".lode")), false);
 });
 
 processTest("P07/P09 protocol corruption, ambiguity, timeout, cancellation, and crash fail closed", async () => {

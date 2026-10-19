@@ -1,9 +1,11 @@
 import { compileContext, DEFAULT_CONTEXT_BUDGET } from "./context-compiler.mjs";
+import { familyFormatForOriginal, formatForVerifiedOwner } from "./project-storage-format.mjs";
 
 export const CONTEXT_WORKFLOW_PROTOCOL_VERSION = "0.6.0";
 export const CONTEXT_PREPARATION_PROTOCOL_VERSION = "0.3.0";
 
 function projection(capsule) {
+  const format = familyFormatForOriginal("head-agent-core-context-budget", capsule.budget) || formatForVerifiedOwner();
   const coverage = capsule.snapshot.coverage;
   const domains = capsule.repositoryWorldFreshness?.domains;
   const world = domains?.code?.status === "current" ? "current-verified"
@@ -16,7 +18,7 @@ function projection(capsule) {
     status: "ready_for_head_semantic_assessment", task: capsule.task,
     world: { state: world, coverage, worldModelDigest: capsule.snapshot.sourceDigests.repositoryWorldModel || null,
       ...(domains ? { domains } : {}), fullSnapshotReturned: false },
-    evidenceNeeds: { owner: "HEAD", specifiedCount: capsule.evidenceNeedContract.needs.length,
+    evidenceNeeds: { owner: format.value("HEAD"), specifiedCount: capsule.evidenceNeedContract.needs.length,
       unmet: capsule.evidenceGaps, semanticAcceptance: "not-assessed-HEAD-owned" },
     budget: { requestedApproxTokens: capsule.budget.maxApproxTokens,
       usedApproxTokens: capsule.budget.usedApproxTokens, providerFitVerified: false },
@@ -28,7 +30,7 @@ function projection(capsule) {
           gitHistory: capsule.gitDecisionEvidence.length, runtimeObservations: capsule.runtimeStateEvidence.length,
           graphTraversals: capsule.graphTraversalEvidence.length, observations: capsule.observationEvidence.length } },
       intentionallyOmitted: capsule.omissions, remainingUncertainty: capsule.uncertainty,
-      semanticSufficiencyOwner: "HEAD", userDecisionRequired: false, persisted: false },
+      semanticSufficiencyOwner: format.value("HEAD"), userDecisionRequired: false, persisted: false },
     nextAction: { id: "head_assess_semantic_sufficiency",
       summary: "Use the selected context and inspect original sources or expand relevant graph anchors where evidence is missing.",
       note: "HEAD decides which evidence is needed and whether it is sufficient; preparation does not require a World refresh, Product approval, Run or Capsule persistence." },
@@ -57,7 +59,7 @@ export function prepareContextWorkflow({ root = ".", task, budget = DEFAULT_CONT
       selectedContext: { claims: capsule.claims, decisions: capsule.decisions, unknowns: capsule.unknowns,
         repositoryFiles: capsule.repositoryContext, productContext: capsule.productContext },
       provenance: capsule.provenance, omissions: capsule.omissions, remainingUncertainty: capsule.uncertainty,
-      evidenceProposal: { selectionOwner: "HEAD", optional: true,
+      evidenceProposal: { selectionOwner: workflow.evidenceNeeds.owner, optional: true,
         note: "Specify only evidence useful to this task; direct source inspection is available without World activation." },
       nextAction: workflow.nextAction, authority: workflow.authority,
     },

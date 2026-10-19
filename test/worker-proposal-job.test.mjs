@@ -1,3 +1,4 @@
+import { relativeProjectArtifact } from "../scripts/lib/project-storage-format.mjs";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -77,6 +78,7 @@ async function fixture(t, nativePrefix = false) {
     }
   });
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const storage = inspectProject(root).storage;
   fs.writeFileSync(path.join(root, "selected.txt"), "selected original bytes Ω\r\n");
   const marker = path.join(bin, process.platform === "win32" ? "codex.exe" : "codex");
   fs.writeFileSync(marker, "Schema-only marker; never executed\n");
@@ -85,7 +87,7 @@ async function fixture(t, nativePrefix = false) {
   const versionEvidence = await buildRuntimeVersionEvidence({ runtimes: ["codex"], environment, spawnImplementation: schemaSpawn });
   const protocolEvidence = await buildRuntimeProtocolEvidence({ runtimes: ["codex"], environment, versionEvidence, spawnImplementation: schemaSpawn });
   const inspected = inspectProject(root);
-  const projectBinding = buildRuntimeProjectBinding({ projectId: inspected.project.projectId, headSessionId: inspected.state.sessionId,
+  const projectBinding = buildRuntimeProjectBinding({ storage, projectId: inspected.project.projectId, headSessionId: inspected.state.sessionId,
     projectRoot: root, projectStatus: "ready", versionEvidence, protocolEvidence });
   const sourceBasis = captureWorkerSourceBasis({ root, paths: ["selected.txt"], maxBytes: 1024 * 1024 });
   const proposalBasis = captureWorkerWriteBasis({ root, paths: ["selected.txt"], maxBytes: 1024 * 1024 });
@@ -101,8 +103,8 @@ async function fixture(t, nativePrefix = false) {
   input = { root, authorizationId: authorization.authorizationId, role: "coder" };
   directory = path.join(operational, "worker-jobs", authorization.projectId, authorization.authorizationId);
   const lease = () => inspectRuntimeExecutionLease({ projectRoot: root, projectId: authorization.projectId, authorizationId: authorization.authorizationId });
-  return { root, container, codexHome, operational, policy, authorization, workspaceBinding, input, directory, lease,
-    sessionFile: path.join(root, ".head", "sessions", "current.json"),
+  return { root, storage, container, codexHome, operational, policy, authorization, workspaceBinding, input, directory, lease,
+    sessionFile: path.join(root, relativeProjectArtifact(storage, "sessions", "current.json")),
     async start() {
       const supervisorSelection = resolveVerifiedProcessSupervisor({ pluginRoot: process.env.HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT || pluginRoot });
       const host = createBoundedWorkerJobHost({ policy, workspaceBinding });
@@ -166,7 +168,7 @@ test("fixed proposal owner freezes settled provider output, never a workspace di
   assert.equal(state.status, "completed");
   assert.equal(state.result.actualProviderInvoked, false);
   assert.equal(state.workspacePatch.origin, "provider-patch-proposal");
-  const record = readRuntimeInvocationRecord(f.input);
+  const record = readRuntimeInvocationRecord({ ...f.input, storage: f.storage });
   const expected = buildWorkerPatchProposalCandidate({ authorization: f.authorization, structuredResult: record.draft.providerResult });
   const patch = readBoundedWorkerPatch(f.input, { onProcess });
   assert.deepEqual(patch.candidate, expected);
@@ -195,7 +197,7 @@ test("fixed proposal owner freezes settled provider output, never a workspace di
   assert.deepEqual(fs.readFileSync(path.join(f.directory, "stdout.bin")), ownerOutput);
 
   // Invocation publication loss is recovered from the exact settled spool.
-  const recordDirectory = path.join(f.root, ".head/runtime/invocations", f.authorization.authorizationId);
+  const recordDirectory = path.join(f.root, relativeProjectArtifact(f.storage, "runtime", "invocations"), f.authorization.authorizationId);
   fs.renameSync(recordDirectory, path.join(f.container, "retained-original-record"));
   fs.renameSync(patchFile, path.join(f.container, "retained-second-patch.json"));
   assert.equal(readBoundedWorkerJob(f.input, { onProcess }).status, "incomplete");
@@ -220,7 +222,7 @@ test("fixed proposal owner freezes settled provider output, never a workspace di
     assert.deepEqual(fs.readFileSync(f.sessionFile), beforeP2);
   } finally { publisher.mock.restore(); }
   assert.equal(reconcileBoundedWorkerJob(f.input, { onProcess }).status, "completed");
-  assert.deepEqual(readRuntimeInvocationRecord(f.input).draft, record.draft);
+  assert.deepEqual(readRuntimeInvocationRecord({ ...f.input, storage: f.storage }).draft, record.draft);
   assert.deepEqual(fs.readFileSync(patchFile), originalPatch);
 
   // Later physical edits and Host drift are history, not inputs to a second
@@ -256,7 +258,7 @@ test("proposal freeze recovery requires exact settled result and complete native
     assert.notEqual(reconcileBoundedWorkerJob(f.input, { onProcess }).status, "completed");
     assert.equal(fs.existsSync(patchFile), false);
   } finally { fs.writeFileSync(terminalFile, terminalBytes); }
-  const releaseFile = path.join(f.root, ".head/runtime/execution-leases", f.authorization.authorizationId, "release.json");
+  const releaseFile = path.join(f.root, relativeProjectArtifact(f.storage, "runtime", "execution-leases"), f.authorization.authorizationId, "release.json");
   assert.ok(fs.existsSync(releaseFile));
   const retainedRelease = path.join(f.container, "retained-release.json");
   fs.renameSync(releaseFile, retainedRelease);

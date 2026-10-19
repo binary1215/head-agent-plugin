@@ -1,9 +1,10 @@
+import { formatForVerifiedOwner, resolveProjectStorage } from "./project-storage-format.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { atomicCreateArtifact } from "./artifact-storage.mjs";
 import { artifactAuthorityBoundary } from "./authority-plane-contract.mjs";
 import { withProjectMutation } from "./project-mutation-lock.mjs";
-import { safeSessionPath, sessionStatePath, sessionDataPath, withSessionRoute } from "./session-routing.mjs";
+import { safeSessionPath, sessionStatePath, withSessionRoute } from "./session-routing.mjs";
 
 // Selected HEAD-authored P3 evidence, not a transcript, direction store, or
 // inference engine. Entry never repairs or writes these originals.
@@ -15,33 +16,42 @@ import { SESSION_WORK_CONTEXT_VERSION, PROTOCOL, DEFAULT_SCAN, sha, encoded, fai
 import { noteProjectGraphChange, readSessionWorkNavigationHints } from "./discovery-index.mjs";
 import { fitSelectedBodyGroups, workBodyTuples } from "./session-work-body-organization.mjs";
 export { SESSION_WORK_CONTEXT_VERSION, normalizeSessionWorkEvidence };
-function identity(root) {
+function identity(root, storage) {
   const base = fs.realpathSync(path.resolve(root));
-  const projectBytes = fs.readFileSync(safeSessionPath(base, ".head", "project.json"));
-  const stateBytes = fs.readFileSync(sessionStatePath(base));
-  return { ...verifySessionWorkEvidenceOwner({ root: base, projectBytes, stateBytes }),
-    statePath: path.relative(base, sessionStatePath(base)).replaceAll("\\", "/"),
-    workDirectory: path.relative(base, sessionDataPath(base, "work-evidence")).replaceAll("\\", "/") };
+  storage ??= resolveProjectStorage(base, { readLegacyProject() {
+    // Preserve the original selected-Session reader's dependency/error order.
+    // This is the actual route, never a newly required default Session check.
+    const legacy = formatForVerifiedOwner();
+    const projectBytes = fs.readFileSync(safeSessionPath(base, legacy.directory, "project.json"));
+    const stateBytes = fs.readFileSync(sessionStatePath(base, legacy));
+    verifySessionWorkEvidenceOwner({ root: base, projectBytes, stateBytes });
+    return JSON.parse(projectBytes);
+  } });
+  const projectBytes = fs.readFileSync(safeSessionPath(base, formatForVerifiedOwner(storage).directory, "project.json"));
+  const stateBytes = fs.readFileSync(sessionStatePath(base, storage));
+  return { ...verifySessionWorkEvidenceOwner({ root: base, projectBytes, stateBytes, storage }),
+    statePath: path.relative(base, sessionStatePath(base, storage)).replaceAll("\\", "/"),
+    workDirectory: path.relative(base, path.join(path.dirname(sessionStatePath(base, storage)), "work-evidence")).replaceAll("\\", "/") };
 }
-function directory(root) { return sessionDataPath(root, "work-evidence"); }
-function fileFor(root, evidenceId) {
+function directory(root, storage) { return path.join(path.dirname(sessionStatePath(root, storage)), "work-evidence"); }
+function fileFor(root, evidenceId, storage) {
   if (!/^work-evidence-[a-f0-9]{24}$/.test(evidenceId || "")) fail("Invalid work evidence identity.");
-  return safeSessionPath(root, path.relative(root, path.join(directory(root), `${evidenceId}.json`)));
+  return safeSessionPath(root, path.relative(root, path.join(directory(root, storage), `${evidenceId}.json`)));
 }
 function readOriginalFile(owner, evidenceId) { return readSessionWorkEvidenceOriginalFile(owner, evidenceId); }
 function readOriginal(owner, evidenceId) { return readOriginalFile(owner, evidenceId).record; }
 const reference = inspectSessionWorkReference;
 // Internal graph reader: explicit real owner, without Host selection persistence.
-export function readSessionWorkEvidenceOwner({ root, sessionId }) {
+export function readSessionWorkEvidenceOwner({ root, sessionId, storage }) {
   if (!sessionId) fail("An exact logical owner is required.", "HEAD_SESSION_IDENTITY_MISMATCH");
-  return withSessionRoute(root, sessionId, () => identity(root));
+  return withSessionRoute(root, sessionId, () => identity(root, storage));
 }
-export function recordSessionWorkEvidence({ root = ".", input } = {}) {
+export function recordSessionWorkEvidence({ root = ".", input, storage } = {}) {
   const content = normalizeSessionWorkEvidence(input);
-  return withProjectMutation({ root, scope: "session-recovery" }, () => {
-    const owner = identity(root);
+  return withProjectMutation({ root, storage, scope: "session-recovery" }, () => {
+    const owner = identity(root, storage);
     const evidenceId = `work-evidence-${inputIdentity(owner, content).slice(0, 24)}`;
-    const file = fileFor(owner.root, evidenceId);
+    const file = fileFor(owner.root, evidenceId, owner.storage);
     // A retry reuses intact originals even if their source has since changed.
     // Revalidation cannot force the caller to redo an already completed effect.
     if (fs.existsSync(file)) {
@@ -65,13 +75,13 @@ export function recordSessionWorkEvidence({ root = ".", input } = {}) {
     }
     if (content.executionObservation?.target) endpoint(content.executionObservation.target);
     content.references.forEach((ref) => reference(owner, ref, { saving: true }));
-    if (identity(owner.root).basis !== owner.basis) fail("Session changed before work evidence publication.", "SESSION_WORK_OBSERVATION_CHANGED");
-    const payload = { schemaVersion: 1, kind: "Evidence", subtype: "SessionWorkEvidence", protocol: PROTOCOL,
+    if (identity(owner.root, owner.storage).basis !== owner.basis) fail("Session changed before work evidence publication.", "SESSION_WORK_OBSERVATION_CHANGED");
+    const payload = { schemaVersion: 1, kind: "Evidence", subtype: "SessionWorkEvidence", protocol: { ...PROTOCOL, name: formatForVerifiedOwner(owner.storage).protocol(PROTOCOL.name) },
       projectId: owner.projectId, sessionId: owner.sessionId, content, recordedAt: new Date().toISOString(),
       authorityBoundary: artifactAuthorityBoundary("Evidence"), evidenceId };
     const evidence = { ...payload, evidenceDigest: sha(encoded(payload)) };
-    fs.mkdirSync(directory(owner.root), { recursive: true });
-    fileFor(owner.root, evidenceId); // revalidate new ancestors before publication
+    fs.mkdirSync(directory(owner.root, owner.storage), { recursive: true });
+    fileFor(owner.root, evidenceId, owner.storage); // revalidate new ancestors before publication
     atomicCreateArtifact(file, `${JSON.stringify(evidence, null, 2)}\n`);
     const derived = noteProjectGraphChange(owner.root, [path.relative(owner.root, file).replaceAll("\\", "/")]);
     const graphIndex = derived.status === "unavailable" ? { status: "deferred", reasonCode: derived.reasonCode, ordinaryWorkBlocked: false } : derived;
@@ -246,7 +256,7 @@ export function projectExactSessionWorkRecord(original, references) {
 // joins this same request. Fresh canonical proofs, not rows, populate validity.
 function readDefaultWorkContext(owner, maxRecords, maxCharacters, context) {
   let names;
-  try { names = fs.readdirSync(directory(owner.root), { withFileTypes: true }); }
+  try { names = fs.readdirSync(directory(owner.root, owner.storage), { withFileTypes: true }); }
   catch (error) { if (error.code !== "ENOENT") throw error; names = []; }
   names = names.filter(entry => /^work-evidence-[a-f0-9]{24}\.json$/.test(entry.name)).sort((a, b) => a.name.localeCompare(b.name));
   const discovered = new Set(names.map(entry => entry.name.slice(0, -5)));
@@ -471,29 +481,29 @@ function readDefaultWorkContext(owner, maxRecords, maxCharacters, context) {
 }
 
 export function readSessionWorkContext({ root = ".", evidenceIds = null, maxRecords = 8, maxCharacters = SESSION_WORK_DEFAULT_CHARACTERS,
-  afterEvidenceId = null, expectedSessionId = null, expectedCheckpointId = undefined } = {}) {
+  afterEvidenceId = null, expectedSessionId = null, expectedCheckpointId = undefined, storage } = {}) {
   if (!Number.isSafeInteger(maxRecords) || maxRecords < 1 || maxRecords > DEFAULT_SCAN
     || !Number.isSafeInteger(maxCharacters) || maxCharacters < 2 || maxCharacters > SESSION_WORK_MAX_CHARACTERS
     || evidenceIds !== null && (!Array.isArray(evidenceIds) || evidenceIds.length > DEFAULT_SCAN)
     || afterEvidenceId !== null && (!/^work-evidence-[a-f0-9]{24}$/.test(afterEvidenceId) || evidenceIds !== null)) fail("Invalid work context read bounds.");
-  const owner = identity(root);
+  const owner = identity(root, storage);
   const shell = { kind: "SessionWorkContextProjection", authorityPlane: "P4", projectId: owner.projectId, sessionId: owner.sessionId,
     sessionPurpose: owner.state.purpose || null, basis: owner.basis, latestCheckpointId: owner.state.latestCheckpoint || null,
     persisted: false, recoveryAuthority: false, instructionAuthority: false, promotionAuthority: false,
     executionReplayAllowed: false, ordinaryWorkBlocked: false,
-    interpretation: "P3 HEAD-authored historical evidence, not current direction, approval, or proof of an external effect. Current Project constraints and selected Session P2 take precedence." };
+    interpretation: `P3 ${formatForVerifiedOwner(owner.storage).value("HEAD")}-authored historical evidence, not current direction, approval, or proof of an external effect. Current Project constraints and selected Session P2 take precedence.` };
   if (expectedSessionId && owner.sessionId !== expectedSessionId
     || expectedCheckpointId !== undefined && (owner.state.latestCheckpoint || null) !== expectedCheckpointId) {
     return { ...shell, status: "work_context_basis_changed", records: [], omissions: { basisChanged: true } };
   }
-  const context = createSessionWorkReadContext(owner.root);
+  const context = createSessionWorkReadContext(owner.root, owner.storage);
   if (evidenceIds === null && afterEvidenceId === null) {
     const result = readDefaultWorkContext(owner, maxRecords, maxCharacters, context);
-    if (identity(owner.root).basis !== owner.basis) return { ...shell, status: "work_context_basis_changed", records: [], omissions: { basisChanged: true } };
+    if (identity(owner.root, owner.storage).basis !== owner.basis) return { ...shell, status: "work_context_basis_changed", records: [], omissions: { basisChanged: true } };
     return { ...shell, ...result, ...fitSelectedBodyGroups(workBodyTuples(result.records, owner),
       maxCharacters - JSON.stringify(result.records).length) };
   }
-  const directoryPath = directory(owner.root);
+  const directoryPath = directory(owner.root, owner.storage);
   const names = evidenceIds !== null ? null : fs.existsSync(directoryPath) ? fs.readdirSync(directoryPath).filter((name) => /^work-evidence-[a-f0-9]{24}\.json$/.test(name)).sort() : [];
   const remainingNames = names === null ? [] : afterEvidenceId === null ? names : names.filter((name) => name > afterEvidenceId + ".json");
   const ids = evidenceIds === null ? remainingNames.slice(0, DEFAULT_SCAN).map((name) => name.slice(0, -5)) : [...new Set(evidenceIds)];
@@ -553,7 +563,7 @@ export function readSessionWorkContext({ root = ".", evidenceIds = null, maxReco
     used = nextSize;
     records.push(selected);
   }
-  if (identity(owner.root).basis !== owner.basis) return { ...shell, status: "work_context_basis_changed", records: [], omissions: { basisChanged: true } };
+  if (identity(owner.root, owner.storage).basis !== owner.basis) return { ...shell, status: "work_context_basis_changed", records: [], omissions: { basisChanged: true } };
   const organizationSummary = organization?.summary();
   return { ...shell, status: unavailableCount || evidenceIds === null && remainingNames.length > ids.length || omittedByBudget
       || organizationSummary?.unavailableRelations || organizationSummary?.uninspectedRelations ? "work_context_partial" : records.length ? "work_context_available" : "work_context_not_recorded",

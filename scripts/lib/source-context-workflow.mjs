@@ -1,4 +1,5 @@
-import { inspectProject } from "./head-core.mjs";
+import { inspectProject } from "./lode-core.mjs";
+import { publicToolName } from "./lode-artifact-composition.mjs";
 import { loadObservationArtifacts } from "./observation-store.mjs";
 import { previewContextWorkflow } from "./context-workflow.mjs";
 import { artifactAuthorityBoundary } from "./authority-plane-contract.mjs";
@@ -43,7 +44,7 @@ export async function prepareSourceContext({ root = ".", task, needs = [], retai
   if (!normalized.length) return { kind: "SourceContextResult", status: "head-selection-needed", task,
     authorityBoundary: artifactAuthorityBoundary("SourceContextResult"), instructionAuthority: false, promotionAuthority: false, recoveryAuthority: false, mutatesCanon: false,
     headActionRequired: true, userActionRequired: false,
-    nextAction: "HEAD: inspect task-relevant files, select exact source paths and qualified Python function names, then call head_source_context with needs. Do not ask the user for JSON, IDs, hashes or another request.",
+    nextAction: `Lode: inspect task-relevant files, select exact source paths and qualified Python function names, then call ${publicToolName("head_source_context")} with needs. Do not ask the user for JSON, IDs, hashes or another request.`,
     supportedCollector: "parse-only Python stdlib AST; positive lexical direct-name candidates; not LSP or runtime call truth" };
   const inspected = inspectProject(root);
   if (inspected.status !== "ready") throw sourceError("PROJECT_NOT_READY");
@@ -61,7 +62,7 @@ export async function prepareSourceContext({ root = ".", task, needs = [], retai
     };
     const saveFailure = (input) => {
       if (!retain) return null;
-      try { return retainSourceFailure(root, input); }
+      try { return retainSourceFailure(root, input, inspected.storage); }
       catch (error) { storageIssue(error, "failure-retention"); return null; }
     };
     try {
@@ -83,9 +84,9 @@ export async function prepareSourceContext({ root = ".", task, needs = [], retai
       let bundle = recent.get(key)?.bundle, reused = false;
       if (bundle) {
         try {
-          verifySourceObservation(root, projectId, bundle);
+          verifySourceObservation(root, projectId, bundle, { storage: inspected.storage });
           if (retain) {
-            try { readSourceObservation(root, projectId, bundle.observation.payload.bundleKey); }
+            try { readSourceObservation(root, projectId, bundle.observation.payload.bundleKey, { storage: inspected.storage }); }
             catch (error) { if (error.code !== "ENOENT") throw error; /* safe create-only retention from verified memory */ }
           }
         } catch (error) {
@@ -96,17 +97,17 @@ export async function prepareSourceContext({ root = ".", task, needs = [], retai
       if (!bundle && retain) {
         // Only explicitly retained observations can promise restart rediscovery.
         let observations = [];
-        try { observations = loadObservationArtifacts({ projectRoot: root, projectId }).observations; }
+        try { observations = loadObservationArtifacts({ projectRoot: root, projectId, storage: inspected.storage }).observations; }
         catch (error) { storageIssue(error, "observation-index"); }
         for (const record of observations.filter((entry) => entry.typeKey === (declarationNeed ? DECLARATION_OBSERVATION_TYPE : SOURCE_OBSERVATION_TYPE)
           && entry.payload.path === need.path && entry.payload.evidenceKind === need.kind && entry.payload.sourceDigest === sources[0].digest)) {
           try {
-            const previous = readSourceObservation(root, projectId, record.payload.bundleKey);
+            const previous = readSourceObservation(root, projectId, record.payload.bundleKey, { storage: inspected.storage });
             if (cacheKey(root, previous.evidence.query, previous.evidence.sources, previous.evidence.profile, previous.evidence.kind) === key) { bundle = previous; break; }
           } catch (error) { storageIssue(error, record.payload.bundleKey); }
         }
       }
-      if (bundle) { verifySourceObservation(root, projectId, bundle); reused = true; }
+      if (bundle) { verifySourceObservation(root, projectId, bundle, { storage: inspected.storage }); reused = true; }
       else {
         let prepared = null;
         if (need.kind !== "source") {
@@ -130,12 +131,12 @@ export async function prepareSourceContext({ root = ".", task, needs = [], retai
         if (signal?.aborted) throw sourceError("SOURCE_CANCELLED");
         if (!sourceCurrent(root, sources)) throw sourceError("SOURCE_DRIFT");
         bundle = createSourceObservation({ version: declarationNeed ? 2 : 1, projectId, kind: need.kind, query, sources, profile,
-          observedAt: new Date().toISOString(), response: response?.raw.toString("base64") ?? null, envelopeHash: prepared?.evidenceHash ?? prepared?.envelope?.envelopeHash ?? null });
-        verifySourceObservation(root, projectId, bundle);
+          observedAt: new Date().toISOString(), response: response?.raw.toString("base64") ?? null, envelopeHash: prepared?.evidenceHash ?? prepared?.envelope?.envelopeHash ?? null }, inspected.storage);
+        verifySourceObservation(root, projectId, bundle, { storage: inspected.storage });
       }
       let retained = false;
       if (retain) {
-        try { retainSourceObservation(root, bundle); retained = true; }
+        try { retainSourceObservation(root, bundle, inspected.storage); retained = true; }
         catch (error) { storageIssue(error, bundle.observation.payload.bundleKey); }
       }
       remember(key, bundle);
@@ -157,7 +158,7 @@ export async function prepareSourceContext({ root = ".", task, needs = [], retai
   // Revalidate at the consumption boundary, not merely after collection.
   const current = [];
   for (const item of selected) {
-    try { verifySourceObservation(root, projectId, item.bundle); current.push(item); }
+    try { verifySourceObservation(root, projectId, item.bundle, { storage: inspected.storage }); current.push(item); }
     catch (error) {
       const classification = classifySourceStorageError(error);
       if (!classification) throw error;
@@ -186,8 +187,8 @@ export function inspectSourceObservation({ root = ".", bundleKey, failureKey } =
   const inspected = inspectProject(root);
   if (inspected.status !== "ready") throw sourceError("PROJECT_NOT_READY");
   if (Boolean(bundleKey) === Boolean(failureKey)) throw sourceError("SOURCE_EXACT_REFERENCE_REQUIRED");
-  if (failureKey) return readSourceFailure(inspected.project.projectRoot, inspected.project.projectId, failureKey);
-  const bundle = readSourceObservation(inspected.project.projectRoot, inspected.project.projectId, bundleKey, { requireCurrent: false });
+  if (failureKey) return readSourceFailure(inspected.project.projectRoot, inspected.project.projectId, failureKey, inspected.storage);
+  const bundle = readSourceObservation(inspected.project.projectRoot, inspected.project.projectId, bundleKey, { requireCurrent: false, storage: inspected.storage });
   let sourceState;
   try { sourceState = sourceCurrent(inspected.project.projectRoot, bundle.evidence.sources) ? "current-source-bytes" : "stale"; }
   catch (error) { if (!classifySourceStorageError(error)) throw error; sourceState = "unavailable"; }

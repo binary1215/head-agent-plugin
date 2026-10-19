@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
-import { initializeProject, inspectProject } from "../scripts/lib/head-core.mjs";
+import { initializeProject, inspectProject } from "../scripts/lib/lode-core.mjs";
 import { compileContext } from "../scripts/lib/context-compiler.mjs";
 import { createWholePlanSnapshot, createExecutionContract } from "../scripts/lib/execution-lineage.mjs";
 import { startRun, finishRun, reviewRun, getPendingReviewContext, inspectRunStorageTransition, reconcileRunStorageTransition, sessionStateHash } from "../scripts/lib/run-lineage.mjs";
@@ -17,14 +17,18 @@ function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "head-start-request-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const storage = inspectProject(root).storage;
+  assert.equal(storage.directory, ".lode");
+  assert.equal(fs.existsSync(path.resolve(root, ".lode/project.json")), true);
+  assert.equal(fs.existsSync(path.resolve(root, ".head/project.json")), false);
   const capsule = compileContext({ root, task: "Observe a local fixture", persist: true }).capsule;
   const plan = createWholePlanSnapshot({ root, objective: "Observe a local fixture", plan: [{ id: "observe", outcome: "Recorded fact" }] }).artifact;
   const contract = createExecutionContract({ root, wholePlanId: plan.wholePlanId, capsuleId: capsule.capsuleId, scope: "Observe a local fixture", acceptanceCriteria: ["Fact recorded"] }).artifact;
-  return { root, contract, input: { root, executionContractId: contract.executionContractId, startRequestId: "same-request" } };
+  return { root, storage, contract, input: { root, executionContractId: contract.executionContractId, startRequestId: "same-request" } };
 }
-const stateFile = (root) => path.join(root, ".head/sessions/current.json");
-const runFile = (root, id) => path.join(root, ".head/sessions/runs", id, "run.json");
-const runs = (root) => fs.existsSync(path.join(root, ".head/sessions/runs")) ? fs.readdirSync(path.join(root, ".head/sessions/runs")).filter(id => fs.existsSync(runFile(root, id))) : [];
+const stateFile = (root, storage) => path.join(root, storage.directory, "sessions/current.json");
+const runFile = (root, storage, id) => path.join(root, storage.directory, "sessions/runs", id, "run.json");
+const runs = (root, storage) => fs.existsSync(path.join(root, storage.directory, "sessions/runs")) ? fs.readdirSync(path.join(root, storage.directory, "sessions/runs")).filter(id => fs.existsSync(runFile(root, storage, id))) : [];
 function snapshot(root) {
   const result = {};
   function visit(dir) { for (const e of fs.readdirSync(dir, { withFileTypes: true })) { const f = path.join(dir, e.name); if (e.isDirectory()) visit(f); else result[path.relative(root, f)] = fs.readFileSync(f).toString("base64"); } }
@@ -39,7 +43,7 @@ const finishInput = (root) => ({ root, outcome: "Observed", evidence: [{ uri: "f
 const reviewInput = (root) => ({ root, reviewContextId: getPendingReviewContext({ root }).review.reviewContextId, disposition: "accept", rationale: "Exact local evidence accepted" });
 
 test("same key retry is an acknowledgment, not new execution; distinct key creates distinct Run", (t) => {
-  const { root, input } = fixture(t);
+  const { root, storage, input } = fixture(t);
   const started = startRun(input);
   const before = snapshot(root);
   const replay = startRun(input);
@@ -55,11 +59,11 @@ test("same key retry is an acknowledgment, not new execution; distinct key creat
   assert.equal(historical.state.activeRunId, newer.run.runId);
   assert.equal(historical.executionReplayAllowed, false);
   assert.deepEqual(snapshot(root), after);
-  assert.equal(runs(root).length, 2);
+  assert.equal(runs(root, storage).length, 2);
 });
 
 test("same key divergent exact input is rejected without writes", (t) => {
-  const { root, input, contract } = fixture(t);
+  const { root, storage, input, contract } = fixture(t);
   startRun(input);
   const other = createExecutionContract({ root, wholePlanId: contract.wholePlanId, capsuleId: contract.capsuleId, scope: "Different scope", acceptanceCriteria: ["Different criterion"] }).artifact;
   const before = snapshot(root);
@@ -68,27 +72,27 @@ test("same key divergent exact input is rejected without writes", (t) => {
 });
 
 test("exact key repairs Run-only start without touching checkpoint metadata or creating more Runs", (t) => {
-  const { root, input } = fixture(t);
+  const { root, storage, input } = fixture(t);
   interruptSession(() => startRun(input));
   assert.equal(inspectProject(root).state.activeRunId, null);
-  assert.equal(runs(root).length, 1);
-  const state = JSON.parse(fs.readFileSync(stateFile(root)));
-  fs.writeFileSync(stateFile(root), JSON.stringify({ ...state, latestCheckpoint: "later-unrelated-checkpoint-metadata" }));
+  assert.equal(runs(root, storage).length, 1);
+  const state = JSON.parse(fs.readFileSync(stateFile(root, storage)));
+  fs.writeFileSync(stateFile(root, storage), JSON.stringify({ ...state, latestCheckpoint: "later-unrelated-checkpoint-metadata" }));
   const result = startRun(input);
   assert.equal(result.storageRecovery, "session-storage-only");
   assert.equal(result.executionReplayAllowed, false);
   assert.equal(result.unknownEffect, true);
   assert.equal(result.state.latestCheckpoint, "later-unrelated-checkpoint-metadata");
-  assert.equal(runs(root).length, 1);
+  assert.equal(runs(root, storage).length, 1);
 });
 
 for (const boundary of ["run", "session"]) for (const after of [false, true]) {
   test(`start exact retry converges ${after ? "after" : "before"} ${boundary} publication`, (t) => {
-    const { root, input } = fixture(t);
+    const { root, storage, input } = fixture(t);
     const link = fs.linkSync, rename = fs.renameSync;
     let injected = false;
     const intercept = (publish, a, b) => {
-      const matches = boundary === "run" ? path.basename(b) === "run.json" : b === stateFile(root);
+      const matches = boundary === "run" ? path.basename(b) === "run.json" : b === stateFile(root, storage);
       if (!injected && matches) { injected = true; if (after) publish(a, b); throw Object.assign(new Error("Fixture exact boundary"), { code: "EIO" }); }
       return publish(a, b);
     };
@@ -101,13 +105,13 @@ for (const boundary of ["run", "session"]) for (const after of [false, true]) {
     assert.equal(injected, true);
     const retried = startRun(input);
     assert.ok(["run_started", "run_start_already_committed"].includes(retried.status));
-    assert.equal(runs(root).length, 1);
+    assert.equal(runs(root, storage).length, 1);
     assert.equal(inspectProject(root).state.activeRunId, retried.run.runId);
   });
 }
 
 test("two hidden concurrent exact-key callers converge on one Run without a duplicate launch authorization", async (t) => {
-  const { root, input } = fixture(t);
+  const { root, storage, input } = fixture(t);
   const module = pathToFileURL(path.join(pluginRoot, "scripts/lib/run-lineage.mjs")).href;
   const child = () => new Promise((resolve, reject) => {
     const code = `import {startRun} from ${JSON.stringify(module)}; console.log(JSON.stringify({event:'owned-start-child',pid:process.pid,parentPid:process.ppid,command:process.execPath,cwd:process.cwd(),at:new Date().toISOString(),ports:[]})); console.log(JSON.stringify(startRun(${JSON.stringify(input)})));`;
@@ -125,12 +129,12 @@ test("two hidden concurrent exact-key callers converge on one Run without a dupl
   const results = await Promise.all([child(), child()]);
   assert.deepEqual(new Set(results.map(result => result.status)), new Set(["run_started", "run_start_already_committed"]));
   assert.equal(new Set(results.map(result => result.run.runId)).size, 1);
-  assert.equal(runs(root).length, 1);
+  assert.equal(runs(root, storage).length, 1);
   assert.equal(results.every(result => result.executionReplayAllowed === false), true);
 });
 
 test("lost key never guesses a replacement", (t) => {
-  const { root, input } = fixture(t);
+  const { root, storage, input } = fixture(t);
   interruptSession(() => startRun({ ...input, startRequestId: undefined }));
   const before = snapshot(root);
   assert.throws(() => startRun(input), { code: "RUN_START_UNRESOLVED" });
@@ -138,9 +142,9 @@ test("lost key never guesses a replacement", (t) => {
 });
 
 test("multiple exact-key candidates are unresolved instead of latest-wins", (t) => {
-  const { root, input } = fixture(t);
+  const { root, storage, input } = fixture(t);
   interruptSession(() => startRun(input));
-  const prior = JSON.parse(fs.readFileSync(runFile(root, runs(root)[0])));
+  const prior = JSON.parse(fs.readFileSync(runFile(root, storage, runs(root, storage)[0])));
   const other = structuredClone(prior), newId = "run-1-000001";
   other.runId = newId;
   other.startOperation.runId = newId;
@@ -151,18 +155,18 @@ test("multiple exact-key candidates are unresolved instead of latest-wins", (t) 
   const { operationHash, ...payload } = other.startOperation;
   other.startOperation.operationHash = sessionStateHash(payload);
   other.sessionTransition = other.startOperation.transition;
-  fs.mkdirSync(path.dirname(runFile(root, newId)), { recursive: true });
-  fs.writeFileSync(runFile(root, newId), JSON.stringify(other));
+  fs.mkdirSync(path.dirname(runFile(root, storage, newId)), { recursive: true });
+  fs.writeFileSync(runFile(root, storage, newId), JSON.stringify(other));
   const before = snapshot(root);
   assert.throws(() => startRun(input), { code: "RUN_START_UNRESOLVED" });
   assert.deepEqual(snapshot(root), before);
 });
 
 test("deleted result after committed finish is an evidence gap, not an unsaved transition", (t) => {
-  const { root, input } = fixture(t);
+  const { root, storage, input } = fixture(t);
   startRun(input);
   const result = finishRun(finishInput(root));
-  fs.unlinkSync(path.join(root, ".head/lineage/result-packets", `${result.resultPacket.resultPacketId}.json`));
+  fs.unlinkSync(path.join(root, storage.directory, "lineage/result-packets", `${result.resultPacket.resultPacketId}.json`));
   const before = snapshot(root);
   const status = inspectRunStorageTransition({ root });
   assert.equal(status.status, "committed");
@@ -172,33 +176,33 @@ test("deleted result after committed finish is an evidence gap, not an unsaved t
 });
 
 test("unrelated proven Session owner corruption is not a global start gate", (t) => {
-  const { root, input } = fixture(t);
+  const { root, storage, input } = fixture(t);
   const other = createHeadSession({ root, purpose: "Independent owner" }).sessionId;
   const foreign = withSessionRoute(root, other, () => startRun(input));
-  const file = runFile(root, foreign.run.runId), record = JSON.parse(fs.readFileSync(file));
+  const file = runFile(root, storage, foreign.run.runId), record = JSON.parse(fs.readFileSync(file));
   fs.writeFileSync(file, JSON.stringify({ ...record, executionContractId: "broken-unrelated-lineage" }));
   assert.equal(startRun(input).status, "run_started");
 });
 
 test("an unattached active Run with unknown owner is not silently discarded", (t) => {
-  const { root, input } = fixture(t);
+  const { root, storage, input } = fixture(t);
   const other = createHeadSession({ root, purpose: "Owner loss fixture" }).sessionId;
   withSessionRoute(root, other, () => startRun(input));
-  fs.unlinkSync(path.join(root, ".head/sessions/by-id", other, "current.json"));
+  fs.unlinkSync(path.join(root, storage.directory, "sessions/by-id", other, "current.json"));
   const before = snapshot(root);
   assert.throws(() => startRun(input), { code: "RUN_START_UNRESOLVED" });
   assert.deepEqual(snapshot(root), before);
 });
 
 test("Run start preimage drift and metadata tamper never overwrite current Session", (t) => {
-  const { root, input } = fixture(t);
+  const { root, storage, input } = fixture(t);
   interruptSession(() => startRun(input));
   const state = inspectProject(root).state;
-  fs.writeFileSync(stateFile(root), JSON.stringify({ ...state, mode: "explicit-current-head-change" }));
+  fs.writeFileSync(stateFile(root, storage), JSON.stringify({ ...state, mode: "explicit-current-head-change" }));
   const before = snapshot(root);
   assert.throws(() => startRun(input), { code: "RUN_TRANSITION_SESSION_DRIFT" });
   assert.deepEqual(snapshot(root), before);
-  const file = runFile(root, runs(root)[0]), record = JSON.parse(fs.readFileSync(file));
+  const file = runFile(root, storage, runs(root, storage)[0]), record = JSON.parse(fs.readFileSync(file));
   record.startOperation.inputHash = "tampered";
   fs.writeFileSync(file, JSON.stringify(record));
   assert.throws(() => startRun(input), { code: "RUN_START_IDENTITY_CONFLICT" });
@@ -206,7 +210,7 @@ test("Run start preimage drift and metadata tamper never overwrite current Sessi
 
 for (const kind of ["finish", "review"]) {
   test(`${kind} verified artifact permits storage-only repair; read is immutable`, (t) => {
-    const { root, input } = fixture(t);
+    const { root, storage, input } = fixture(t);
     startRun(input);
     if (kind === "review") finishRun(finishInput(root));
     const operation = kind === "finish" ? finishRun : reviewRun;
@@ -222,14 +226,14 @@ for (const kind of ["finish", "review"]) {
   });
 
   test(`${kind} missing immutable evidence remains incomplete and cannot fabricate judgment/result`, (t) => {
-    const { root, input } = fixture(t);
+    const { root, storage, input } = fixture(t);
     const started = startRun(input);
     if (kind === "review") finishRun(finishInput(root));
     const operation = kind === "finish" ? finishRun : reviewRun;
     const fields = kind === "finish" ? finishInput(root) : reviewInput(root);
     interruptSession(() => operation(fields));
-    const run = JSON.parse(fs.readFileSync(runFile(root, started.run.runId)));
-    fs.unlinkSync(path.join(root, ".head/lineage", kind === "finish" ? "result-packets" : "review-decisions", `${run.sessionTransition.artifactId}.json`));
+    const run = JSON.parse(fs.readFileSync(runFile(root, storage, started.run.runId)));
+    fs.unlinkSync(path.join(root, storage.directory, "lineage", kind === "finish" ? "result-packets" : "review-decisions", `${run.sessionTransition.artifactId}.json`));
     const before = snapshot(root);
     assert.equal(reconcileRunStorageTransition({ root }).transition.artifactStatus, "missing-evidence");
     assert.deepEqual(snapshot(root), before);
@@ -238,7 +242,7 @@ for (const kind of ["finish", "review"]) {
 }
 
 test("derived index failure leaves required storage committed without replay instruction", (t) => {
-  const { root, input } = fixture(t);
+  const { root, storage, input } = fixture(t);
   const rename = fs.renameSync;
   fs.renameSync = (a, b) => { if (b.includes(`${path.sep}graph-discovery${path.sep}`)) throw Object.assign(new Error("Fixture derived index failure"), { code: "EIO" }); return rename(a, b); };
   try {

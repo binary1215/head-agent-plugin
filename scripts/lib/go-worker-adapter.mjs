@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { formatForVerifiedOwner } from "./project-storage-format.mjs";
 import {
   COMPUTE_ADAPTER_CONTRACT_VERSION,
   JsReferenceComputeAdapter,
@@ -88,10 +89,10 @@ function normalizedRelativePath(value, label) {
   return value;
 }
 
-function targetFor(platform = process.platform, arch = process.arch) {
+function targetFor(platform = process.platform, arch = process.arch, legacy = false) {
   const target = TARGETS[`${platform}-${arch}`];
   if (!target) fail(`Unsupported Go worker target: ${platform}-${arch}`, "GO_WORKER_TARGET_UNSUPPORTED");
-  return target;
+  return legacy ? target : { ...target, executable: target.executable.replace("head-agent-", "lode-agent-") };
 }
 
 function inside(root, candidate) {
@@ -102,7 +103,7 @@ function inside(root, candidate) {
 function manifestPayload({ target, binary, operations }) {
   return {
     schemaVersion: 1,
-    kind: "HeadAgentWorkerManifest",
+    kind: "LodeAgentWorkerManifest",
     manifestVersion: GO_WORKER_MANIFEST_VERSION,
     workerProtocolVersion: WORKER_PROTOCOL_VERSION,
     target,
@@ -155,12 +156,12 @@ export function createGoWorkerManifest({ platform, arch, binaryFile, manifestDir
 
 export function validateGoWorkerManifest(manifest, { platform = process.platform, arch = process.arch } = {}) {
   assertFields(manifest, ["schemaVersion", "kind", "manifestVersion", "workerProtocolVersion", "target", "binary", "operations", "processModel", "authority", "manifestId", "manifestHash"], "Go worker manifest");
-  const target = targetFor(platform, arch);
+  const target = targetFor(platform, arch, manifest.kind === "HeadAgentWorkerManifest");
   assertFields(manifest.target, ["platform", "arch", "directory"], "Go worker manifest target");
   assertFields(manifest.binary, ["relativePath", "sha256", "size"], "Go worker manifest binary");
   assertFields(manifest.processModel, ["stdio", "descendants", "network", "projectWrites"], "Go worker manifest process model");
   assertFields(manifest.authority, ["kind", "instructionAuthority", "promotionAuthority", "controlAuthority", "mutatesProject", "mutatesCanon"], "Go worker manifest authority");
-  if (manifest.schemaVersion !== 1 || manifest.kind !== "HeadAgentWorkerManifest" || manifest.manifestVersion !== GO_WORKER_MANIFEST_VERSION
+  if (manifest.schemaVersion !== 1 || !["HeadAgentWorkerManifest", "LodeAgentWorkerManifest"].includes(manifest.kind) || manifest.manifestVersion !== GO_WORKER_MANIFEST_VERSION
     || manifest.workerProtocolVersion !== WORKER_PROTOCOL_VERSION
     || canonicalJson(manifest.target) !== canonicalJson({ platform: target.platform, arch: target.arch, directory: target.directory })) {
     fail("Go worker manifest target or protocol is incompatible.", "GO_WORKER_MANIFEST_INCOMPATIBLE");
@@ -232,7 +233,7 @@ export function createWorkerHealthReferenceAdapter() {
     name: "worker-health-javascript-reference",
     operations: {
       [WORKER_HEALTH_OPERATION]: (input) => {
-        if (canonicalJson(input) !== canonicalJson(WORKER_HEALTH_INPUT)) fail("Worker health input is invalid.", "INVALID_WORKER_HEALTH_INPUT");
+        if (![canonicalJson(WORKER_HEALTH_INPUT), canonicalJson({ probe: "lode-agent-core" })].includes(canonicalJson(input))) fail("Worker health input is invalid.", "INVALID_WORKER_HEALTH_INPUT");
         return {
           kind: "WorkerHealthResult",
           status: "ready",
@@ -391,11 +392,14 @@ export class GoWorkerComputeAdapter {
   #diagnostics = new Map();
   #activePids = new Set();
 
-  constructor({ pluginRoot = ".", manifestFile = null, platform = process.platform, arch = process.arch, fallbackAdapter = createWorkerHealthReferenceAdapter() } = {}) {
+  constructor({ pluginRoot = ".", manifestFile = null, platform = process.platform, arch = process.arch, fallbackAdapter = createWorkerHealthReferenceAdapter(), storage = null } = {}) {
     this.#fallback = fallbackAdapter;
     this.#fallbackDescriptor = validateComputeAdapter(fallbackAdapter);
     try {
       this.#selection = resolveVerifiedGoWorker({ pluginRoot, manifestFile, platform, arch });
+      if (formatForVerifiedOwner(storage).dialect === "lode" && this.#selection.manifest.kind !== "LodeAgentWorkerManifest") {
+        fail("Installed worker does not support the required Lode family.", "GO_WORKER_NOT_AVAILABLE");
+      }
       this.#selectionError = null;
     } catch (error) {
       this.#selection = null;
@@ -403,9 +407,10 @@ export class GoWorkerComputeAdapter {
     }
   }
 
-  describe() {
+  describe({ storage = null } = {}) {
     const operations = new Set(this.#fallbackDescriptor.supportedOperations);
-    for (const operation of this.#selection?.manifest.operations || []) operations.add(operation);
+    const nativeCompatible = formatForVerifiedOwner(storage).dialect !== "lode" || this.#selection?.manifest.kind === "LodeAgentWorkerManifest";
+    for (const operation of nativeCompatible ? this.#selection?.manifest.operations || [] : []) operations.add(operation);
     return {
       contractVersion: COMPUTE_ADAPTER_CONTRACT_VERSION,
       backend: "go-worker-preferred",
@@ -445,6 +450,9 @@ export class GoWorkerComputeAdapter {
     validateComputeRequest(request);
     if (!this.#selection || !this.#selection.manifest.operations.includes(request.operation)) {
       return this.#executeFallback(request, signal, this.#selectionError?.code || "GO_WORKER_OPERATION_NOT_INSTALLED");
+    }
+    if (this.#selection.manifest.kind === "HeadAgentWorkerManifest" && request.protocol.name !== "head-agent-core-worker-protocol") {
+      return this.#executeFallback(request, signal, "GO_WORKER_FAMILY_NOT_INSTALLED");
     }
     try {
       const executed = await invokeWorker(this.#selection, request, {

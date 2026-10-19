@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import path from "node:path";
 import { buildCodexMarketplaceSnapshot } from "./lib/codex-marketplace.mjs";
+import { ARTIFACT_COMPOSITION } from "./lib/lode-artifact-composition.mjs";
 
 function option(name, fallback = "") {
   const index = process.argv.indexOf(name);
@@ -13,8 +14,8 @@ try {
   const report = buildCodexMarketplaceSnapshot({
     sourceRoot: path.resolve(option("--source", ".")),
     outputRoot: path.resolve(output),
-    name: option("--marketplace-name", "head-agent-plugin"),
-    displayName: option("--display-name", "HEAD Agent Plugin"),
+    name: option("--marketplace-name", ARTIFACT_COMPOSITION.marketplaceName),
+    displayName: option("--display-name", "Lode Agent Plugin"),
     repository: option("--source-repository", "local"),
     commit: option("--source-commit", "local"),
     nativeOverlayRoot: option("--native-root") ? path.resolve(option("--native-root")) : null,

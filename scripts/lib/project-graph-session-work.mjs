@@ -1,6 +1,8 @@
 import { sessionWorkPath, readSessionWorkEvidenceOriginalFile, inspectSessionWorkReference,
   MAX_RECORD_BYTES, MAX_REFERENCE_BYTES, SESSION_WORK_MAX_CHARACTERS, sha, encoded, sameEvidence } from "./session-work-evidence-original.mjs";
 import { readSessionWorkEvidenceOwner, projectExactSessionWorkRecord } from "./session-work-context.mjs";
+import { relativeProjectArtifact, formatForVerifiedOwner } from "./project-storage-format.mjs";
+import { publicToolName } from "./lode-artifact-composition.mjs";
 
 // Project-wide originals, not the current Host selection or recent-page reader.
 export function projectSessionWorkLayer(inventory, { nodeFromRecord, relation, authority, id }) {
@@ -10,9 +12,9 @@ export function projectSessionWorkLayer(inventory, { nodeFromRecord, relation, a
     if (!owners.has(selector.statePath)) {
       try {
         const stateBytes = context.read(selector.statePath, MAX_REFERENCE_BYTES), state = JSON.parse(stateBytes);
-        const owner = readSessionWorkEvidenceOwner({ root, sessionId: selector.sessionId || state.sessionId });
+        const owner = readSessionWorkEvidenceOwner({ root, sessionId: selector.sessionId || state.sessionId, storage: inventory.storage });
         if (owner.statePath !== selector.statePath || owner.workDirectory !== selector.directory || owner.projectId !== inventory.project.projectId
-          || owner.state.schemaVersion !== 1 || owner.basis !== sha(Buffer.concat([context.read(".head/project.json", MAX_REFERENCE_BYTES), stateBytes]))) {
+          || owner.state.schemaVersion !== 1 || owner.basis !== sha(Buffer.concat([context.read(relativeProjectArtifact(inventory.storage, "project.json"), MAX_REFERENCE_BYTES), stateBytes]))) {
           throw Object.assign(new Error("Work owner changed."), { code: "HEAD_SESSION_IDENTITY_MISMATCH" });
         }
         owners.set(selector.statePath, { owner });
@@ -38,7 +40,7 @@ export function projectSessionWorkLayer(inventory, { nodeFromRecord, relation, a
   // this separately verified owner rather than losing intact other work too.
   for (const { owner } of owners.values()) if (owner && [...originals.values()].some(item => item.owner === owner)) {
     const origin = { layer: "sessions", path: owner.statePath, digest: sha(context.read(owner.statePath, MAX_REFERENCE_BYTES)) };
-    nodes.push(nodeFromRecord({ ...owner.state, kind: "HeadSessionStateReference" }, origin, ["work"], {
+    nodes.push(nodeFromRecord({ ...owner.state, kind: formatForVerifiedOwner(inventory.storage).kind("HeadSessionStateReference") }, origin, ["work"], {
       freshness: "current-session-record-bytes", reviewState: "session-progress-reference", revisionId: origin.digest }));
   }
   const nodeIds = new Set(nodes.map(node => node.nodeId));
@@ -88,7 +90,7 @@ export function projectSessionWorkLayer(inventory, { nodeFromRecord, relation, a
       if (view.status === "unavailable") skipped.push({ path: origin.path, reference: ref, reasonCode: view.reasonCode || "SESSION_WORK_REFERENCE_UNAVAILABLE" });
     }
     const exactRecord = projectExactSessionWorkRecord(record, referenceViews), characters = JSON.stringify([exactRecord]).length;
-    if (characters <= SESSION_WORK_MAX_CHARACTERS) node.originalExpansion = { tool: "head_session_work_read", arguments: {
+    if (characters <= SESSION_WORK_MAX_CHARACTERS) node.originalExpansion = { tool: publicToolName("head_session_work_read"), arguments: {
       project_root: root, session_id: owner.sessionId, evidence_ids: [record.evidenceId], max_records: 1, max_characters: characters } };
     else node.originalExpansion = { supported: false, reasonCode: "SESSION_WORK_ENRICHED_READ_LIMIT", path: origin.path, requiredCharacters: characters };
   }

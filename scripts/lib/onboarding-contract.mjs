@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { familyFormatForOriginal, formatForVerifiedOwner } from "./project-storage-format.mjs";
 
 export const ONBOARDING_PROTOCOL_VERSION = "0.1.0";
 export const ONBOARDING_STATE_PROTOCOL_VERSION = "0.2.0";
@@ -128,7 +129,8 @@ function secretReferenceNames(value) {
   return result;
 }
 
-export function buildStorageSelection({ projectId, selection = null } = {}) {
+export function buildStorageSelection({ projectId, selection = null } = {}, storage) {
+  const format = formatForVerifiedOwner(storage);
   const normalizedProjectId = requiredText(projectId, "projectId");
   const source = selection == null ? { mode: "local" } : selection;
   assertFields(source, ["mode", "endpoint", "database", "secretReferenceNames"], "Storage selection");
@@ -166,7 +168,7 @@ export function buildStorageSelection({ projectId, selection = null } = {}) {
   return withIdentity({
     schemaVersion: 1,
     kind: "OnboardingStorageSelection",
-    protocol: { name: "head-agent-core-onboarding-storage", version: ONBOARDING_PROTOCOL_VERSION },
+    protocol: { name: format.protocol("head-agent-core-onboarding-storage"), version: ONBOARDING_PROTOCOL_VERSION },
     projectId: normalizedProjectId,
     mode,
     local: {
@@ -183,7 +185,7 @@ export function buildStorageSelection({ projectId, selection = null } = {}) {
   }, "onboarding-storage", "storageSelectionId", "storageSelectionHash");
 }
 
-export function verifyStorageSelection(document, projectId = "") {
+export function verifyStorageSelection(document, projectId = "", storage) {
   const verified = verifyIdentity(document, {
     prefix: "onboarding-storage",
     idField: "storageSelectionId",
@@ -193,6 +195,8 @@ export function verifyStorageSelection(document, projectId = "") {
   if (projectId && verified.projectId !== projectId) {
     fail("Onboarding storage selection belongs to another project.", "ONBOARDING_PROJECT_MISMATCH");
   }
+  const format = familyFormatForOriginal("head-agent-core-onboarding-storage", verified, storage);
+  if (!format) fail("Onboarding storage selection fields are invalid.", "INVALID_ONBOARDING_STORAGE_SELECTION");
   const rebuilt = buildStorageSelection({
     projectId: verified.projectId,
     selection: verified.mode === "local" ? { mode: "local" } : {
@@ -201,32 +205,33 @@ export function verifyStorageSelection(document, projectId = "") {
       database: verified.graphdb?.database,
       secretReferenceNames: verified.graphdb?.secretReferenceNames,
     },
-  });
+  }, format);
   if (onboardingCanonicalJson(rebuilt) !== onboardingCanonicalJson(verified)) {
     fail("Onboarding storage selection fields are invalid.", "INVALID_ONBOARDING_STORAGE_SELECTION");
   }
   return verified;
 }
 
-export function buildSessionRecord({ project, sessionState } = {}) {
+export function buildSessionRecord({ project, sessionState } = {}, storage) {
+  const format = formatForVerifiedOwner(storage);
   if (!project || typeof project !== "object" || !sessionState || typeof sessionState !== "object") {
     fail("Project and session state are required.", "INVALID_ONBOARDING_SESSION");
   }
   return withIdentity({
     schemaVersion: 1,
-    kind: "HeadSession",
-    protocol: { name: "head-agent-core-session", version: ONBOARDING_PROTOCOL_VERSION },
+    kind: format.kind("HeadSession"),
+    protocol: { name: format.protocol("head-agent-core-session"), version: ONBOARDING_PROTOCOL_VERSION },
     projectId: requiredText(project.projectId, "project.projectId"),
     sessionId: requiredText(sessionState.sessionId, "sessionState.sessionId"),
     createdAt: optionalText(project.createdAt || sessionState.updatedAt, "Session createdAt"),
     providerReferences: [],
-    identityBoundary: "project-scoped-head-session-not-provider-conversation",
+    identityBoundary: format.value("project-scoped-head-session-not-provider-conversation"),
     instructionAuthority: false,
     promotionAuthority: false,
   }, "session-record", "sessionRecordId", "sessionRecordHash");
 }
 
-export function verifySessionRecord(document, { projectId = "", sessionId = "" } = {}) {
+export function verifySessionRecord(document, { projectId = "", sessionId = "", storage } = {}) {
   const verified = verifyIdentity(document, {
     prefix: "session-record",
     idField: "sessionRecordId",
@@ -236,10 +241,12 @@ export function verifySessionRecord(document, { projectId = "", sessionId = "" }
   if ((projectId && verified.projectId !== projectId) || (sessionId && verified.sessionId !== sessionId)) {
     fail("HEAD Session record identity does not match current project state.", "ONBOARDING_SESSION_MISMATCH");
   }
+  const format = familyFormatForOriginal("head-agent-core-session", verified, storage);
+  if (!format) fail("HEAD Session record fields are invalid.", "INVALID_ONBOARDING_SESSION");
   const rebuilt = buildSessionRecord({
     project: { projectId: verified.projectId, createdAt: verified.createdAt },
     sessionState: { sessionId: verified.sessionId },
-  });
+  }, format);
   if (onboardingCanonicalJson(rebuilt) !== onboardingCanonicalJson(verified)) {
     fail("HEAD Session record fields are invalid.", "INVALID_ONBOARDING_SESSION");
   }
@@ -260,15 +267,16 @@ function buildOnboardingStateDocument({
   previousProductModelId = null,
   migration = "native",
   updatedAt,
-} = {}, { protocolVersion, reviewField }) {
+} = {}, { protocolVersion, reviewField, storage }) {
+  const format = formatForVerifiedOwner(storage);
   const normalizedPhase = requiredText(phase, "Onboarding phase");
   if (!PHASES.has(normalizedPhase)) fail("Onboarding phase is invalid.", "INVALID_ONBOARDING_PHASE");
   if (!Number.isInteger(stateRevision) || stateRevision < 0) fail("Onboarding stateRevision is invalid.", "INVALID_ONBOARDING_STATE");
   const payload = {
     schemaVersion: 1,
     kind: "OnboardingStatePointer",
-    protocol: { name: "head-agent-core-onboarding", version: protocolVersion },
-    projectId: requiredIdentity(projectId, /^head-[a-f0-9]{20}$/, "projectId"),
+    protocol: { name: format.protocol("head-agent-core-onboarding"), version: protocolVersion },
+    projectId: requiredIdentity(projectId, new RegExp(`^${format.projectPrefix}[a-f0-9]{20}$`), "projectId"),
     sessionId: requiredIdentity(sessionId, /^session-[A-Fa-f0-9-]{36}$/, "sessionId"),
     phase: normalizedPhase,
     stateRevision,
@@ -286,10 +294,11 @@ function buildOnboardingStateDocument({
   return { ...payload, pointerHash };
 }
 
-export function buildOnboardingState(input = {}) {
+export function buildOnboardingState(input = {}, storage) {
   return buildOnboardingStateDocument(input, {
     protocolVersion: ONBOARDING_STATE_PROTOCOL_VERSION,
     reviewField: "latestReviewDecisionId",
+    storage,
   });
 }
 
@@ -300,7 +309,7 @@ export function onboardingStateLatestReviewDecisionId(document = {}) {
   return document.latestReviewDecisionId ?? null;
 }
 
-export function verifyOnboardingState(document, { projectId = "", sessionId = "" } = {}) {
+export function verifyOnboardingState(document, { projectId = "", sessionId = "", storage } = {}) {
   if (!document || typeof document !== "object" || Array.isArray(document)) {
     fail("Onboarding state pointer is invalid.", "INVALID_ONBOARDING_STATE");
   }
@@ -315,7 +324,8 @@ export function verifyOnboardingState(document, { projectId = "", sessionId = ""
   if ((projectId && document.projectId !== projectId) || (sessionId && document.sessionId !== sessionId)) {
     fail("Onboarding state pointer identity does not match current project state.", "ONBOARDING_STATE_IDENTITY_MISMATCH");
   }
-  const stateVersion = document.protocol?.name === "head-agent-core-onboarding" ? document.protocol.version : "";
+  const format = familyFormatForOriginal("head-agent-core-onboarding", document, storage);
+  const stateVersion = format ? document.protocol.version : "";
   if (stateVersion !== ONBOARDING_STATE_PROTOCOL_VERSION) {
     fail("Unsupported onboarding state requires an explicit standalone migration or recovery operation.", stateVersion === ONBOARDING_PROTOCOL_VERSION
       ? "ONBOARDING_LEGACY_STATE_REQUIRES_MIGRATOR" : "INVALID_ONBOARDING_STATE");
@@ -335,16 +345,16 @@ export function verifyOnboardingState(document, { projectId = "", sessionId = ""
     migration: document.migration,
     updatedAt: document.updatedAt,
   };
-  const rebuilt = buildOnboardingState(stateInput);
+  const rebuilt = buildOnboardingState(stateInput, format);
   if (onboardingCanonicalJson(rebuilt) !== onboardingCanonicalJson(document)) {
     fail("Onboarding state pointer fields are invalid.", "INVALID_ONBOARDING_STATE");
   }
   return document;
 }
 
-export function initialOnboardingDocuments({ project, sessionState, productModelId, updatedAt } = {}) {
-  const sessionRecord = buildSessionRecord({ project, sessionState });
-  const storageSelection = buildStorageSelection({ projectId: project.projectId, selection: { mode: "local" } });
+export function initialOnboardingDocuments({ project, sessionState, productModelId, updatedAt, storage: inputStorage } = {}, storage = inputStorage) {
+  const sessionRecord = buildSessionRecord({ project, sessionState }, storage);
+  const storageSelection = buildStorageSelection({ projectId: project.projectId, selection: { mode: "local" } }, storage);
   const state = buildOnboardingState({
     projectId: project.projectId,
     sessionId: sessionState.sessionId,
@@ -354,6 +364,6 @@ export function initialOnboardingDocuments({ project, sessionState, productModel
     productModelId,
     migration: "native",
     updatedAt,
-  });
+  }, storage);
   return { sessionRecord, storageSelection, state };
 }

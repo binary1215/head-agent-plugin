@@ -3,7 +3,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { initializeProject } from "../scripts/lib/head-core.mjs";
+import { initializeProject, inspectProject } from "../scripts/lib/head-core.mjs";
+import { formatForVerifiedOwner } from "../scripts/lib/project-storage-format.mjs";
 import { createWholePlanSnapshot } from "../scripts/lib/execution-lineage.mjs";
 import { proposeProductPolicy } from "../scripts/lib/product-policy.mjs";
 import { updateProjectDirection, readProjectDirection } from "../scripts/lib/project-direction.mjs";
@@ -19,9 +20,11 @@ function fixture(t) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "head-retrieval-")));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
-  return root;
+  const storage = inspectProject(root).storage;
+  const layout = formatForVerifiedOwner(storage);
+  return { root, storage, layout };
 }
-function originals(root) {
+function originals(root, layout) {
   const files = {};
   function walk(relative) {
     for (const entry of fs.readdirSync(path.join(root, relative), { withFileTypes: true })) {
@@ -30,7 +33,7 @@ function originals(root) {
       else files[next] = projectGraphDigest(fs.readFileSync(path.join(root, next)));
     }
   }
-  walk(".head"); return files;
+  walk(layout.directory); return files;
 }
 function safe(result) {
   for (const item of [result.authority, ...result.nodes, ...result.edges]) {
@@ -41,11 +44,11 @@ function safe(result) {
 }
 
 test("natural questions rank domain evidence ahead of boilerplate, without a relevance gate", async t => {
-  const root = fixture(t);
+  const { root, layout } = fixture(t);
   for (let i = 0; i < 70; i++) await proposeProductPolicy({ root, operation: "create", key: `spacing-${i}`,
     name: `ThemeSpacing${i}`, statement: "The reason we chose the display spacing is readability." });
   const target = createWholePlanSnapshot({ root, objective: "CacheRelay preserves unsent requests during disconnected restarts.", plan: ["Retain pending requests"] }).artifact;
-  const before = originals(root);
+  const before = originals(root, layout);
   const compact = await queryProjectGraph({ root, query: "What is the reason we chose CacheRelay?" });
   const detailed = await queryProjectGraph({ root, query: "What is the reason we chose CacheRelay?", details: true });
   assert.equal(compact.nodes[0].nodeId, target.wholePlanId);
@@ -67,7 +70,7 @@ test("natural questions rank domain evidence ahead of boilerplate, without a rel
   assert.equal(compact.nodes[0].objective, undefined);
   assert.equal(detailed.nodes[0].objective, target.objective);
   assert(compact.nodes[0].excerpt.includes("CacheRelay"));
-  assert.deepEqual(originals(root), before);
+  assert.deepEqual(originals(root, layout), before);
   for (const query of ["What is the reason we chose CacheRelay?", "What is the reason we chose cacherelay?", "What is the reason we chose CACHERELAY?", "CacheRelay를 유지하는 이유는?", "CacheRelay?", "cache relay"]) {
     for (const maxNodes of [1, 60]) {
       const result = await queryProjectGraph({ root, query, maxNodes, maxEdges: 1, depth: 0 });
@@ -83,11 +86,11 @@ test("natural questions rank domain evidence ahead of boilerplate, without a rel
   assert.equal(missing.coverage.emptyResultProvesAbsence, false);
   const exact = await queryProjectGraph({ root, query: "UnseenNebulaCode", anchorIds: [target.wholePlanId], depth: 0 });
   assert.equal(exact.nodes[0].nodeId, target.wholePlanId);
-  assert.deepEqual(originals(root), before);
+  assert.deepEqual(originals(root, layout), before);
 });
 
 test("metadata keys are not query evidence; short words and Korean names remain discoverable", async t => {
-  const root = fixture(t);
+  const { root, layout } = fixture(t);
   const first = createWholePlanSnapshot({ root, objective: "IS checks and 오프라인큐 preserve local requests", plan: ["Inspect the comparison"] }).artifact;
   for (const query of ["IS", "오프라인큐는?", "오프라인큐의 이유는?"]) {
     const result = await queryProjectGraph({ root, query, depth: 0 });
@@ -99,10 +102,10 @@ test("metadata keys are not query evidence; short words and Korean names remain 
 });
 
 test("current and historical common direction expose all bounded fields without P2 mutation", async t => {
-  const root = fixture(t);
+  const { root, layout } = fixture(t);
   const old = updateProjectDirection({ root, expectedDirectionId: null, input: { goal: "Document flow", constraints: ["AirGapBoundary"], decisions: ["RetentionChoice"], cancelledActions: ["UploadCancelled"] } }).direction;
   const current = updateProjectDirection({ root, expectedDirectionId: old.directionId, input: { goal: "Document flow", constraints: ["LocalBoundary"], decisions: [], cancelledActions: ["ExternalCancelled"] } }).direction;
-  const before = originals(root);
+  const before = originals(root, layout);
   for (const [query, direction, freshness] of [["AirGapBoundary", old, "historical-direction-reference"], ["RetentionChoice", old, "historical-direction-reference"], ["UploadCancelled", old, "historical-direction-reference"], ["LocalBoundary", current, "current-direction-reference"]]) {
     const result = await queryProjectGraph({ root, query, depth: 0, details: true });
     const node = result.nodes.find(node => node.nodeId === direction.directionId);
@@ -115,13 +118,13 @@ test("current and historical common direction expose all bounded fields without 
     safe(result);
   }
   assert.deepEqual(readProjectDirection({ root }), current);
-  assert.deepEqual(originals(root), before);
+  assert.deepEqual(originals(root, layout), before);
 });
 
 test("direction excerpts disclose truncation and keep full originals accessible", async t => {
-  const root = fixture(t);
+  const { root, layout } = fixture(t);
   const direction = updateProjectDirection({ root, expectedDirectionId: null, input: { goal: "G".repeat(3000), constraints: Array.from({ length: 40 }, (_, i) => `Constraint${i} ` + "x".repeat(700)), decisions: [], cancelledActions: [] } }).direction;
-  const before = originals(root);
+  const before = originals(root, layout);
   const result = await queryProjectGraph({ root, anchorIds: [direction.directionId], depth: 0, details: true });
   const node = result.nodes[0];
   assert.equal(node.directionEvidence.goal.length, 2048);
@@ -132,7 +135,7 @@ test("direction excerpts disclose truncation and keep full originals accessible"
   assert.equal(result.sourceFallback.needed, true);
   assert(result.sourceFallback.reasonCodes.includes("PROJECT_DIRECTION_EXCERPT_PARTIAL"));
   assert.deepEqual(readProjectDirection({ root }), direction);
-  assert.deepEqual(originals(root), before);
+  assert.deepEqual(originals(root, layout), before);
   safe(result);
   const compact = await queryProjectGraph({ root, anchorIds: [direction.directionId], depth: 0 });
   assert.equal(compact.nodes[0].directionEvidence.goal.length, 240);
@@ -144,17 +147,17 @@ test("direction excerpts disclose truncation and keep full originals accessible"
 });
 
 async function worldFixture(t) {
-  const root = fixture(t);
+  const { root, layout } = fixture(t);
   fs.mkdirSync(path.join(root, "src"));
   fs.writeFileSync(path.join(root, "src/queue.mjs"), "export function enqueue(value) { return value; }\n");
   fs.writeFileSync(path.join(root, "src/submit.mjs"), "import { enqueue } from './queue.mjs';\nexport function submit(value) { return enqueue(value); }\n");
   fs.writeFileSync(path.join(root, "cli.mjs"), "import { submit } from './src/submit.mjs';\nexport function main(value) { return submit(value); }\n");
   fs.writeFileSync(path.join(root, "decoration.mjs"), "export const decoration = true;\n");
-  await buildWorldModel({ root }); return root;
+  await buildWorldModel({ root }); return { root, layout };
 }
 
 test("paths-only adapter query binds exact verified File anchors and preserves failure reuse", async t => {
-  const root = await worldFixture(t), before = originals(root);
+  const { root, layout } = await worldFixture(t), before = originals(root, layout);
   let calls = 0;
   class Offline extends InMemoryGraphProjectionAdapter {
     readPointer() { calls++; throw Object.assign(new Error("fixture offline"), { code: "ARCADEDB_UNAVAILABLE" }); }
@@ -167,12 +170,12 @@ test("paths-only adapter query binds exact verified File anchors and preserves f
   const again = await queryProjectGraph({ root, paths: ["src/queue.mjs"], graphProjectionAdapter });
   assert.equal(calls, 1);
   assert.equal(first.resultId, again.resultId);
-  assert.deepEqual(originals(root), before);
+  assert.deepEqual(originals(root, layout), before);
   safe(first);
 });
 
 test("paths-only verified adapter and local-only selectors are correctly distinguished", async t => {
-  const root = await worldFixture(t);
+  const { root, layout } = await worldFixture(t);
   const graph = readWorldModelForDiscovery({ root }).snapshot.temporalProvenanceGraph;
   const graphProjectionAdapter = new InMemoryGraphProjectionAdapter();
   materializeGraphProjection({ projectRoot: root, graph, adapter: graphProjectionAdapter });
@@ -194,8 +197,8 @@ test("paths-only verified adapter and local-only selectors are correctly disting
 });
 
 test("exact path queries and code impact use existing public CLI/MCP with bounded fallback", async t => {
-  const root = await worldFixture(t);
-  const before = originals(root);
+  const { root, layout } = await worldFixture(t);
+  const before = originals(root, layout);
   const cli = await runCommand(["graph-query", root, "--query", "src/queue.mjs", "--max-nodes", "1", "--depth", "0"]);
   assert.equal(cli.nodes[0]?.path, "src/queue.mjs");
   const rpc = await dispatch({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "head_project_graph", arguments: { project_root: root, query: "src/queue.mjs", max_nodes: 1, depth: 0 } } });
@@ -213,5 +216,5 @@ test("exact path queries and code impact use existing public CLI/MCP with bounde
   const retained = await queryProjectGraph({ root, paths: ["src/queue.mjs"] });
   assert(retained.nodes.some(node => node.freshness === "historical-source-bytes"));
   safe(retained);
-  assert.deepEqual(originals(root), before);
+  assert.deepEqual(originals(root, layout), before);
 });

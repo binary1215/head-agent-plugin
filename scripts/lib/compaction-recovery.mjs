@@ -1,16 +1,18 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { sessionStatePath, sessionDataPath, assertRunSession, safeSessionPath } from "./session-routing.mjs";
+import { sessionStatePath, assertRunSession, safeSessionPath } from "./session-routing.mjs";
 import { readProjectDirection } from "./project-direction.mjs";
 import { atomicWriteArtifact } from "./artifact-storage.mjs";
-import { inspectProject, isProjectRecoveryReadable, SCHEMA_VERSION } from "./head-core.mjs";
+import { inspectProject, isProjectRecoveryReadable, SCHEMA_VERSION } from "./lode-core.mjs";
 import { readContextCapsule } from "./context-compiler.mjs";
-import { buildFreshHeadReview, readLineageArtifact } from "./execution-lineage.mjs";
+import { buildFreshLodeReview, readLineageArtifact } from "./execution-lineage.mjs";
 import { artifactAuthorityBoundary, verifyArtifactAuthorityBoundary } from "./authority-plane-contract.mjs";
 import { withProjectMutation } from "./project-mutation-lock.mjs";
 import { operationPointerHash, sessionStateHash, inspectRunStorageTransition } from "./run-lineage.mjs";
 import { normalizeSessionWorkEvidence, recordSessionWorkEvidence } from "./session-work-context.mjs";
+
+import { formatForVerifiedOwner, familyFormatForOriginal } from "./project-storage-format.mjs";
 
 export const COMPACTION_RECOVERY_VERSION = "0.3.0";
 export const RECOVERY_CHECKPOINT_SYNC_VERSION = "0.1.0";
@@ -80,34 +82,34 @@ function readJson(file, label) {
   catch (error) { fail(`${label} is invalid JSON: ${error.message}`, "INVALID_COMPACTION_CANON"); }
 }
 
-function checkpointDirectory(root) {
-  return path.join(root, ".head", "sessions", "ledger");
+function checkpointDirectory(root, storage) {
+  return path.join(root, formatForVerifiedOwner(storage).directory, "sessions", "ledger");
 }
 
-function checkpointFile(root, checkpointId) {
+function checkpointFile(root, checkpointId, storage) {
   if (typeof checkpointId !== "string" || !/^checkpoint-[a-f0-9]{24}$/.test(checkpointId)) {
     fail("Recovery checkpoint id is invalid.", "INVALID_RECOVERY_CHECKPOINT_ID");
   }
-  return safeSessionPath(root, ".head", "sessions", "ledger", `${checkpointId}.json`);
+  return safeSessionPath(root, formatForVerifiedOwner(storage).directory, "sessions", "ledger", `${checkpointId}.json`);
 }
 
-function compactionRoot(root) {
-  return sessionDataPath(root, "compaction");
+function compactionRoot(root, storage) {
+  return safeSessionPath(root, path.relative(root, path.dirname(sessionStatePath(root, storage))), "compaction");
 }
 
-function epochFile(root, epochId) {
+function epochFile(root, epochId, storage) {
   if (typeof epochId !== "string" || !/^compaction-epoch-[a-f0-9-]{36}$/.test(epochId)) {
     fail("Compaction epoch id is invalid.", "INVALID_COMPACTION_EPOCH_ID");
   }
-  return path.join(compactionRoot(root), "epochs", `${epochId}.json`);
+  return path.join(compactionRoot(root, storage), "epochs", `${epochId}.json`);
 }
 
-function currentEpochFile(root) {
-  return path.join(compactionRoot(root), "current.json");
+function currentEpochFile(root, storage) {
+  return path.join(compactionRoot(root, storage), "current.json");
 }
 
-function consumptionFile(root, epochId) {
-  return path.join(compactionRoot(root), "consumptions", `${epochId}.json`);
+function consumptionFile(root, epochId, storage) {
+  return path.join(compactionRoot(root, storage), "consumptions", `${epochId}.json`);
 }
 
 function verifyContentIdentity(document, { idField, hashField, prefix, label }) {
@@ -129,7 +131,7 @@ function readRunPointer(inspected) {
   if (!state.activeExecutionContractId || !state.currentWholePlanId) {
     fail("Active Run state is missing its ExecutionContract or WholePlan pointer.", "COMPACTION_RUN_POINTER_REQUIRED");
   }
-  const runFile = path.join(inspected.project.projectRoot, ".head", "sessions", "runs", state.activeRunId, "run.json");
+  const runFile = path.join(inspected.project.projectRoot, formatForVerifiedOwner(inspected.storage).directory, "sessions", "runs", state.activeRunId, "run.json");
   const run = readJson(runFile, "Active Run canon");
   assertRunSession(inspected.project.projectRoot, run, state);
   if (run.status !== "active" || run.runId !== state.activeRunId || run.wholePlanId !== state.currentWholePlanId
@@ -174,7 +176,7 @@ function readTransitionRun(inspected) {
   const runId = transitionRunId(inspected.state);
   if (!runId) return null;
   if (!/^run-[0-9]+-[a-f0-9]{6}$/.test(runId)) fail("Current Run transition id is invalid.", "INVALID_RUN_CANON");
-  const file = path.join(inspected.project.projectRoot, ".head", "sessions", "runs", runId, "run.json");
+  const file = path.join(inspected.project.projectRoot, formatForVerifiedOwner(inspected.storage).directory, "sessions", "runs", runId, "run.json");
   if (!fs.existsSync(file)) fail(`Current Run canon not found: ${runId}`, "INVALID_RUN_CANON");
   const run = readJson(file, "Current Run canon");
   assertRunSession(inspected.project.projectRoot, run, inspected.state);
@@ -293,7 +295,7 @@ function inspectRunTransitionState(inspected) {
 }
 
 function inspectCompactionStateForSync(inspected) {
-  const epoch = currentEpoch(inspected.project.projectRoot);
+  const epoch = currentEpoch(inspected.project.projectRoot, inspected.storage);
   if (!epoch) return { status: "idle", epoch: null };
   if (epoch.projectId !== inspected.project.projectId || epoch.sessionId !== inspected.state.sessionId
     || !new Set([...OPEN_STATES, ...TERMINAL_STATES]).has(epoch.state)
@@ -301,7 +303,7 @@ function inspectCompactionStateForSync(inspected) {
     || typeof epoch.checkpointDigest !== "string" || !/^[a-f0-9]{64}$/.test(epoch.checkpointDigest)) {
     fail("Current compaction epoch is invalid for this Project and Session.", "INVALID_COMPACTION_EPOCH");
   }
-  const consumption = continuationConsumption(inspected.project.projectRoot, epoch);
+  const consumption = continuationConsumption(inspected.project.projectRoot, epoch, inspected.storage);
   if (consumption.status === "invalid") fail("Current compaction continuation consumption is invalid.", "INVALID_COMPACTION_CONSUMPTION");
   if (epoch.state !== "preparing") {
     const checkpoint = readRecoveryCheckpoint({ root: inspected.project.projectRoot, checkpointId: epoch.checkpointId }).checkpoint;
@@ -328,7 +330,7 @@ function recoveryCheckpointBasisFromInspection(inspected) {
   const compaction = inspectCompactionStateForSync(inspected);
   const payload = {
     kind: "RecoveryCheckpointSyncBasis",
-    protocol: { name: "head-agent-core-recovery-checkpoint-sync", version: RECOVERY_CHECKPOINT_SYNC_VERSION },
+    protocol: { name: formatForVerifiedOwner(inspected.storage).protocol("head-agent-core-recovery-checkpoint-sync"), version: RECOVERY_CHECKPOINT_SYNC_VERSION },
     persisted: false,
     projectId: inspected.project.projectId,
     sessionId: inspected.state.sessionId,
@@ -351,7 +353,7 @@ function recoveryCheckpointBasisFromInspection(inspected) {
     runTransition: { status: runTransition.status, transition: runTransition.transition },
     compaction,
     directionAuthorship: {
-      owner: "current-provider-head",
+      owner: formatForVerifiedOwner(inspected.storage).value("current-provider-head"),
       deriveAfterBasisRead: true,
       replacingOnlyTheBasisIdOnAnOlderDirectionIsValid: false,
       coreVerification: "exact-identity-lineage-and-concurrency-only",
@@ -403,7 +405,7 @@ function verifiedReviewedRunIntegration(inspected, input, checkpointInput) {
   if (inspected.state.activeRunId || inspected.state.pendingReview || inspected.state.lastReviewDecisionId !== reviewDecisionId) {
     fail("Reviewed Run integration requires the current completed review state.", "RUN_RESULT_INTEGRATION_STATE_CONFLICT");
   }
-  const file = path.join(inspected.project.projectRoot, ".head", "sessions", "runs", runId, "run.json");
+  const file = path.join(inspected.project.projectRoot, formatForVerifiedOwner(inspected.storage).directory, "sessions", "runs", runId, "run.json");
   if (!fs.existsSync(file)) fail(`Reviewed Run canon not found: ${runId}`, "RUN_RESULT_INTEGRATION_RUN_NOT_FOUND");
   const run = readJson(file, "Reviewed Run canon");
   assertRunSession(inspected.project.projectRoot, run, inspected.state);
@@ -420,7 +422,7 @@ function verifiedReviewedRunIntegration(inspected, input, checkpointInput) {
   const contract = readLineageArtifact({ root: inspected.project.projectRoot, artifactId: result.executionContractId }).artifact;
   const plan = readLineageArtifact({ root: inspected.project.projectRoot, artifactId: review.wholePlanId }).artifact;
   const capsule = readContextCapsule({ root: inspected.project.projectRoot, capsuleId: contract.capsuleId }).capsule;
-  const freshReview = buildFreshHeadReview({
+  const freshReview = buildFreshLodeReview({
     root: inspected.project.projectRoot,
     wholePlanId: run.wholePlanId,
     resultPacketId: run.resultPacketId,
@@ -469,7 +471,7 @@ function recoveryCheckpointPayload({ inspected, purpose, approvedDecisions, curr
   return {
     schemaVersion: SCHEMA_VERSION,
     kind: "SessionRunCheckpoint",
-    protocol: { name: "head-agent-core-session-run-recovery", version: COMPACTION_RECOVERY_VERSION },
+    protocol: { name: formatForVerifiedOwner(inspected.storage).protocol("head-agent-core-session-run-recovery"), version: COMPACTION_RECOVERY_VERSION },
     projectId: inspected.project.projectId,
     sessionId: inspected.state.sessionId,
     authorityBoundary: artifactAuthorityBoundary("SessionRunCheckpoint"),
@@ -484,7 +486,7 @@ function recoveryCheckpointPayload({ inspected, purpose, approvedDecisions, curr
     createdAt: verifiedIntegration?.reviewedAt || createdAt || now(),
     authority: {
       recovery: "canonical-session-run-checkpoint",
-      recoveryFieldSources: "explicit-head-user-direction-and-verified-p2-lineage-only",
+      recoveryFieldSources: formatForVerifiedOwner(inspected.storage).value("explicit-head-user-direction-and-verified-p2-lineage-only"),
       evidenceRecords: "reference-only-not-recovery-field-source",
       providerSummary: "orientation-only",
       continuitySnapshot: "derived-view-not-recovery-input",
@@ -504,7 +506,7 @@ function createRecoveryCheckpointLocked({ root = ".", purpose, approvedDecisions
     if (canonicalJson(keys) !== canonicalJson(expectedKeys) || !/^[a-f0-9]{64}$/.test(reviewedRunIntegration.integrationInputHash || "")) fail("Reviewed integration requires the exact decision and input identity.", "INVALID_RUN_RESULT_INTEGRATION");
     const direction = normalizeCheckpointDirection(inspected, { purpose, approvedDecisions, currentPosition, nextExpectedResult, openReviewIds });
     const inputHash = digest(canonicalJson({ runId: reviewedRunIntegration.runId, reviewDecisionId: reviewedRunIntegration.reviewDecisionId, ...direction }));
-    const directory = checkpointDirectory(inspected.project.projectRoot);
+    const directory = checkpointDirectory(inspected.project.projectRoot, inspected.storage);
     const matches = (fs.existsSync(directory) ? fs.readdirSync(directory) : [])
       .filter((name) => /^checkpoint-[a-f0-9]{24}\.json$/.test(name))
       // Routing metadata only selects the exact decision; it grants no trust.
@@ -526,12 +528,12 @@ function createRecoveryCheckpointLocked({ root = ".", purpose, approvedDecisions
         if (canonicalJson(readSessionPointer(inspected)) !== canonicalJson(checkpoint.sessionPointer)) fail("Interrupted integration cannot overwrite changed Session work.", "RUN_RESULT_INTEGRATION_STATE_CONFLICT");
         return persistRecoveryCheckpoint(inspected, checkpoint);
       }
-      return { status: "existing", file: checkpointFile(inspected.project.projectRoot, checkpoint.checkpointId), checkpoint, state: inspected.state };
+      return { status: "existing", file: checkpointFile(inspected.project.projectRoot, checkpoint.checkpointId, inspected.storage), checkpoint, state: inspected.state };
     }
     // A historical request records a pending operation, not permission to
     // manufacture a replacement checkpoint. The Session recovery reader owns
     // original verification and the bounded manual HEAD transfer diagnostic.
-    const requestFile = path.join(inspected.project.projectRoot, ".head", "sessions", "integrations", "requests", `${reviewedRunIntegration.reviewDecisionId}.json`);
+    const requestFile = path.join(inspected.project.projectRoot, formatForVerifiedOwner(inspected.storage).directory, "sessions", "integrations", "requests", `${reviewedRunIntegration.reviewDecisionId}.json`);
     if (fs.existsSync(requestFile)) {
       fail(`Historical integration remains pending at ${requestFile}; read the original with readRunResultIntegration and transfer its verified direction through HEAD.`, "RUN_RESULT_LEGACY_INTEGRATION_PENDING");
     }
@@ -545,7 +547,7 @@ function createRecoveryCheckpointLocked({ root = ".", purpose, approvedDecisions
 
 function persistRecoveryCheckpoint(inspected, checkpoint) {
   const { checkpointId } = checkpoint;
-  const file = checkpointFile(inspected.project.projectRoot, checkpointId);
+  const file = checkpointFile(inspected.project.projectRoot, checkpointId, inspected.storage);
   let existed = fs.existsSync(file);
   if (!existed) {
     try {
@@ -560,7 +562,7 @@ function persistRecoveryCheckpoint(inspected, checkpoint) {
   }
   if (existed) readRecoveryCheckpoint({ root: inspected.project.projectRoot, checkpointId });
   const state = { ...inspected.state, latestCheckpoint: checkpointId, updatedAt: now() };
-  replaceJson(sessionStatePath(inspected.project.projectRoot), state);
+  replaceJson(sessionStatePath(inspected.project.projectRoot, inspected.storage), state);
   return { status: existed ? "existing" : "checkpointed", file, checkpoint, state };
 }
 
@@ -695,11 +697,11 @@ export function syncRecoveryCheckpoint(options = {}) {
   });
 }
 
-export function readRecoveryCheckpoint({ root = ".", checkpointId, historical = false } = {}) {
-  const inspected = historical ? { project: readJson(safeSessionPath(root, ".head", "project.json"), "Project canon") }
+export function readRecoveryCheckpoint({ root = ".", checkpointId, historical = false, storage } = {}) {
+  const inspected = historical ? { storage, project: readJson(safeSessionPath(root, formatForVerifiedOwner(storage).directory, "project.json"), "Project canon") }
     : readyProject(root, "a recovery checkpoint is read", { readOnly: true });
   if (inspected.project.projectRoot !== fs.realpathSync(path.resolve(root))) fail("Project root identity differs.", "PROJECT_IDENTITY_MISMATCH");
-  const file = checkpointFile(inspected.project.projectRoot, checkpointId);
+  const file = checkpointFile(inspected.project.projectRoot, checkpointId, inspected.storage);
   if (!fs.existsSync(file)) fail(`Recovery checkpoint not found: ${checkpointId}`, "RECOVERY_CHECKPOINT_NOT_FOUND");
   const checkpoint = readJson(file, "Recovery checkpoint");
   if (checkpoint.kind !== "SessionRunCheckpoint" || checkpoint.projectId !== inspected.project.projectId
@@ -708,7 +710,7 @@ export function readRecoveryCheckpoint({ root = ".", checkpointId, historical = 
     fail("Recovery checkpoint is incomplete or belongs to another Project/Session.", "INVALID_RECOVERY_CHECKPOINT");
   }
   const checkpointVersion = checkpoint.protocol?.version;
-  if (checkpoint.protocol?.name !== "head-agent-core-session-run-recovery" || !new Set(["0.1.0", "0.2.0", COMPACTION_RECOVERY_VERSION]).has(checkpointVersion)) {
+  if (!familyFormatForOriginal("head-agent-core-session-run-recovery", checkpoint, inspected.storage) || !new Set(["0.1.0", "0.2.0", COMPACTION_RECOVERY_VERSION]).has(checkpointVersion)) {
     fail("Recovery checkpoint protocol is invalid.", "INVALID_RECOVERY_CHECKPOINT");
   }
   if (new Set(["0.2.0", COMPACTION_RECOVERY_VERSION]).has(checkpointVersion)) {
@@ -722,11 +724,12 @@ export function readRecoveryCheckpoint({ root = ".", checkpointId, historical = 
   return { status: "verified", file, checkpoint };
 }
 
-function readEpoch(root, epochId) {
-  const file = epochFile(root, epochId);
+function readEpoch(root, epochId, storage) {
+  const file = epochFile(root, epochId, storage);
   if (!fs.existsSync(file)) fail(`Compaction epoch not found: ${epochId}`, "COMPACTION_EPOCH_NOT_FOUND");
   const epoch = readJson(file, "Compaction epoch");
-  if (epoch.epochId !== epochId || epoch.kind !== "CompactionEpoch") fail("Compaction epoch identity is invalid.", "INVALID_COMPACTION_EPOCH");
+  if (epoch.epochId !== epochId || epoch.kind !== "CompactionEpoch"
+    || formatForVerifiedOwner(storage).dialect === "lode" && !familyFormatForOriginal("head-agent-core-compaction-recovery", epoch, storage)) fail("Compaction epoch identity is invalid.", "INVALID_COMPACTION_EPOCH");
   return { file, epoch };
 }
 
@@ -736,15 +739,15 @@ function writeEpoch(file, epoch, state, fields = {}) {
   return updated;
 }
 
-function currentEpoch(root) {
-  const file = currentEpochFile(root);
+function currentEpoch(root, storage) {
+  const file = currentEpochFile(root, storage);
   if (!fs.existsSync(file)) return null;
   const pointer = readJson(file, "Current compaction epoch pointer");
-  return readEpoch(root, pointer.epochId).epoch;
+  return readEpoch(root, pointer.epochId, storage).epoch;
 }
 
-function continuationConsumption(root, epoch) {
-  const file = consumptionFile(root, epoch.epochId);
+function continuationConsumption(root, epoch, storage) {
+  const file = consumptionFile(root, epoch.epochId, storage);
   if (!fs.existsSync(file)) return { status: "absent" };
   let value;
   try { value = readJson(file, "Compaction continuation consumption"); }
@@ -764,10 +767,10 @@ function continuationConsumption(root, epoch) {
 function settleInterruptedContinuation(inspected, epoch) {
   if (epoch?.state !== "verified" || epoch.projectId !== inspected.project.projectId
     || epoch.sessionId !== inspected.state.sessionId
-    || continuationConsumption(inspected.project.projectRoot, epoch).status !== "consumed") return epoch;
+    || continuationConsumption(inspected.project.projectRoot, epoch, inspected.storage).status !== "consumed") return epoch;
   // The at-most-once claim is durable, but returning/submitting the continuation
   // is not proven. Close only P5; never recreate a token, receipt of success, or P2.
-  return writeEpoch(epochFile(inspected.project.projectRoot, epoch.epochId), epoch, "aborted", {
+  return writeEpoch(epochFile(inspected.project.projectRoot, epoch.epochId, inspected.storage), epoch, "aborted", {
     abortReason: UNCERTAIN_CONTINUATION_REASON,
     continuationTokenBindingHash: null,
   });
@@ -777,12 +780,12 @@ function settleInterruptedContinuation(inspected, epoch) {
 export function settleCompactionContinuation({ root = ".", epochId } = {}) {
   return withProjectMutation({ root, scope: "session-recovery" }, () => {
     const inspected = readyProject(root, "interrupted continuation is closed");
-    const epoch = currentEpoch(inspected.project.projectRoot);
+    const epoch = currentEpoch(inspected.project.projectRoot, inspected.storage);
     if (!epoch || epoch.epochId !== epochId || epoch.projectId !== inspected.project.projectId
       || epoch.sessionId !== inspected.state.sessionId) {
       fail("Interrupted continuation does not match the current Project, Session and epoch.", "COMPACTION_CHECKPOINT_STALE");
     }
-    if (continuationConsumption(inspected.project.projectRoot, epoch).status !== "consumed") {
+    if (continuationConsumption(inspected.project.projectRoot, epoch, inspected.storage).status !== "consumed") {
       fail("Interrupted continuation requires its exact durable consumption.", "INVALID_COMPACTION_CONSUMPTION");
     }
     const settled = settleInterruptedContinuation(inspected, epoch);
@@ -796,12 +799,12 @@ export function settleCompactionContinuation({ root = ".", epochId } = {}) {
 function withRecoveryMutation(options, operation) {
   return withProjectMutation({ root: options.root, scope: "session-recovery" }, () => {
     const inspected = readyProject(options.root, "a recovery operation runs");
-    const previous = currentEpoch(inspected.project.projectRoot);
+    const previous = currentEpoch(inspected.project.projectRoot, inspected.storage);
     if (previous?.state === "preparing") {
       // The previous process stopped before prepare returned. Preserve whichever
       // complete P2 checkpoint was published, and close only the P5 token whose
       // delivery is now uncertain. No raw token or direction is reconstructed.
-      writeEpoch(epochFile(inspected.project.projectRoot, previous.epochId), previous, "aborted", {
+      writeEpoch(epochFile(inspected.project.projectRoot, previous.epochId, inspected.storage), previous, "aborted", {
         abortReason: "prepare-interrupted-before-token-delivery",
         continuationTokenBindingHash: null,
       });
@@ -848,7 +851,7 @@ function validateCompactionRuntime(runtime) {
 }
 
 function createCompactionEpoch({ inspected, checkpoint, runtime, userTurnIdAtPrepare, commitCheckpoint = null }) {
-  const previous = currentEpoch(inspected.project.projectRoot);
+  const previous = currentEpoch(inspected.project.projectRoot, inspected.storage);
   if (previous && OPEN_STATES.has(previous.state)) fail(`Compaction epoch is already open: ${previous.epochId}`, "COMPACTION_EPOCH_ALREADY_OPEN");
   if (inspected.state.activeRunId && !checkpoint.runPointer) {
     fail("Active Run compaction requires a verified Run pointer.", "COMPACTION_RUN_POINTER_REQUIRED");
@@ -858,7 +861,7 @@ function createCompactionEpoch({ inspected, checkpoint, runtime, userTurnIdAtPre
   const epoch = {
     schemaVersion: SCHEMA_VERSION,
     kind: "CompactionEpoch",
-    protocol: { name: "head-agent-core-compaction-recovery", version: COMPACTION_RECOVERY_VERSION },
+    protocol: { name: formatForVerifiedOwner(inspected.storage).protocol("head-agent-core-compaction-recovery"), version: COMPACTION_RECOVERY_VERSION },
     epochId,
     projectId: inspected.project.projectId,
     sessionId: inspected.state.sessionId,
@@ -873,12 +876,12 @@ function createCompactionEpoch({ inspected, checkpoint, runtime, userTurnIdAtPre
     updatedAt: now(),
     providerSessionIdentityPersisted: false,
   };
-  const file = epochFile(inspected.project.projectRoot, epochId);
-  const pointerFile = currentEpochFile(inspected.project.projectRoot);
-  const sessionFile = sessionStatePath(inspected.project.projectRoot);
+  const file = epochFile(inspected.project.projectRoot, epochId, inspected.storage);
+  const pointerFile = currentEpochFile(inspected.project.projectRoot, inspected.storage);
+  const sessionFile = sessionStatePath(inspected.project.projectRoot, inspected.storage);
   const previousPointer = fs.existsSync(pointerFile) ? fs.readFileSync(pointerFile) : null;
   const previousSession = fs.readFileSync(sessionFile);
-  const checkpointPath = checkpointFile(inspected.project.projectRoot, checkpoint.checkpointId);
+  const checkpointPath = checkpointFile(inspected.project.projectRoot, checkpoint.checkpointId, inspected.storage);
   const checkpointExisted = fs.existsSync(checkpointPath);
   let prepared;
   try {
@@ -917,7 +920,7 @@ function prepareCompactionLocked({ root = ".", runtime = "manual", userTurnIdAtP
   const inspected = readyProject(root, "compaction is prepared");
   validateCompactionRuntime(runtime);
   turnId(userTurnIdAtPrepare, "User turn id at prepare");
-  const previous = currentEpoch(inspected.project.projectRoot);
+  const previous = currentEpoch(inspected.project.projectRoot, inspected.storage);
   if (previous && OPEN_STATES.has(previous.state)) fail(`Compaction epoch is already open: ${previous.epochId}`, "COMPACTION_EPOCH_ALREADY_OPEN");
   const payload = recoveryCheckpointPayload({ inspected, purpose, approvedDecisions, currentPosition, nextExpectedResult, openReviewIds });
   const checkpointDigest = digest(canonicalJson(payload));
@@ -964,7 +967,7 @@ export function verifyCompaction(options = {}) {
 
 function verifyCompactionLocked({ root = ".", epochId, checkpointDigest, currentUserTurnId, providerCompacted = false, recoverySource = "canonical-checkpoint" } = {}) {
   const inspected = readyProject(root, "compaction recovery is verified");
-  const loaded = readEpoch(inspected.project.projectRoot, epochId);
+  const loaded = readEpoch(inspected.project.projectRoot, epochId, inspected.storage);
   let epoch = maybeSupersede(inspected.project.projectRoot, loaded.file, loaded.epoch, currentUserTurnId);
   if (epoch.state === "superseded") fail("A newer real user turn superseded the pending continuation.", "COMPACTION_SUPERSEDED");
   if (recoverySource !== "canonical-checkpoint") fail("Recovery must use only the canonical Session/Run checkpoint.", "NON_CANONICAL_RECOVERY_SOURCE");
@@ -991,7 +994,7 @@ function verifyCompactionLocked({ root = ".", epochId, checkpointDigest, current
     epoch,
     checkpoint,
     recoverySource: "canonical-session-run-checkpoint",
-    excludedSources: ["provider-transcript", "provider-summary", "provider-session-identity", "HEADContinuitySnapshot"],
+    excludedSources: ["provider-transcript", "provider-summary", "provider-session-identity", formatForVerifiedOwner(inspected.storage).kind("HEADContinuitySnapshot")],
   };
 }
 
@@ -1002,10 +1005,10 @@ export function continueCompaction(options = {}) {
 
 function continueCompactionLocked({ root = ".", epochId, continuationToken, currentUserTurnId } = {}) {
   const inspected = readyProject(root, "compaction continuation is authorized");
-  const loaded = readEpoch(inspected.project.projectRoot, epochId);
+  const loaded = readEpoch(inspected.project.projectRoot, epochId, inspected.storage);
   let epoch = maybeSupersede(inspected.project.projectRoot, loaded.file, loaded.epoch, currentUserTurnId);
   if (epoch.state === "superseded") fail("A newer real user turn superseded the pending continuation.", "COMPACTION_SUPERSEDED");
-  if (epoch.state === "continued" || fs.existsSync(consumptionFile(inspected.project.projectRoot, epochId))) {
+  if (epoch.state === "continued" || fs.existsSync(consumptionFile(inspected.project.projectRoot, epochId, inspected.storage))) {
     fail("Compaction continuation token was already consumed.", "COMPACTION_TOKEN_CONSUMED");
   }
   if (epoch.state !== "verified") fail(`Compaction continuation requires verified state; current state: ${epoch.state}.`, "COMPACTION_NOT_VERIFIED");
@@ -1014,7 +1017,7 @@ function continueCompactionLocked({ root = ".", epochId, continuationToken, curr
   if (bindingHash !== epoch.continuationTokenBindingHash) fail("Continuation token does not match this epoch and checkpoint.", "INVALID_COMPACTION_TOKEN");
   const checkpoint = readRecoveryCheckpoint({ root: inspected.project.projectRoot, checkpointId: epoch.checkpointId }).checkpoint;
   if (checkpoint.checkpointDigest !== epoch.checkpointDigest || epoch.projectId !== inspected.project.projectId
-    || epoch.sessionId !== inspected.state.sessionId || currentEpoch(inspected.project.projectRoot)?.epochId !== epoch.epochId) {
+    || epoch.sessionId !== inspected.state.sessionId || currentEpoch(inspected.project.projectRoot, inspected.storage)?.epochId !== epoch.epochId) {
     fail("The continuation no longer matches the current Project, Session, epoch, and checkpoint.", "COMPACTION_CHECKPOINT_STALE");
   }
   assertCurrentStateMatchesCheckpoint(readyProject(inspected.project.projectRoot, "continuation is consumed"), checkpoint);
@@ -1030,7 +1033,7 @@ function continueCompactionLocked({ root = ".", epochId, continuationToken, curr
     consumedAt: now(),
     providerSessionIdentityPersisted: false,
   };
-  const consumedFile = consumptionFile(inspected.project.projectRoot, epochId);
+  const consumedFile = consumptionFile(inspected.project.projectRoot, epochId, inspected.storage);
   fs.mkdirSync(path.dirname(consumedFile), { recursive: true });
   try { fs.writeFileSync(consumedFile, json(consumption), { encoding: "utf8", flag: "wx" }); }
   catch (error) {
@@ -1054,7 +1057,7 @@ export function abortCompaction(options = {}) {
 
 function abortCompactionLocked({ root = ".", epochId, reason = "explicit-abort" } = {}) {
   const inspected = readyProject(root, "compaction is aborted");
-  const loaded = readEpoch(inspected.project.projectRoot, epochId);
+  const loaded = readEpoch(inspected.project.projectRoot, epochId, inspected.storage);
   if (TERMINAL_STATES.has(loaded.epoch.state)) fail(`Compaction epoch is already terminal: ${loaded.epoch.state}.`, "COMPACTION_ALREADY_TERMINAL");
   const epoch = writeEpoch(loaded.file, loaded.epoch, "aborted", {
     abortReason: requiredText(reason, "Abort reason"),
@@ -1065,9 +1068,9 @@ function abortCompactionLocked({ root = ".", epochId, reason = "explicit-abort" 
 
 export function inspectCompaction({ root = "." } = {}) {
   const inspected = readyProject(root, "compaction status is read");
-  const epoch = currentEpoch(inspected.project.projectRoot);
+  const epoch = currentEpoch(inspected.project.projectRoot, inspected.storage);
   if (!epoch) return { status: "idle", sessionId: inspected.state.sessionId, recoveryAuthority: "session-run-checkpoint" };
-  const consumption = continuationConsumption(inspected.project.projectRoot, epoch);
+  const consumption = continuationConsumption(inspected.project.projectRoot, epoch, inspected.storage);
   let checkpoint = null;
   let checkpointVerification = { status: "verified", code: null };
   try { checkpoint = readRecoveryCheckpoint({ root: inspected.project.projectRoot, checkpointId: epoch.checkpointId }).checkpoint; }

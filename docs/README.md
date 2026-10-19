@@ -1,4 +1,4 @@
-# HEAD Agent Core documentation
+# Lode Agent Core documentation
 
 [한국어 문서](ko/README.md)
 
@@ -11,7 +11,7 @@ work logs are intentionally excluded from the distribution and are not runtime a
 - [Recovery meaning, Session selection and World domains](recovery-state-separation.md)
 
 - [Architecture decision](architecture.md)
-- [Provider-neutral HEAD constitution](head-constitution.md)
+- [Provider-neutral Lode constitution](lode-constitution.md)
 - [Authority planes and the Graph/record boundary](authority-plane-contract.md)
 - [Project onboarding](onboarding.md)
 - [Standalone legacy onboarding migrator boundary](onboarding-migrator.md)
@@ -23,7 +23,7 @@ work logs are intentionally excluded from the distribution and are not runtime a
 ## Context, world, and retrieval
 
 - [Graph-first discovery and independent Sessions](graph-discovery.md)
-- [HEAD Context Compiler design](context-compiler.md)
+- [Lode Context Compiler design](context-compiler.md)
 - [Repository World Model semantic alpha](world-model.md)
 - [Temporal provenance GraphSnapshot alpha](temporal-provenance.md)
 - [Review-gated Feature mapping](feature-mapping.md)
@@ -43,7 +43,7 @@ work logs are intentionally excluded from the distribution and are not runtime a
 - [Session work context and Host continuity](session-work-context.md)
 - [Ordinary Host delegation and optional attachment](role-coordination.md)
 - [Provider-neutral bounded worker launch waves](bounded-worker-wave.md)
-- [Worker context and HEAD integration](worker-context-integration.md)
+- [Worker context and Lode integration](worker-context-integration.md)
 - [Optional provider-neutral worker admission](worker-admission.md)
 - [External runtime state evidence](runtime-state.md)
 
@@ -70,5 +70,5 @@ work logs are intentionally excluded from the distribution and are not runtime a
 These documents explain prior design comparisons or audits. They do not override the
 current executable contracts above.
 
-- [Original HEAD Core comparison](original-head-core-comparison.md)
-- [HEAD-Agent GraphDB Brief v4 summary and design review](HEAD-Agent_GraphDB_Brief_v4.md)
+- [Original Lode Core comparison](original-head-core-comparison.md)
+- [Lode-Agent GraphDB Brief v4 summary and design review](Lode_GraphDB_Brief_v4.md)

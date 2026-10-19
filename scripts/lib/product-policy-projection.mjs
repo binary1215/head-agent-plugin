@@ -1,9 +1,8 @@
+import { formatForVerifiedOwner, familyFormatForOriginal, relativeProjectArtifact } from "./project-storage-format.mjs";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import {
-  PRODUCT_POLICY_CANDIDATE_DIRECTORY,
-  PRODUCT_POLICY_REVIEW_DIRECTORY,
   readProductPolicyCandidateRecord as readProductPolicyCandidate,
   readProductPolicyReviewDecisionRecord as readProductPolicyReviewDecision,
   verifyProductPolicyCandidate,
@@ -84,9 +83,10 @@ function applicationStatuses(candidates, reviews, currentProductModelId) {
   });
 }
 
-export function verifyProductPolicyGraphProjection(document, projectId = "") {
+export function verifyProductPolicyGraphProjection(document, projectId = "", storage = undefined) {
+  const format = familyFormatForOriginal("head-agent-core-product-policy-graph-projection", document, storage);
   if (!document || document.kind !== "ProductPolicyGraphProjectionInput"
-    || document.protocol?.name !== "head-agent-core-product-policy-graph-projection"
+    || !format
     || document.protocol.version !== PRODUCT_POLICY_GRAPH_PROJECTION_VERSION
     || projectId && document.projectId !== projectId
     || !/^product-model-[a-f0-9]{24}$/.test(document.currentProductModelId || "")
@@ -99,13 +99,13 @@ export function verifyProductPolicyGraphProjection(document, projectId = "") {
   if (document.candidates.length > MAX_ARTIFACTS || document.reviewDecisions.length > MAX_ARTIFACTS) fail("Product Policy graph projection exceeds its bounded artifact count.", "PRODUCT_POLICY_PROJECTION_LIMIT");
   const candidates = document.candidates.map((entry) => {
     if (!entry || !["awaiting-review", "rejected", "applied-current", "applied-historical", "application-pending-or-diverged"].includes(entry.applicationStatus)) fail("Product Policy projection application status is invalid.", "INVALID_PRODUCT_POLICY_PROJECTION");
-    return verifyProductPolicyCandidate(entry.candidate, document.projectId);
+    return verifyProductPolicyCandidate(entry.candidate, document.projectId, format);
   });
   const candidateById = new Map(candidates.map((candidate) => [candidate.candidateId, candidate]));
   const reviews = document.reviewDecisions.map((review) => {
     const candidate = candidateById.get(review.candidateId);
     if (!candidate) fail("Product Policy projection ReviewDecision is dangling.", "PRODUCT_POLICY_PROJECTION_DANGLING_REVIEW");
-    return verifyProductPolicyReviewDecision(review, candidate, document.projectId);
+    return verifyProductPolicyReviewDecision(review, candidate, document.projectId, format);
   });
   const expectedEntries = applicationStatuses(candidates, reviews, document.currentProductModelId);
   if (canonicalJson(expectedEntries) !== canonicalJson(document.candidates)) fail("Product Policy projection application statuses are not reproducible.", "PRODUCT_POLICY_PROJECTION_STATUS_MISMATCH");
@@ -117,15 +117,16 @@ export function verifyProductPolicyGraphProjection(document, projectId = "") {
   return document;
 }
 
-export function loadProductPolicyGraphProjection({ projectRoot, projectId, currentProductModelId } = {}) {
-  if (typeof projectRoot !== "string" || !projectRoot || !/^head-[a-f0-9]{20}$/.test(projectId || "") || !/^product-model-[a-f0-9]{24}$/.test(currentProductModelId || "")) fail("Product Policy graph projection scope is invalid.", "INVALID_PRODUCT_POLICY_PROJECTION_SCOPE");
-  const candidates = directoryIds(projectRoot, PRODUCT_POLICY_CANDIDATE_DIRECTORY, CANDIDATE_ID, "Product Policy candidate directory")
-    .map((candidateId) => readProductPolicyCandidate({ root: projectRoot, candidateId }).candidate);
-  const reviewDecisions = directoryIds(projectRoot, PRODUCT_POLICY_REVIEW_DIRECTORY, REVIEW_ID, "Product Policy review directory")
-    .map((reviewDecisionId) => readProductPolicyReviewDecision({ root: projectRoot, reviewDecisionId }).reviewDecision);
+export function loadProductPolicyGraphProjection({ projectRoot, projectId, currentProductModelId, storage = null } = {}) {
+  const format = formatForVerifiedOwner(storage);
+  if (typeof projectRoot !== "string" || !projectRoot || !new RegExp(`^${format.projectPrefix}[a-f0-9]{20}$`).test(projectId || "") || !/^product-model-[a-f0-9]{24}$/.test(currentProductModelId || "")) fail("Product Policy graph projection scope is invalid.", "INVALID_PRODUCT_POLICY_PROJECTION_SCOPE");
+  const candidates = directoryIds(projectRoot, relativeProjectArtifact(storage, "product-policy", "candidates"), CANDIDATE_ID, "Product Policy candidate directory")
+    .map((candidateId) => readProductPolicyCandidate({ root: projectRoot, candidateId, storage }).candidate);
+  const reviewDecisions = directoryIds(projectRoot, relativeProjectArtifact(storage, "product-policy", "review-decisions"), REVIEW_ID, "Product Policy review directory")
+    .map((reviewDecisionId) => readProductPolicyReviewDecision({ root: projectRoot, reviewDecisionId, storage }).reviewDecision);
   const payload = {
     kind: "ProductPolicyGraphProjectionInput",
-    protocol: { name: "head-agent-core-product-policy-graph-projection", version: PRODUCT_POLICY_GRAPH_PROJECTION_VERSION },
+    protocol: { name: format.protocol("head-agent-core-product-policy-graph-projection"), version: PRODUCT_POLICY_GRAPH_PROJECTION_VERSION },
     projectId,
     currentProductModelId,
     candidates: applicationStatuses(candidates, reviewDecisions, currentProductModelId),
@@ -137,5 +138,5 @@ export function loadProductPolicyGraphProjection({ projectRoot, projectId, curre
     recoveryAuthority: false,
   };
   const projectionInputHash = digest(canonicalJson(payload));
-  return verifyProductPolicyGraphProjection({ ...payload, projectionInputId: `product-policy-projection-${projectionInputHash.slice(0, 24)}`, projectionInputHash }, projectId);
+  return verifyProductPolicyGraphProjection({ ...payload, projectionInputId: `product-policy-projection-${projectionInputHash.slice(0, 24)}`, projectionInputHash }, projectId, storage);
 }

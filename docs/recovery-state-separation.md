@@ -5,18 +5,18 @@ Session/Run/review facts and common ProjectDirection. Those current pointers nee
 not equal the checkpoint's past pointers. `SessionRestoreProjection` 0.2 preserves
 checkpoint bytes and exposes `currentExecution`. Old position/next result lives
 under `consumerInstruction.historicalCheckpointContext`, not a new instruction.
-HEAD judges the next action; historical approval is not current effect authority.
+Lode judges the next action; historical approval is not current effect authority.
 The P4 projection's version does not change immutable P3 integration protocols:
 existing 0.1 integration requests/receipts keep their original validation and bytes.
 Entry is read-only; absent checkpoints do not gate ordinary work. The existing
-optional basis/sync publishes useful new HEAD-authored meaning, not a repair
+optional basis/sync publishes useful new Lode-authored meaning, not a repair
 ritual after every Run. One-shot compaction still requires the exact epoch,
 checkpoint, Run/Session target, trusted user turn and unconsumed token.
 
 ## Storage is not execution replay
 
 `run-start --contract <id> [--start-request <key>]` and typed MCP
-`head_run_start` share the Core transaction. HEAD/Host supplies the optional Core
+`lode_run_start` share the Core transaction. Lode/Host supplies the optional Core
 request key once and retains it for retries; users need no key form or prepare
 call. Identity is stored inside the existing Run, not a global ledger. Same
 key/different input conflicts; same contract/different key is a new request.
@@ -58,7 +58,7 @@ This branch never reads a fallback/default Session, enumerates Sessions, runs
 World/DB diagnostics or writes state. Absent direction remains `null`; corrupt or
 foreign originals remain errors. CLI unresolved rendering precedes success-only
 formatters, including `session-restore`. Init/resume, restore, Run and compaction
-keep their existing selected-Session/effect boundaries. HEAD continues independent
+keep their existing selected-Session/effect boundaries. Lode continues independent
 work and reuses verified explicit/Host selection only when dependent work needs it;
 no new selector, user ID form, recovery chain or approval step is required.
 MCP exceptional responses retain JSON text plus structuredContent; normal responses
@@ -92,6 +92,6 @@ Mixed traversal filters domain-ineligible nodes/edges before expansion, preservi
 GraphSnapshot ID/hash and disclosed omissions. Unsupported adapter masking uses
 embedded traversal, not remote writes. Context includes verified domains instead
 of dropping all code when aggregate World is stale. A useful existing refresh
-is authorized HEAD maintenance, not a user form or per-turn full refresh duty.
+is authorized Lode maintenance, not a user form or per-turn full refresh duty.
 Deterministic traces verify calls/storage/instructions/fallback, not actual model
 questions, cognition, latency, token or cost improvements.

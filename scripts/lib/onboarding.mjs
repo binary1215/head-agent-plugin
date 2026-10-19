@@ -1,21 +1,16 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { inspectProject, SCHEMA_VERSION } from "./head-core.mjs";
+import { familyFormatForOriginal, formatForVerifiedOwner, relativeProjectArtifact } from "./project-storage-format.mjs";
+import { inspectProject, SCHEMA_VERSION } from "./lode-core.mjs";
 import { defaultSessionStatePath, sessionStatePath } from "./session-routing.mjs";
 import {
   buildOnboardingState,
   buildSessionRecord,
   buildStorageSelection,
-  ONBOARDING_CANDIDATE_DIRECTORY,
   onboardingCanonicalJson,
   onboardingDigest,
   onboardingStateLatestReviewDecisionId,
-  ONBOARDING_PRODUCT_REVISION_DIRECTORY,
-  ONBOARDING_REVIEW_DIRECTORY,
-  ONBOARDING_STATE_RELATIVE_PATH,
-  ONBOARDING_STORAGE_DIRECTORY,
-  SESSION_RECORD_DIRECTORY,
   verifyOnboardingState,
   verifySessionRecord,
   verifyStorageSelection,
@@ -32,7 +27,6 @@ import {
   normalizeProductModelDocument,
   productModelDocument,
   PRODUCT_ENTITY_KINDS_V1 as PRODUCT_ENTITY_KINDS,
-  PRODUCT_MODEL_RELATIVE_PATH,
   readProductModelCanon,
 } from "./product-model.mjs";
 import { buildWorldModel, inspectWorldModel, readWorldModel, readWorldModelSnapshot } from "./world-model.mjs";
@@ -139,30 +133,30 @@ function relativeFile(projectRoot, relative) {
   return candidate;
 }
 
-function stateFile(projectRoot) {
-  return relativeFile(projectRoot, ONBOARDING_STATE_RELATIVE_PATH);
+function stateFile(projectRoot, storageOwner) {
+  return relativeFile(projectRoot, relativeProjectArtifact(storageOwner, "onboarding", "current.json"));
 }
 
-function sessionRecordFile(projectRoot, sessionId) {
-  return relativeFile(projectRoot, `${SESSION_RECORD_DIRECTORY}/${sessionId}.json`);
+function sessionRecordFile(projectRoot, sessionId, storageOwner) {
+  return relativeFile(projectRoot, `${relativeProjectArtifact(storageOwner, "sessions", "records")}/${sessionId}.json`);
 }
 
-function storageSelectionFile(projectRoot, storageSelectionId) {
-  return relativeFile(projectRoot, `${ONBOARDING_STORAGE_DIRECTORY}/${storageSelectionId}.json`);
+function storageSelectionFile(projectRoot, storageSelectionId, storageOwner) {
+  return relativeFile(projectRoot, `${relativeProjectArtifact(storageOwner, "onboarding", "storage-selections")}/${storageSelectionId}.json`);
 }
 
-function candidateSetFile(projectRoot, candidateSetId) {
+function candidateSetFile(projectRoot, candidateSetId, storageOwner) {
   if (!/^onboarding-candidates-[a-f0-9]{24}$/.test(candidateSetId || "")) {
     fail("Onboarding candidate-set id is invalid.", "INVALID_ONBOARDING_CANDIDATE_SET_ID");
   }
-  return relativeFile(projectRoot, `${ONBOARDING_CANDIDATE_DIRECTORY}/${candidateSetId}.json`);
+  return relativeFile(projectRoot, `${relativeProjectArtifact(storageOwner, "onboarding", "candidate-sets")}/${candidateSetId}.json`);
 }
 
-function reviewDecisionFile(projectRoot, reviewDecisionId) {
+function reviewDecisionFile(projectRoot, reviewDecisionId, storageOwner) {
   if (!/^onboarding-review-decision-[a-f0-9]{24}$/.test(reviewDecisionId || "")) {
     fail("Onboarding ReviewDecision id is invalid.", "INVALID_ONBOARDING_REVIEW_ID");
   }
-  return relativeFile(projectRoot, `${ONBOARDING_REVIEW_DIRECTORY}/${reviewDecisionId}.json`);
+  return relativeFile(projectRoot, `${relativeProjectArtifact(storageOwner, "onboarding", "review-decisions")}/${reviewDecisionId}.json`);
 }
 
 function persistImmutable(file, document, label) {
@@ -181,7 +175,7 @@ function productModelHasEntities(model) {
   return Object.values(ARRAY_BY_KIND).some((field) => model[field].length > 0);
 }
 
-function writeState(projectRoot, previous, changes) {
+function writeState(projectRoot, previous, changes, storageOwner) {
   const latestReviewDecisionId = Object.hasOwn(changes, "latestReviewDecisionId")
     ? changes.latestReviewDecisionId
     : onboardingStateLatestReviewDecisionId(previous);
@@ -191,15 +185,16 @@ function writeState(projectRoot, previous, changes) {
     latestReviewDecisionId,
     stateRevision: previous.stateRevision + 1,
     updatedAt: now(),
-  });
-  atomicWrite(stateFile(projectRoot), json(state));
+  }, storageOwner);
+  atomicWrite(stateFile(projectRoot, storageOwner), json(state));
   return state;
 }
 
 function migrationPreview(inspected) {
-  const product = readProductModelCanon({ projectRoot: inspected.project.projectRoot });
-  const storageSelection = buildStorageSelection({ projectId: inspected.project.projectId, selection: { mode: "local" } });
-  const sessionRecord = buildSessionRecord({ project: inspected.project, sessionState: inspected.state });
+  const storageOwner = inspected.storage;
+  const product = readProductModelCanon({ storage: storageOwner, projectRoot: inspected.project.projectRoot });
+  const storageSelection = buildStorageSelection({ projectId: inspected.project.projectId, selection: { mode: "local" } }, storageOwner);
+  const sessionRecord = buildSessionRecord({ project: inspected.project, sessionState: inspected.state }, storageOwner);
   const state = buildOnboardingState({
     projectId: inspected.project.projectId,
     sessionId: inspected.state.sessionId,
@@ -209,22 +204,23 @@ function migrationPreview(inspected) {
     productModelId: product.model.productModelId,
     migration: "legacy-missing-state-v1",
     updatedAt: inspected.project.createdAt || inspected.state.updatedAt,
-  });
+  }, storageOwner);
   return { product, storageSelection, sessionRecord, state };
 }
 
 function ensureOnboardingState(inspected) {
+  const storageOwner = inspected.storage;
   const projectRoot = inspected.project.projectRoot;
-  const file = stateFile(projectRoot);
+  const file = stateFile(projectRoot, storageOwner);
   if (!fs.existsSync(file)) {
     const migration = migrationPreview(inspected);
     persistImmutable(
-      sessionRecordFile(projectRoot, migration.sessionRecord.sessionId),
+      sessionRecordFile(projectRoot, migration.sessionRecord.sessionId, storageOwner),
       migration.sessionRecord,
       "HEAD Session record",
     );
     persistImmutable(
-      storageSelectionFile(projectRoot, migration.storageSelection.storageSelectionId),
+      storageSelectionFile(projectRoot, migration.storageSelection.storageSelectionId, storageOwner),
       migration.storageSelection,
       "Onboarding storage selection",
     );
@@ -234,16 +230,18 @@ function ensureOnboardingState(inspected) {
   const state = verifyOnboardingState(readJson(file, "Onboarding state pointer"), {
     projectId: inspected.project.projectId,
     sessionId: inspected.state.sessionId,
+    storage: storageOwner,
   });
-  const sessionFile = sessionRecordFile(projectRoot, state.sessionId);
+  const sessionFile = sessionRecordFile(projectRoot, state.sessionId, storageOwner);
   if (!fs.existsSync(sessionFile)) fail("HEAD Session record is missing.", "ONBOARDING_SESSION_RECORD_MISSING");
   verifySessionRecord(readJson(sessionFile, "HEAD Session record"), {
     projectId: inspected.project.projectId,
     sessionId: inspected.state.sessionId,
+    storage: storageOwner,
   });
-  const storageFile = storageSelectionFile(projectRoot, state.storageSelectionId);
+  const storageFile = storageSelectionFile(projectRoot, state.storageSelectionId, storageOwner);
   if (!fs.existsSync(storageFile)) fail("Onboarding storage selection is missing.", "ONBOARDING_STORAGE_SELECTION_MISSING");
-  verifyStorageSelection(readJson(storageFile, "Onboarding storage selection"), inspected.project.projectId);
+  verifyStorageSelection(readJson(storageFile, "Onboarding storage selection"), inspected.project.projectId, storageOwner);
   return state;
 }
 
@@ -262,7 +260,8 @@ function evidenceRecord(fields) {
   return { ...payload, evidenceId: `onboarding-evidence-${hash.slice(0, 24)}`, evidenceHash: hash };
 }
 
-function candidateArtifact({ kind, entity, evidenceIds, explanation, confidence, sourceSnapshotId, origin }) {
+function candidateArtifact({ kind, entity, evidenceIds, explanation, confidence, sourceSnapshotId, origin }, storageOwner) {
+  const format = formatForVerifiedOwner(storageOwner);
   if (!PRODUCT_ENTITY_KINDS.includes(kind)) fail(`Unsupported product candidate kind: ${kind}`, "INVALID_ONBOARDING_CANDIDATE");
   if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) {
     fail("Onboarding candidate confidence must be from zero through one.", "INVALID_ONBOARDING_CONFIDENCE");
@@ -282,8 +281,8 @@ function candidateArtifact({ kind, entity, evidenceIds, explanation, confidence,
     sourceSnapshotId: requiredText(sourceSnapshotId, "Candidate sourceSnapshotId"),
     origin: requiredText(origin, "Candidate origin"),
     producer: origin === "user-owned-brief-candidate"
-      ? "head-agent-core-user-brief-normalizer"
-      : "head-agent-core-semantic-proposal-normalizer",
+      ? format.protocol("head-agent-core-user-brief-normalizer")
+      : format.protocol("head-agent-core-semantic-proposal-normalizer"),
     producerVersion: ONBOARDING_INFERENCE_VERSION,
     authorityClass: "candidate",
     instructionAuthority: false,
@@ -299,18 +298,18 @@ function candidateCompare(left, right) {
     || compareText(left.candidateId, right.candidateId);
 }
 
-function modelFromCandidateEntities(candidates) {
-  const document = emptyProductModelDocument();
+function modelFromCandidateEntities(candidates, storageOwner) {
+  const document = emptyProductModelDocument(storageOwner);
   for (const candidate of candidates) document[ARRAY_BY_KIND[candidate.productKind]].push(candidate.proposedEntity);
-  return normalizeProductModelDocument(document);
+  return normalizeProductModelDocument(document, storageOwner);
 }
 
-function buildCandidateSet({ projectId, sessionId, inputMode, storageSelectionId, worldModel, candidates, evidence, unknowns, parentCandidateSetIds = [], producerReviewDecisionId = null, briefEvidenceId = null }) {
+function buildCandidateSet({ projectId, sessionId, inputMode, storageSelectionId, worldModel, candidates, evidence, unknowns, parentCandidateSetIds = [], producerReviewDecisionId = null, briefEvidenceId = null }, storageOwner) {
   if (candidates.length > MAX_CANDIDATES || evidence.length > MAX_EVIDENCE_RECORDS || unknowns.length > MAX_UNKNOWNS) {
     fail("Onboarding candidate set exceeds its deterministic size bounds.", "ONBOARDING_CANDIDATE_SET_LIMIT");
   }
   const orderedCandidates = [...candidates].sort(candidateCompare);
-  modelFromCandidateEntities(orderedCandidates);
+  modelFromCandidateEntities(orderedCandidates, storageOwner);
   const orderedEvidence = [...evidence].sort((left, right) => compareText(left.evidenceId, right.evidenceId));
   const knownEvidence = new Set(orderedEvidence.map((item) => item.evidenceId));
   for (const candidate of orderedCandidates) {
@@ -321,7 +320,7 @@ function buildCandidateSet({ projectId, sessionId, inputMode, storageSelectionId
   const payload = {
     schemaVersion: SCHEMA_VERSION,
     kind: "OnboardingCandidateSet",
-    protocol: { name: "head-agent-core-onboarding-candidates", version: ONBOARDING_CANDIDATE_VERSION },
+    protocol: { name: formatForVerifiedOwner(storageOwner).protocol("head-agent-core-onboarding-candidates"), version: ONBOARDING_CANDIDATE_VERSION },
     projectId,
     sessionId,
     inputMode,
@@ -354,6 +353,7 @@ function buildCandidateSet({ projectId, sessionId, inputMode, storageSelectionId
 }
 
 function verifyCandidateSet(document, projectId = "") {
+  const storageOwner = familyFormatForOriginal("head-agent-core-onboarding-candidates", document);
   if (!document || document.kind !== "OnboardingCandidateSet") fail("Onboarding candidate set is invalid.", "INVALID_ONBOARDING_CANDIDATE_SET");
   const payload = { ...document };
   delete payload.candidateSetId;
@@ -363,7 +363,7 @@ function verifyCandidateSet(document, projectId = "") {
     fail("Onboarding candidate-set digest verification failed.", "ONBOARDING_CANDIDATE_SET_DIGEST_MISMATCH");
   }
   if (projectId && document.projectId !== projectId) fail("Onboarding candidate set belongs to another project.", "ONBOARDING_PROJECT_MISMATCH");
-  modelFromCandidateEntities(document.candidates || []);
+  modelFromCandidateEntities(document.candidates || [], storageOwner);
   const evidenceIds = new Set((document.evidence || []).map((item) => item.evidenceId));
   for (const candidate of document.candidates || []) {
     if (candidate.instructionAuthority !== false || candidate.promotionAuthority !== false || candidate.authorityClass !== "candidate") {
@@ -380,22 +380,23 @@ function verifyCandidateSet(document, projectId = "") {
       fail(`Candidate references unknown evidence: ${evidenceId}`, "UNKNOWN_ONBOARDING_EVIDENCE");
     }
   }
-  return verifyOnboardingCandidateSetForProjection(document, projectId);
+  return verifyOnboardingCandidateSetForProjection(document, projectId, storageOwner);
 }
 
 export function readOnboardingCandidateSet({ root = ".", candidateSetId } = {}) {
   const inspected = readyProject(root, "candidate-set inspection");
-  const file = candidateSetFile(inspected.project.projectRoot, candidateSetId);
+  const storageOwner = inspected.storage;
+  const file = candidateSetFile(inspected.project.projectRoot, candidateSetId, storageOwner);
   if (!fs.existsSync(file)) fail(`Onboarding candidate set not found: ${candidateSetId}`, "ONBOARDING_CANDIDATE_SET_NOT_FOUND");
-  const historical = readCommittedHistoricalArtifactBoundary({ root: inspected.project.projectRoot, projectId: inspected.project.projectId, allowAbsent: true });
-  const relative = `${ONBOARDING_CANDIDATE_DIRECTORY}/${candidateSetId}.json`;
+  const historical = readCommittedHistoricalArtifactBoundary({ storage: storageOwner, root: inspected.project.projectRoot, projectId: inspected.project.projectId, allowAbsent: true });
+  const relative = `${relativeProjectArtifact(storageOwner, "onboarding", "candidate-sets")}/${candidateSetId}.json`;
   const historicalEntry = historicalEntryForPath(historical, relative, "historical-candidate-set");
   if (historicalEntry) return { status: "historical-ready-opaque", file, candidateSet: null, historicalArtifact: historicalEntry, historicalBoundaryId: historical.boundary.boundaryId };
   return { status: "verified", file, candidateSet: verifyCandidateSet(readJson(file, "Onboarding candidate set"), inspected.project.projectId) };
 }
 
-function candidateBytes(projectRoot, id) {
-  const file = candidateSetFile(projectRoot, id);
+function candidateBytes(projectRoot, id, storageOwner) {
+  const file = candidateSetFile(projectRoot, id, storageOwner);
   if (!fs.existsSync(file)) return null;
   if (!fs.lstatSync(file).isFile() || fs.statSync(file).size > 8 * 1024 * 1024) {
     fail("Candidate repair requires a bounded regular file.", "ONBOARDING_RECOVERY_FILE_INVALID");
@@ -405,9 +406,9 @@ function candidateBytes(projectRoot, id) {
 
 const rawHash = (bytes) => bytes === null ? null : crypto.createHash("sha256").update(bytes).digest("hex");
 
-function preserveCandidateBytes(projectRoot, id, bytes) {
+function preserveCandidateBytes(projectRoot, id, bytes, storageOwner) {
   if (bytes === null) return null;
-  const file = relativeFile(projectRoot, `.head/onboarding/recovery-custody/${id}--${rawHash(bytes)}.bin`);
+  const file = relativeFile(projectRoot, `${formatForVerifiedOwner(storageOwner).directory}/onboarding/recovery-custody/${id}--${rawHash(bytes)}.bin`);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   try { fs.writeFileSync(file, bytes, { flag: "wx" }); }
   catch (error) { if (error.code !== "EEXIST") throw error; }
@@ -418,8 +419,9 @@ function preserveCandidateBytes(projectRoot, id, bytes) {
 export function restoreOnboardingCandidate({ root = ".", candidateSetId, sourceContent, expectedRawHash } = {}) {
   return withProjectMutation({ root, scope: "onboarding-promotion" }, () => {
     const inspected = readyProject(root, "exact candidate restoration");
+    const storageOwner = inspected.storage;
     const projectRoot = inspected.project.projectRoot;
-    const file = candidateSetFile(projectRoot, candidateSetId);
+    const file = candidateSetFile(projectRoot, candidateSetId, storageOwner);
     if (typeof sourceContent !== "string" || Buffer.byteLength(sourceContent) > 8 * 1024 * 1024
       || !(expectedRawHash === null || /^[a-f0-9]{64}$/.test(expectedRawHash || ""))) {
       fail("Restoration requires bounded original content and an exact observed raw hash (null for missing).", "ONBOARDING_RECOVERY_INPUT_INVALID");
@@ -429,7 +431,7 @@ export function restoreOnboardingCandidate({ root = ".", candidateSetId, sourceC
     catch { fail("Restoration source is not JSON.", "ONBOARDING_RECOVERY_SOURCE_INVALID"); }
     verifyCandidateSet(source, inspected.project.projectId);
     if (source.candidateSetId !== candidateSetId) fail("Restoration source is not the requested candidate.", "ONBOARDING_RECOVERY_SOURCE_MISMATCH");
-    const before = candidateBytes(projectRoot, candidateSetId);
+    const before = candidateBytes(projectRoot, candidateSetId, storageOwner);
     // Semantic identity is independent of whitespace. Never rewrite a healthy file.
     if (before !== null) {
       try {
@@ -438,8 +440,8 @@ export function restoreOnboardingCandidate({ root = ".", candidateSetId, sourceC
       } catch { /* The exact corrupt bytes remain guarded below. */ }
     }
     if (rawHash(before) !== expectedRawHash) fail("Candidate changed before restoration.", "ONBOARDING_RECOVERY_CONFLICT");
-    const custodyFile = preserveCandidateBytes(projectRoot, candidateSetId, before);
-    if (rawHash(candidateBytes(projectRoot, candidateSetId)) !== expectedRawHash) fail("Candidate changed during restoration.", "ONBOARDING_RECOVERY_CONFLICT");
+    const custodyFile = preserveCandidateBytes(projectRoot, candidateSetId, before, storageOwner);
+    if (rawHash(candidateBytes(projectRoot, candidateSetId, storageOwner)) !== expectedRawHash) fail("Candidate changed during restoration.", "ONBOARDING_RECOVERY_CONFLICT");
     atomicWrite(file, sourceContent);
     readOnboardingCandidateSet({ root: projectRoot, candidateSetId });
     return { status: "restored", candidateSetId, candidateSetHash: source.candidateSetHash,
@@ -448,7 +450,7 @@ export function restoreOnboardingCandidate({ root = ".", candidateSetId, sourceC
   });
 }
 
-function normalizedBrief(brief) {
+function normalizedBrief(brief, storageOwner) {
   if (brief == null) return null;
   if (!brief || typeof brief !== "object" || Array.isArray(brief)) fail("Onboarding brief must be an object.", "INVALID_ONBOARDING_BRIEF");
   const allowed = new Set(["schemaVersion", "name", "summary", ...Object.values(ARRAY_BY_KIND)]);
@@ -463,19 +465,19 @@ function normalizedBrief(brief) {
     requirements: brief.requirements || [],
     constraints: brief.constraints || [],
     decisions: brief.decisions || [],
-  });
+  }, storageOwner);
   const normalized = {
     schemaVersion: 1,
     name: typeof brief.name === "string" ? brief.name.trim() : "",
     summary: typeof brief.summary === "string" ? brief.summary.trim() : "",
-    ...productModelDocument(model),
+    ...productModelDocument(model, storageOwner),
   };
   const hash = onboardingDigest(onboardingCanonicalJson(normalized));
   return { document: normalized, model, evidenceId: `onboarding-brief-${hash.slice(0, 24)}`, evidenceHash: hash };
 }
 
-function semanticProposalRequiredUnknown(sourceSnapshotId) {
-  const statement = "Fresh HEAD semantic product candidates are required. Core intentionally does not infer product meaning from file names, symbols, or lexical overlap.";
+function semanticProposalRequiredUnknown(sourceSnapshotId, storageOwner) {
+  const statement = `Fresh ${formatForVerifiedOwner(storageOwner).value("HEAD")} semantic product candidates are required. Core intentionally does not infer product meaning from file names, symbols, or lexical overlap.`;
   const hash = onboardingDigest(onboardingCanonicalJson({ sourceSnapshotId, kind: "semantic-product-proposal-required", statement }));
   return { unknownId: `onboarding-unknown-${hash.slice(0, 24)}`, statement, evidenceIds: [], status: "open" };
 }
@@ -510,8 +512,8 @@ function normalizedProposalEvidence(value, index, { projectRoot, sourceSnapshotI
   return { file, relativePath, line, symbol, sourceSnapshotId };
 }
 
-function candidatesFromSemanticProposal(proposal, worldModel, projectRoot) {
-  if (proposal == null) return { candidates: [], evidence: [], unknowns: [semanticProposalRequiredUnknown(worldModel.temporalProvenanceGraph.sourceSnapshotId)] };
+function candidatesFromSemanticProposal(proposal, worldModel, projectRoot, storageOwner) {
+  if (proposal == null) return { candidates: [], evidence: [], unknowns: [semanticProposalRequiredUnknown(worldModel.temporalProvenanceGraph.sourceSnapshotId, storageOwner)] };
   if (!proposal || typeof proposal !== "object" || Array.isArray(proposal)) fail("Semantic product proposal must be an object.", "INVALID_ONBOARDING_SEMANTIC_PROPOSAL");
   assertRecordFields(proposal, ["schemaVersion", "sourceSnapshotId", "candidates"], "Semantic product proposal");
   if (proposal.schemaVersion !== 1) fail("Semantic product proposal schemaVersion must be 1.", "INVALID_ONBOARDING_SEMANTIC_PROPOSAL");
@@ -532,7 +534,7 @@ function candidatesFromSemanticProposal(proposal, worldModel, projectRoot) {
     const evidenceIds = evidenceInput.map((record, evidenceIndex) => {
       const normalized = normalizedProposalEvidence(record, evidenceIndex, { projectRoot, sourceSnapshotId, filesByPath });
       const evidence = evidenceRecord({
-        sourceKind: normalized.symbol ? "head-semantic-proposal-symbol" : "head-semantic-proposal-source",
+        sourceKind: formatForVerifiedOwner(storageOwner).value(normalized.symbol ? "head-semantic-proposal-symbol" : "head-semantic-proposal-source"),
         sourceId: sourceSnapshotId,
         path: normalized.relativePath,
         line: normalized.line,
@@ -551,14 +553,14 @@ function candidatesFromSemanticProposal(proposal, worldModel, projectRoot) {
       explanation: requiredText(item.explanation, `Semantic product candidate ${candidateIndex}.explanation`),
       confidence: item.confidence,
       sourceSnapshotId,
-      origin: "fresh-head-semantic-proposal",
-    });
+      origin: formatForVerifiedOwner(storageOwner).value("fresh-head-semantic-proposal"),
+    }, storageOwner);
   });
-  modelFromCandidateEntities(candidates);
+  modelFromCandidateEntities(candidates, storageOwner);
   return { candidates, evidence: [...evidenceById.values()], unknowns: [] };
 }
 
-function candidatesFromBrief(brief, sourceSnapshotId) {
+function candidatesFromBrief(brief, sourceSnapshotId, storageOwner) {
   if (!brief) return { candidates: [], evidence: [], unknowns: [] };
   const briefEvidence = evidenceRecord({
     sourceKind: "user-owned-onboarding-brief",
@@ -577,7 +579,7 @@ function candidatesFromBrief(brief, sourceSnapshotId) {
         confidence: 1,
         sourceSnapshotId,
         origin: "user-owned-brief-candidate",
-      }));
+      }, storageOwner));
     }
   }
   return { candidates, evidence: [briefEvidence], unknowns: [] };
@@ -597,8 +599,8 @@ function mergeCandidateSources(semantic, fromBrief) {
   };
 }
 
-function persistStorageSelection(projectRoot, selection) {
-  const file = storageSelectionFile(projectRoot, selection.storageSelectionId);
+function persistStorageSelection(projectRoot, selection, storageOwner) {
+  const file = storageSelectionFile(projectRoot, selection.storageSelectionId, storageOwner);
   return persistImmutable(file, selection, "Onboarding storage selection");
 }
 
@@ -612,9 +614,9 @@ async function rebuildWithOnboardingProjection({
   additionalProductModelRevisions = [],
   parentSourceSnapshotIds = null,
   revisionParentIds = null,
-}) {
+}, storageOwner) {
   const sourceGraph = sourceWorld.snapshot.temporalProvenanceGraph;
-  const onboardingProjectionInput = loadOnboardingGraphProjection({
+  const onboardingProjectionInput = loadOnboardingGraphProjection({ storage: storageOwner,
     projectRoot,
     projectId,
     currentProductModelId,
@@ -642,21 +644,22 @@ export async function proposeOnboardingSemanticRefresh(options = {}) {
 async function proposeOnboardingSemanticRefreshLocked({ root = ".", semanticProposal, recoveryBasis = null } = {}) {
   if (recoveryBasis) return recoverableCandidateRefresh({ root, semanticProposal, recoveryBasis });
   const inspected = readyProject(root, "historical onboarding semantic refresh");
+  const storageOwner = inspected.storage;
   if (inspected.state.activeRunId || inspected.state.pendingReview) fail("Semantic refresh cannot change product authority while a Run is active or awaiting review.", "ONBOARDING_RUN_CONFLICT");
   const projectRoot = inspected.project.projectRoot;
   const previousState = ensureOnboardingState(inspected);
   if (previousState.phase !== "ready") fail("Semantic refresh requires ready onboarding state.", "ONBOARDING_REFRESH_NOT_AVAILABLE");
-  const historical = readCommittedHistoricalArtifactBoundary({ root: projectRoot, projectId: inspected.project.projectId, allowAbsent: false });
-  const previousIsHistorical = Boolean(historicalEntryForPath(historical, `${ONBOARDING_CANDIDATE_DIRECTORY}/${previousState.candidateSetId}.json`, "historical-candidate-set"));
+  const historical = readCommittedHistoricalArtifactBoundary({ storage: storageOwner, root: projectRoot, projectId: inspected.project.projectId, allowAbsent: false });
+  const previousIsHistorical = Boolean(historicalEntryForPath(historical, `${relativeProjectArtifact(storageOwner, "onboarding", "candidate-sets")}/${previousState.candidateSetId}.json`, "historical-candidate-set"));
   if (!previousIsHistorical && previousState.candidateSetId) readOnboardingCandidateSet({ root: projectRoot, candidateSetId: previousState.candidateSetId });
   if (semanticProposal == null) fail("A fresh current HEAD semantic proposal is required.", "ONBOARDING_SEMANTIC_REPROPOSAL_REQUIRED");
-  const productCanon = readProductModelCanon({ projectRoot });
+  const productCanon = readProductModelCanon({ storage: storageOwner, projectRoot });
   if (productCanon.status !== "present" || productCanon.model.productModelId !== previousState.productModelId) fail("Product Canon changed before semantic refresh.", "ONBOARDING_PRODUCT_CANON_DRIFT");
   let world;
   try { world = inspectWorldModel({ root: projectRoot }); }
   catch (error) { if (!ABSENT_WORLD_CODES.has(error.code)) throw error; }
   if (!world || world.status !== "current") world = await buildWorldModel({ root: projectRoot, persist: true });
-  const semantic = candidatesFromSemanticProposal(semanticProposal, world.snapshot, projectRoot);
+  const semantic = candidatesFromSemanticProposal(semanticProposal, world.snapshot, projectRoot, storageOwner);
   const candidateSet = buildCandidateSet({
     projectId: inspected.project.projectId,
     sessionId: inspected.state.sessionId,
@@ -668,15 +671,15 @@ async function proposeOnboardingSemanticRefreshLocked({ root = ".", semanticProp
     unknowns: semantic.unknowns,
     parentCandidateSetIds: previousIsHistorical || !previousState.candidateSetId ? [] : [previousState.candidateSetId],
     producerReviewDecisionId: null,
-  });
-  persistImmutable(candidateSetFile(projectRoot, candidateSet.candidateSetId), candidateSet, "Onboarding candidate set");
-  const continuityReceipt = previousIsHistorical ? publishHistoricalContinuityReceipt({ root: projectRoot, currentCandidateSet: candidateSet }) : null;
+  }, storageOwner);
+  persistImmutable(candidateSetFile(projectRoot, candidateSet.candidateSetId, storageOwner), candidateSet, "Onboarding candidate set");
+  const continuityReceipt = previousIsHistorical ? publishHistoricalContinuityReceipt({ storage: storageOwner, root: projectRoot, currentCandidateSet: candidateSet }) : null;
   const projectedWorld = await rebuildWithOnboardingProjection({
     projectRoot,
     projectId: inspected.project.projectId,
     currentProductModelId: productCanon.model.productModelId,
     sourceWorld: world,
-  });
+  }, storageOwner);
   const phase = candidateSet.candidates.length ? "awaiting-review" : "awaiting-evidence";
   const state = writeState(projectRoot, previousState, {
     phase,
@@ -686,7 +689,7 @@ async function proposeOnboardingSemanticRefreshLocked({ root = ".", semanticProp
     previousProductModelId: productCanon.model.productModelId,
     worldModelId: projectedWorld.snapshot.worldModelId,
     sourceSnapshotId: projectedWorld.snapshot.temporalProvenanceGraph.sourceSnapshotId,
-  });
+  }, storageOwner);
   return {
     status: phase === "awaiting-review" ? "awaiting_onboarding_review" : "awaiting_onboarding_evidence",
     state,
@@ -703,6 +706,7 @@ async function startOnboardingLocked({ root = ".", mode = "existing", storage = 
   const recovered = await recoverOnboardingPromotionLocked({ root });
   if (recovered) return recovered;
   const inspected = readyProject(root, "onboarding start");
+  const storageOwner = inspected.storage;
   if (inspected.state.activeRunId || inspected.state.pendingReview) {
     fail("Onboarding cannot change product authority while a Run is active or awaiting review.", "ONBOARDING_RUN_CONFLICT");
   }
@@ -716,12 +720,12 @@ async function startOnboardingLocked({ root = ".", mode = "existing", storage = 
   const inputMode = requiredText(mode, "Onboarding mode").toLowerCase();
   if (!new Set(["existing", "new"]).has(inputMode)) fail("Onboarding mode must be existing or new.", "INVALID_ONBOARDING_MODE");
   const selectedSourceScope = sourceScope == null
-    ? readRepositorySourceScope({ projectRoot })
-    : writeRepositorySourceScope({ projectRoot, selection: sourceScope });
-  const normalizedStorage = buildStorageSelection({ projectId: inspected.project.projectId, selection: storage || { mode: "local" } });
-  persistStorageSelection(projectRoot, normalizedStorage);
+    ? readRepositorySourceScope({ storage: storageOwner, projectRoot })
+    : writeRepositorySourceScope({ storage: storageOwner, projectRoot, selection: sourceScope });
+  const normalizedStorage = buildStorageSelection({ projectId: inspected.project.projectId, selection: storage || { mode: "local" } }, storageOwner);
+  persistStorageSelection(projectRoot, normalizedStorage, storageOwner);
   const world = await buildWorldModel({ root: projectRoot, persist: true });
-  const productCanon = readProductModelCanon({ projectRoot });
+  const productCanon = readProductModelCanon({ storage: storageOwner, projectRoot });
   if (productModelHasEntities(productCanon.model)) {
     const state = writeState(projectRoot, previousState, {
       phase: "ready",
@@ -732,7 +736,7 @@ async function startOnboardingLocked({ root = ".", mode = "existing", storage = 
       latestReviewDecisionId: null,
       productModelId: productCanon.model.productModelId,
       previousProductModelId: productCanon.model.productModelId,
-    });
+    }, storageOwner);
     return {
       status: "ready_existing_product_canon",
       state,
@@ -743,11 +747,11 @@ async function startOnboardingLocked({ root = ".", mode = "existing", storage = 
       disclosure: normalizedStorage.mode === "graphdb" ? "GraphDB adapter is pending; onboarding completed on the local conformance path." : "Local materialization is active.",
     };
   }
-  const briefInput = normalizedBrief(brief);
+  const briefInput = normalizedBrief(brief, storageOwner);
   const semantic = semanticProposal == null && briefInput
     ? { candidates: [], evidence: [], unknowns: [] }
-    : candidatesFromSemanticProposal(semanticProposal, world.snapshot, projectRoot);
-  const briefCandidates = candidatesFromBrief(briefInput, world.snapshot.temporalProvenanceGraph.sourceSnapshotId);
+    : candidatesFromSemanticProposal(semanticProposal, world.snapshot, projectRoot, storageOwner);
+  const briefCandidates = candidatesFromBrief(briefInput, world.snapshot.temporalProvenanceGraph.sourceSnapshotId, storageOwner);
   const merged = mergeCandidateSources(semantic, briefCandidates);
   const candidateSet = buildCandidateSet({
     projectId: inspected.project.projectId,
@@ -760,15 +764,15 @@ async function startOnboardingLocked({ root = ".", mode = "existing", storage = 
     unknowns: merged.unknowns,
     parentCandidateSetIds: previousState.candidateSetId ? [previousState.candidateSetId] : [],
     briefEvidenceId: briefInput?.evidenceId || null,
-  });
+  }, storageOwner);
   const projectedWorld = await rebuildWithOnboardingProjection({
     projectRoot,
     projectId: inspected.project.projectId,
     currentProductModelId: productCanon.model.productModelId,
     sourceWorld: world,
     additionalCandidateSets: [candidateSet],
-  });
-  persistImmutable(candidateSetFile(projectRoot, candidateSet.candidateSetId), candidateSet, "Onboarding candidate set");
+  }, storageOwner);
+  persistImmutable(candidateSetFile(projectRoot, candidateSet.candidateSetId, storageOwner), candidateSet, "Onboarding candidate set");
   const phase = candidateSet.candidates.length ? "awaiting-review" : "awaiting-evidence";
   const state = writeState(projectRoot, previousState, {
     phase,
@@ -779,7 +783,7 @@ async function startOnboardingLocked({ root = ".", mode = "existing", storage = 
     latestReviewDecisionId: null,
     productModelId: productCanon.model.productModelId,
     previousProductModelId: productCanon.model.productModelId,
-  });
+  }, storageOwner);
   return {
     status: phase === "awaiting-review" ? "awaiting_onboarding_review" : "awaiting_onboarding_evidence",
     state,
@@ -806,14 +810,15 @@ export async function refreshOnboardingCandidates(options = {}) {
 function restoreRefreshCustody({ root = ".", recoveryBasis } = {}) {
   if (!recoveryBasis || !/^[a-f0-9]{64}$/.test(recoveryBasis.rawHash || "")) return;
   const inspected = readyProject(root), projectRoot = inspected.project.projectRoot;
+  const storageOwner = inspected.storage;
   const state = ensureOnboardingState(inspected);
-  if (state.pointerHash !== recoveryBasis.pointerHash || candidateBytes(projectRoot, state.candidateSetId) !== null) return;
-  const custody = relativeFile(projectRoot, `.head/onboarding/recovery-custody/${state.candidateSetId}--${recoveryBasis.rawHash}.bin`);
+  if (state.pointerHash !== recoveryBasis.pointerHash || candidateBytes(projectRoot, state.candidateSetId, storageOwner) !== null) return;
+  const custody = relativeFile(projectRoot, `${formatForVerifiedOwner(storageOwner).directory}/onboarding/recovery-custody/${state.candidateSetId}--${recoveryBasis.rawHash}.bin`);
   if (!fs.existsSync(custody)) return;
   if (!fs.lstatSync(custody).isFile() || fs.statSync(custody).size > 8 * 1024 * 1024) fail("Invalid recovery custody file.", "ONBOARDING_RECOVERY_CUSTODY_CONFLICT");
   const bytes = fs.readFileSync(custody);
   if (rawHash(bytes) !== recoveryBasis.rawHash) fail("Custody digest differs.", "ONBOARDING_RECOVERY_CUSTODY_CONFLICT");
-  fs.writeFileSync(candidateSetFile(projectRoot, state.candidateSetId), bytes, { flag: "wx" });
+  fs.writeFileSync(candidateSetFile(projectRoot, state.candidateSetId, storageOwner), bytes, { flag: "wx" });
 }
 
 async function recoverableCandidateRefresh(options) {
@@ -830,6 +835,7 @@ async function refreshOnboardingCandidatesLocked({ root = ".", semanticProposal 
   const recovered = recoveryBasis ? null : await recoverOnboardingPromotionLocked({ root });
   if (recovered) return { ...recovered, refreshed: false };
   const inspected = readyProject(root, "onboarding candidate refresh");
+  const storageOwner = inspected.storage;
   if (inspected.state.activeRunId || inspected.state.pendingReview) {
     fail("Onboarding candidate refresh cannot run while a Run is active or awaiting review.", "ONBOARDING_RUN_CONFLICT");
   }
@@ -838,7 +844,7 @@ async function refreshOnboardingCandidatesLocked({ root = ".", semanticProposal 
   if (!new Set(["awaiting-review", "revision-required"]).has(state.phase)) {
     fail("Onboarding candidate refresh requires a review-pending candidate set.", "ONBOARDING_REFRESH_NOT_AVAILABLE");
   }
-  const productCanon = readProductModelCanon({ projectRoot });
+  const productCanon = readProductModelCanon({ storage: storageOwner, projectRoot });
   if (productCanon.model.productModelId !== state.productModelId) {
     fail("Product Canon changed after candidate proposal; candidate evidence cannot refresh automatically.", "ONBOARDING_PRODUCT_CANON_DRIFT");
   }
@@ -848,7 +854,7 @@ async function refreshOnboardingCandidatesLocked({ root = ".", semanticProposal 
     if (recoveryBasis.pointerHash !== state.pointerHash || !Object.hasOwn(recoveryBasis, "rawHash") || !semanticProposal) {
       fail("Candidate recovery requires the current pointer basis and a HEAD semantic proposal.", "ONBOARDING_RECOVERY_CONFLICT");
     }
-    damagedBytes = candidateBytes(projectRoot, state.candidateSetId);
+    damagedBytes = candidateBytes(projectRoot, state.candidateSetId, storageOwner);
     if (rawHash(damagedBytes) !== recoveryBasis.rawHash) fail("Damaged candidate changed.", "ONBOARDING_RECOVERY_CONFLICT");
     if (damagedBytes) {
       let valid = false;
@@ -856,26 +862,26 @@ async function refreshOnboardingCandidatesLocked({ root = ".", semanticProposal 
       if (valid) fail("Use normal refresh for a verified candidate.", "ONBOARDING_RECOVERY_NOT_REQUIRED");
     }
     // Unreadable reviews are unknown, never evidence of absence of approval.
-    const reviewDir = relativeFile(projectRoot, ONBOARDING_REVIEW_DIRECTORY);
+    const reviewDir = relativeFile(projectRoot, relativeProjectArtifact(storageOwner, "onboarding", "review-decisions"));
     for (const name of fs.existsSync(reviewDir) ? fs.readdirSync(reviewDir) : []) {
       if (!name.endsWith(".json")) continue;
-      const review = verifyReviewDecision(readJson(relativeFile(projectRoot, `${ONBOARDING_REVIEW_DIRECTORY}/${name}`), "ReviewDecision"), inspected.project.projectId);
+      const review = verifyReviewDecision(readJson(relativeFile(projectRoot, `${relativeProjectArtifact(storageOwner, "onboarding", "review-decisions")}/${name}`), "ReviewDecision"), inspected.project.projectId);
       if (review.candidateSetId === state.candidateSetId) fail("A reviewed candidate requires exact restoration, not replacement.", "ONBOARDING_RECOVERY_REVIEWED");
     }
     if (onboardingStateLatestReviewDecisionId(state)) fail("Review lineage requires exact restoration.", "ONBOARDING_RECOVERY_REVIEWED");
-    const candidateDir = relativeFile(projectRoot, ONBOARDING_CANDIDATE_DIRECTORY);
+    const candidateDir = relativeFile(projectRoot, relativeProjectArtifact(storageOwner, "onboarding", "candidate-sets"));
     for (const name of fs.existsSync(candidateDir) ? fs.readdirSync(candidateDir) : []) {
       if (!name.endsWith(".json") || name === `${state.candidateSetId}.json`) continue;
-      const other = verifyCandidateSet(readJson(relativeFile(projectRoot, `${ONBOARDING_CANDIDATE_DIRECTORY}/${name}`), "Candidate"), inspected.project.projectId);
+      const other = verifyCandidateSet(readJson(relativeFile(projectRoot, `${relativeProjectArtifact(storageOwner, "onboarding", "candidate-sets")}/${name}`), "Candidate"), inspected.project.projectId);
       if (other.parentCandidateSetIds.includes(state.candidateSetId)) fail("Referenced historical candidate requires exact restoration.", "ONBOARDING_RECOVERY_REFERENCED");
     }
     previousSet = { candidateSetId: state.candidateSetId, productModelId: state.productModelId,
       inputMode: "existing", storageSelectionId: state.storageSelectionId, sourceSnapshotId: state.sourceSnapshotId };
     // Validate meaning and current cited bytes before relocating damaged evidence.
-    candidatesFromSemanticProposal(semanticProposal, readWorldModelSnapshot({ root, worldModelId: state.worldModelId }).snapshot, projectRoot);
-    preserveCandidateBytes(projectRoot, state.candidateSetId, damagedBytes);
-    if (rawHash(candidateBytes(projectRoot, state.candidateSetId)) !== recoveryBasis.rawHash) fail("Candidate changed before custody relocation.", "ONBOARDING_RECOVERY_CONFLICT");
-    if (damagedBytes) fs.unlinkSync(candidateSetFile(projectRoot, state.candidateSetId));
+    candidatesFromSemanticProposal(semanticProposal, readWorldModelSnapshot({ root, worldModelId: state.worldModelId }).snapshot, projectRoot, storageOwner);
+    preserveCandidateBytes(projectRoot, state.candidateSetId, damagedBytes, storageOwner);
+    if (rawHash(candidateBytes(projectRoot, state.candidateSetId, storageOwner)) !== recoveryBasis.rawHash) fail("Candidate changed before custody relocation.", "ONBOARDING_RECOVERY_CONFLICT");
+    if (damagedBytes) fs.unlinkSync(candidateSetFile(projectRoot, state.candidateSetId, storageOwner));
   } else previousSet = readOnboardingCandidateSet({ root: projectRoot, candidateSetId: state.candidateSetId }).candidateSet;
   if (productCanon.model.productModelId !== state.productModelId || productCanon.model.productModelId !== previousSet.productModelId) {
     fail("Product Canon changed after candidate proposal; candidate evidence cannot refresh automatically.", "ONBOARDING_PRODUCT_CANON_DRIFT");
@@ -883,7 +889,7 @@ async function refreshOnboardingCandidatesLocked({ root = ".", semanticProposal 
   let currentWorld;
   try {
     currentWorld = recoveryBasis ? await buildWorldModel({ root: projectRoot, persist: true })
-      : await reconcileOrphanedOnboardingProjection({ projectRoot, state, candidateSet: previousSet, world: inspectWorldModel({ root: projectRoot }) });
+      : await reconcileOrphanedOnboardingProjection({ projectRoot, state, candidateSet: previousSet, world: inspectWorldModel({ root: projectRoot }) }, storageOwner);
   } catch (error) {
     if (!ABSENT_WORLD_CODES.has(error.code)) throw error;
     // Explicit Product resume may reconstruct a missing view, never a decision.
@@ -902,13 +908,13 @@ async function refreshOnboardingCandidatesLocked({ root = ".", semanticProposal 
     return {
       status: "onboarding_semantic_reproposal_required",
       refreshed: false,
-      reason: "source-snapshot-changed-fresh-head-semantic-proposal-required",
+      reason: formatForVerifiedOwner(storageOwner).value("source-snapshot-changed-fresh-head-semantic-proposal-required"),
       state,
       candidateSet: previousSet,
       currentSourceSnapshotId: world.snapshot.temporalProvenanceGraph.sourceSnapshotId,
     };
   }
-  const semantic = candidatesFromSemanticProposal(semanticProposal, world.snapshot, projectRoot);
+  const semantic = candidatesFromSemanticProposal(semanticProposal, world.snapshot, projectRoot, storageOwner);
   const candidateSet = buildCandidateSet({
     projectId: inspected.project.projectId,
     sessionId: inspected.state.sessionId,
@@ -919,15 +925,15 @@ async function refreshOnboardingCandidatesLocked({ root = ".", semanticProposal 
     evidence: semantic.evidence,
     unknowns: semantic.unknowns,
     parentCandidateSetIds: recoveryBasis ? [] : [previousSet.candidateSetId],
-  });
+  }, storageOwner);
   const projectedWorld = await rebuildWithOnboardingProjection({
     projectRoot,
     projectId: inspected.project.projectId,
     currentProductModelId: productCanon.model.productModelId,
     sourceWorld: world,
     additionalCandidateSets: [candidateSet],
-  });
-  persistImmutable(candidateSetFile(projectRoot, candidateSet.candidateSetId), candidateSet, "Onboarding candidate set");
+  }, storageOwner);
+  persistImmutable(candidateSetFile(projectRoot, candidateSet.candidateSetId, storageOwner), candidateSet, "Onboarding candidate set");
   if (recoveryBasis) {
     const final = readyProject(root);
     if (final.state.sessionId !== inspected.state.sessionId || final.state.activeRunId || final.state.pendingReview
@@ -942,7 +948,7 @@ async function refreshOnboardingCandidatesLocked({ root = ".", semanticProposal 
     latestReviewDecisionId: null,
     worldModelId: projectedWorld.snapshot.worldModelId,
     sourceSnapshotId: projectedWorld.snapshot.temporalProvenanceGraph.sourceSnapshotId,
-  });
+  }, storageOwner);
   return {
     status: "onboarding_candidates_refreshed",
     refreshed: true,
@@ -958,7 +964,7 @@ async function refreshOnboardingCandidatesLocked({ root = ".", semanticProposal 
   };
 }
 
-function editedCandidates(candidateSet, userEdits, addedEntities = [], removedCandidateIds = []) {
+function editedCandidates(candidateSet, userEdits, addedEntities = [], removedCandidateIds = [], storageOwner) {
   const edits = new Map();
   for (const [index, edit] of recordList(userEdits, "userEdits").entries()) {
     assertRecordFields(edit, ["candidateId", "entity"], `userEdits[${index}]`);
@@ -986,7 +992,7 @@ function editedCandidates(candidateSet, userEdits, addedEntities = [], removedCa
   }
   const document = emptyProductModelDocument();
   for (const item of provisional) document[ARRAY_BY_KIND[item.kind]].push(item.entity);
-  const normalized = normalizeProductModelDocument(document);
+  const normalized = normalizeProductModelDocument(document, storageOwner);
   const normalizedByIdentity = new Map();
   for (const kind of PRODUCT_ENTITY_KINDS) for (const entity of normalized[ARRAY_BY_KIND[kind]]) {
     normalizedByIdentity.set(`${kind}:${entity.key}`, entity);
@@ -997,7 +1003,7 @@ function editedCandidates(candidateSet, userEdits, addedEntities = [], removedCa
   }));
 }
 
-function revisionCandidateSet({ candidateSet, revisionItems, reviewDecision, worldModel }) {
+function revisionCandidateSet({ candidateSet, revisionItems, reviewDecision, worldModel }, storageOwner) {
   const reviewEvidence = evidenceRecord({
     sourceKind: "onboarding-review-input",
     sourceId: reviewDecision.reviewDecisionId,
@@ -1015,7 +1021,7 @@ function revisionCandidateSet({ candidateSet, revisionItems, reviewDecision, wor
     confidence: item.source && onboardingCanonicalJson(item.source.proposedEntity) === onboardingCanonicalJson(item.entity) ? item.source.confidence : 1,
     sourceSnapshotId: candidateSet.sourceSnapshotId,
     origin: item.source ? "onboarding-review-revision" : "onboarding-review-addition",
-  }));
+  }, storageOwner));
   return buildCandidateSet({
     projectId: candidateSet.projectId,
     sessionId: candidateSet.sessionId,
@@ -1028,11 +1034,11 @@ function revisionCandidateSet({ candidateSet, revisionItems, reviewDecision, wor
     parentCandidateSetIds: [candidateSet.candidateSetId],
     producerReviewDecisionId: reviewDecision.reviewDecisionId,
     briefEvidenceId: candidateSet.briefEvidenceId,
-  });
+  }, storageOwner);
 }
 
-function mergeAcceptedIntoCanon(previousModel, acceptedItems) {
-  const document = productModelDocument(previousModel);
+function mergeAcceptedIntoCanon(previousModel, acceptedItems, storageOwner) {
+  const document = productModelDocument(previousModel, storageOwner);
   const existing = new Map();
   for (const kind of PRODUCT_ENTITY_KINDS) for (const entity of document[ARRAY_BY_KIND[kind]]) {
     existing.set(`${kind}:${entity.key}`, entity);
@@ -1045,14 +1051,14 @@ function mergeAcceptedIntoCanon(previousModel, acceptedItems) {
     if (!existing.has(identity)) document[ARRAY_BY_KIND[item.kind]].push(item.entity);
     existing.set(identity, item.entity);
   }
-  return normalizeProductModelDocument(document);
+  return normalizeProductModelDocument(document, storageOwner);
 }
 
-function buildReviewDecision({ candidateSet, disposition, acceptedCandidateIds, rejectedCandidateIds, userEdits, addedEntities, rationale, previousProductModel, resultingProductModel = null }) {
+function buildReviewDecision({ candidateSet, disposition, acceptedCandidateIds, rejectedCandidateIds, userEdits, addedEntities, rationale, previousProductModel, resultingProductModel = null }, storageOwner) {
   const payload = {
     schemaVersion: SCHEMA_VERSION,
     kind: "ReviewDecision",
-    protocol: { name: "head-agent-core-onboarding-review", version: ONBOARDING_REVIEW_VERSION },
+    protocol: { name: formatForVerifiedOwner(storageOwner).protocol("head-agent-core-onboarding-review"), version: ONBOARDING_REVIEW_VERSION },
     decisionScope: "product-canon-bootstrap",
     projectId: candidateSet.projectId,
     sessionId: candidateSet.sessionId,
@@ -1100,10 +1106,11 @@ function verifyReviewDecision(document, projectId = "") {
 
 export function readOnboardingReviewDecision({ root = ".", reviewDecisionId } = {}) {
   const inspected = readyProject(root, "onboarding review inspection");
-  const file = reviewDecisionFile(inspected.project.projectRoot, reviewDecisionId);
+  const storageOwner = inspected.storage;
+  const file = reviewDecisionFile(inspected.project.projectRoot, reviewDecisionId, storageOwner);
   if (!fs.existsSync(file)) fail(`Onboarding ReviewDecision not found: ${reviewDecisionId}`, "ONBOARDING_REVIEW_NOT_FOUND");
-  const historical = readCommittedHistoricalArtifactBoundary({ root: inspected.project.projectRoot, projectId: inspected.project.projectId, allowAbsent: true });
-  const historicalEntry = historicalEntryForPath(historical, `${ONBOARDING_REVIEW_DIRECTORY}/${reviewDecisionId}.json`, "historical-review");
+  const historical = readCommittedHistoricalArtifactBoundary({ storage: storageOwner, root: inspected.project.projectRoot, projectId: inspected.project.projectId, allowAbsent: true });
+  const historicalEntry = historicalEntryForPath(historical, `${relativeProjectArtifact(storageOwner, "onboarding", "review-decisions")}/${reviewDecisionId}.json`, "historical-review");
   if (historicalEntry) return { status: "historical-ready-opaque", file, reviewDecision: null, historicalArtifact: historicalEntry, historicalBoundaryId: historical.boundary.boundaryId };
   const reviewDecision = verifyReviewDecision(readJson(file, "Onboarding ReviewDecision"), inspected.project.projectId);
   if (reviewDecision.reviewDecisionId !== reviewDecisionId) fail("Onboarding ReviewDecision identity does not match its requested file.", "ONBOARDING_REVIEW_IDENTITY_MISMATCH");
@@ -1126,34 +1133,34 @@ export function readOnboardingReviewDecision({ root = ".", reviewDecisionId } = 
   return { status: "verified", file, reviewDecision };
 }
 
-function productModelRevisionDocument(model) {
+function productModelRevisionDocument(model, storageOwner) {
   return {
     schemaVersion: 1,
     kind: "ProductModelRevision",
     productModelId: model.productModelId,
     productModelHash: model.productModelHash,
-    document: productModelDocument(model),
+    document: productModelDocument(model, storageOwner),
     authority: "user-owned-project-canon-revision",
   };
 }
 
-function persistProductRevision(projectRoot, model) {
-  const revision = productModelRevisionDocument(model);
+function persistProductRevision(projectRoot, model, storageOwner) {
+  const revision = productModelRevisionDocument(model, storageOwner);
   return persistImmutable(
-    relativeFile(projectRoot, `${ONBOARDING_PRODUCT_REVISION_DIRECTORY}/${model.productModelId}.json`),
+    relativeFile(projectRoot, `${relativeProjectArtifact(storageOwner, "onboarding", "product-model-revisions")}/${model.productModelId}.json`),
     revision,
     "Product Model revision",
   );
 }
 
-function readProductRevision(projectRoot, productModelId) {
+function readProductRevision(projectRoot, productModelId, storageOwner) {
   if (!/^product-model-[a-f0-9]{24}$/.test(productModelId || "")) {
     fail("Product Model revision id is invalid.", "INVALID_PRODUCT_MODEL_REVISION");
   }
-  const file = relativeFile(projectRoot, `${ONBOARDING_PRODUCT_REVISION_DIRECTORY}/${productModelId}.json`);
+  const file = relativeFile(projectRoot, `${relativeProjectArtifact(storageOwner, "onboarding", "product-model-revisions")}/${productModelId}.json`);
   if (!fs.existsSync(file)) fail(`Product Model revision is missing: ${productModelId}`, "PRODUCT_MODEL_REVISION_MISSING");
   const revision = readJson(file, "Product Model revision");
-  const normalized = normalizeProductModelDocument(revision.document);
+  const normalized = normalizeProductModelDocument(revision.document, storageOwner);
   if (revision.kind !== "ProductModelRevision"
     || revision.productModelId !== productModelId
     || revision.productModelId !== normalized.productModelId
@@ -1161,18 +1168,18 @@ function readProductRevision(projectRoot, productModelId) {
     || revision.authority !== "user-owned-project-canon-revision") {
     fail("Product Model revision digest verification failed.", "PRODUCT_MODEL_REVISION_DIGEST_MISMATCH");
   }
-  verifyProductModelRevisionForProjection(revision);
+  verifyProductModelRevisionForProjection(revision, storageOwner);
   return { file, revision };
 }
 
-function decisionForCandidate(projectRoot, candidateSetId) {
+function decisionForCandidate(projectRoot, candidateSetId, storageOwner) {
   if (!candidateSetId) return null;
-  const directory = relativeFile(projectRoot, ONBOARDING_REVIEW_DIRECTORY);
+  const directory = relativeFile(projectRoot, relativeProjectArtifact(storageOwner, "onboarding", "review-decisions"));
   if (!fs.existsSync(directory)) return null;
   const decisions = [];
   for (const name of fs.readdirSync(directory).sort()) {
     if (!/^onboarding-review-decision-[a-f0-9]{24}\.json$/.test(name)) continue;
-    const document = readJson(relativeFile(projectRoot, `${ONBOARDING_REVIEW_DIRECTORY}/${name}`), "Onboarding ReviewDecision");
+    const document = readJson(relativeFile(projectRoot, `${relativeProjectArtifact(storageOwner, "onboarding", "review-decisions")}/${name}`), "Onboarding ReviewDecision");
     if (document.candidateSetId !== candidateSetId) continue;
     decisions.push(readOnboardingReviewDecision({ root: projectRoot, reviewDecisionId: name.slice(0, -5) }).reviewDecision);
   }
@@ -1180,8 +1187,8 @@ function decisionForCandidate(projectRoot, candidateSetId) {
   return decisions[0] || null;
 }
 
-function verifiedPromotion({ projectRoot, state, review, allowUnpublishedReview = false }) {
-  const decisionFile = reviewDecisionFile(projectRoot, review.reviewDecisionId);
+function verifiedPromotion({ projectRoot, state, review, allowUnpublishedReview = false }, storageOwner) {
+  const decisionFile = reviewDecisionFile(projectRoot, review.reviewDecisionId, storageOwner);
   if (fs.existsSync(decisionFile)) {
     const durable = readOnboardingReviewDecision({ root: projectRoot, reviewDecisionId: review.reviewDecisionId }).reviewDecision;
     if (durable.reviewDecisionHash !== review.reviewDecisionHash) fail("Onboarding decision changed during application.", "ONBOARDING_REVIEW_CONFLICT");
@@ -1189,21 +1196,21 @@ function verifiedPromotion({ projectRoot, state, review, allowUnpublishedReview 
     fail("Approved onboarding recovery requires its durable decision.", "ONBOARDING_REVIEW_NOT_FOUND");
   }
   const candidateSet = readOnboardingCandidateSet({ root: projectRoot, candidateSetId: review.candidateSetId }).candidateSet;
-  const canon = readProductModelCanon({ projectRoot });
+  const canon = readProductModelCanon({ storage: storageOwner, projectRoot });
   if (![review.previousProductModelId, review.resultingProductModelId].includes(canon.model.productModelId)
     || ![review.previousProductModelId, review.resultingProductModelId].includes(state.productModelId)) {
     fail("A later Product Canon or onboarding state cannot be overwritten by an earlier review.", "ONBOARDING_PRODUCT_CANON_DRIFT");
   }
-  const previousFile = relativeFile(projectRoot, `${ONBOARDING_PRODUCT_REVISION_DIRECTORY}/${review.previousProductModelId}.json`);
-  const previous = fs.existsSync(previousFile) ? readProductRevision(projectRoot, review.previousProductModelId).revision
-    : canon.model.productModelId === review.previousProductModelId ? productModelRevisionDocument(canon.model) : null;
+  const previousFile = relativeFile(projectRoot, `${relativeProjectArtifact(storageOwner, "onboarding", "product-model-revisions")}/${review.previousProductModelId}.json`);
+  const previous = fs.existsSync(previousFile) ? readProductRevision(projectRoot, review.previousProductModelId, storageOwner).revision
+    : canon.model.productModelId === review.previousProductModelId ? productModelRevisionDocument(canon.model, storageOwner) : null;
   if (!previous) fail("The approved promotion's previous Product revision is unavailable.", "PRODUCT_MODEL_REVISION_MISSING");
   const selected = new Set(review.acceptedCandidateIds);
-  const reviewedItems = editedCandidates(candidateSet, review.userEdits, [], []).filter((item) => selected.has(item.source.candidateId));
-  const expected = mergeAcceptedIntoCanon(normalizeProductModelDocument(previous.document), reviewedItems);
-  const resultingFile = relativeFile(projectRoot, `${ONBOARDING_PRODUCT_REVISION_DIRECTORY}/${review.resultingProductModelId}.json`);
-  const resulting = fs.existsSync(resultingFile) ? readProductRevision(projectRoot, review.resultingProductModelId).revision
-    : productModelRevisionDocument(expected);
+  const reviewedItems = editedCandidates(candidateSet, review.userEdits, [], [], storageOwner).filter((item) => selected.has(item.source.candidateId));
+  const expected = mergeAcceptedIntoCanon(normalizeProductModelDocument(previous.document, storageOwner), reviewedItems, storageOwner);
+  const resultingFile = relativeFile(projectRoot, `${relativeProjectArtifact(storageOwner, "onboarding", "product-model-revisions")}/${review.resultingProductModelId}.json`);
+  const resulting = fs.existsSync(resultingFile) ? readProductRevision(projectRoot, review.resultingProductModelId, storageOwner).revision
+    : productModelRevisionDocument(expected, storageOwner);
   if (review.sessionId !== state.sessionId || review.candidateSetId !== state.candidateSetId
     || previous.productModelHash !== review.previousProductModelHash
     || resulting.productModelHash !== review.resultingProductModelHash
@@ -1247,9 +1254,9 @@ function promotionResult({ state, review, productModel, world, reasonCode = null
 
 // The already durable P1 ReviewDecision is the commit intent. Recovery never
 // creates approval from a graph, a transaction receipt, or a caller's retry.
-async function applyApprovedPromotion({ projectRoot, state, review, publishReview = false }) {
+async function applyApprovedPromotion({ projectRoot, state, review, publishReview = false }, storageOwner) {
   if (!publishReview && state.phase === "ready") {
-    const verified = verifiedPromotion({ projectRoot, state, review });
+    const verified = verifiedPromotion({ projectRoot, state, review }, storageOwner);
     if (state.sourceSnapshotId !== verified.candidateSet.sourceSnapshotId) {
       let world = null;
       let reasonCode = null;
@@ -1257,21 +1264,21 @@ async function applyApprovedPromotion({ projectRoot, state, review, publishRevie
         world = inspectWorldModel({ root: projectRoot });
         if (world.status !== "current") reasonCode = "WORLD_MODEL_STALE";
       } catch (error) { if (!ABSENT_WORLD_CODES.has(error.code)) throw error; reasonCode = error.code; }
-      return { ...promotionResult({ state, review, productModel: normalizeProductModelDocument(verified.resulting.document), world, reasonCode }), productCanonChanged: false };
+      return { ...promotionResult({ state, review, productModel: normalizeProductModelDocument(verified.resulting.document, storageOwner), world, reasonCode }), productCanonChanged: false };
     }
   }
   const prepared = withProjectMutation({ root: projectRoot, scope: "session-recovery" }, () => {
-    const { candidateSet, previous, resulting, canon } = verifiedPromotion({ projectRoot, state, review, allowUnpublishedReview: publishReview });
+    const { candidateSet, previous, resulting, canon } = verifiedPromotion({ projectRoot, state, review, allowUnpublishedReview: publishReview }, storageOwner);
     const inspected = readyProject(projectRoot, "onboarding promotion recovery");
     if (inspected.state.sessionId !== state.sessionId || inspected.state.activeRunId || inspected.state.pendingReview) {
       fail("Onboarding promotion cannot replace current Session or active Run authority.", "ONBOARDING_RUN_CONFLICT");
     }
-    if (publishReview) persistImmutable(reviewDecisionFile(projectRoot, review.reviewDecisionId), review, "Onboarding ReviewDecision");
-    const nextModel = normalizeProductModelDocument(resulting.document);
-    persistProductRevision(projectRoot, normalizeProductModelDocument(previous.document));
-    persistProductRevision(projectRoot, nextModel);
+    if (publishReview) persistImmutable(reviewDecisionFile(projectRoot, review.reviewDecisionId, storageOwner), review, "Onboarding ReviewDecision");
+    const nextModel = normalizeProductModelDocument(resulting.document, storageOwner);
+    persistProductRevision(projectRoot, normalizeProductModelDocument(previous.document, storageOwner), storageOwner);
+    persistProductRevision(projectRoot, nextModel, storageOwner);
     if (canon.model.productModelId !== review.resultingProductModelId) {
-      atomicWrite(relativeFile(projectRoot, PRODUCT_MODEL_RELATIVE_PATH), json(resulting.document));
+      atomicWrite(relativeFile(projectRoot, relativeProjectArtifact(storageOwner, "context", "product-model.json")), json(resulting.document));
     }
     let nextState = state;
     if (state.phase !== "ready") {
@@ -1282,7 +1289,7 @@ async function applyApprovedPromotion({ projectRoot, state, review, publishRevie
         latestReviewDecisionId: review.reviewDecisionId,
         productModelId: review.resultingProductModelId,
         previousProductModelId: review.previousProductModelId,
-      });
+      }, storageOwner);
     }
     return { candidateSet, nextModel, nextState, inspected };
   });
@@ -1303,7 +1310,7 @@ async function applyApprovedPromotion({ projectRoot, state, review, publishRevie
       sourceWorld: currentWorld || { snapshot: { temporalProvenanceGraph: {} } },
       parentSourceSnapshotIds: [candidateSet.sourceSnapshotId],
       revisionParentIds: {},
-    });
+    }, storageOwner);
     const verifiedWorld = inspectWorldModel({ root: projectRoot });
     if (verifiedWorld.status !== "current"
       || rebuilt.snapshot.productModel.productModelId !== nextModel.productModelId
@@ -1315,7 +1322,7 @@ async function applyApprovedPromotion({ projectRoot, state, review, publishRevie
     }
     withProjectMutation({ root: projectRoot, scope: "session-recovery" }, () => {
       const after = ensureOnboardingState(readyProject(projectRoot));
-      verifiedPromotion({ projectRoot, state: after, review });
+      verifiedPromotion({ projectRoot, state: after, review }, storageOwner);
       if (after.pointerHash !== nextState.pointerHash) {
         fail("Onboarding state changed during projection rebuild.", "ONBOARDING_REVIEW_CONFLICT");
       }
@@ -1324,21 +1331,21 @@ async function applyApprovedPromotion({ projectRoot, state, review, publishRevie
         nextState = writeState(projectRoot, nextState, {
           worldModelId: rebuilt.snapshot.worldModelId,
           sourceSnapshotId: rebuilt.snapshot.temporalProvenanceGraph.sourceSnapshotId,
-        });
+        }, storageOwner);
       }
     });
     return promotionResult({ state: nextState, review, productModel: nextModel, world: rebuilt });
   } catch (error) {
     // Approval remains P1 even when optional P4 materialization fails. Do not
     // roll back newer Canon or make the user repeat an already durable decision.
-    verifiedPromotion({ projectRoot, state: ensureOnboardingState(readyProject(projectRoot)), review });
+    verifiedPromotion({ projectRoot, state: ensureOnboardingState(readyProject(projectRoot)), review }, storageOwner);
     if (["ONBOARDING_REVIEW_CONFLICT", "ONBOARDING_PRODUCT_CANON_DRIFT", "ONBOARDING_RUN_CONFLICT", "ONBOARDING_STATE_IDENTITY_MISMATCH"].includes(error.code)) throw error;
     return promotionResult({ state: nextState, review, productModel: nextModel, world: null, reasonCode: error.code || "ONBOARDING_GRAPH_REBUILD_FAILED" });
   }
 }
 
-function normalizedReviewEdits(candidateSet, userEdits, addedEntities, removedCandidateIds) {
-  const revisionItems = editedCandidates(candidateSet, userEdits, addedEntities, removedCandidateIds);
+function normalizedReviewEdits(candidateSet, userEdits, addedEntities, removedCandidateIds, storageOwner) {
+  const revisionItems = editedCandidates(candidateSet, userEdits, addedEntities, removedCandidateIds, storageOwner);
   const normalizedUserEdits = recordList(userEdits, "userEdits").map((edit) => {
     const revised = revisionItems.find((item) => item.source?.candidateId === edit.candidateId);
     if (!revised) fail(`Edited candidate was removed or is unavailable: ${edit.candidateId}`, "INVALID_ONBOARDING_EDIT");
@@ -1350,14 +1357,14 @@ function normalizedReviewEdits(candidateSet, userEdits, addedEntities, removedCa
   return { revisionItems, normalizedUserEdits, normalizedAddedEntities };
 }
 
-function verifiedNonPromotion({ projectRoot, state, review, allowUnpublishedReview = false }) {
+function verifiedNonPromotion({ projectRoot, state, review, allowUnpublishedReview = false }, storageOwner) {
   if (!["revise", "reject"].includes(review.disposition)) fail("A non-promoting decision is required.", "INVALID_ONBOARDING_REVIEW");
-  if (fs.existsSync(reviewDecisionFile(projectRoot, review.reviewDecisionId))) {
+  if (fs.existsSync(reviewDecisionFile(projectRoot, review.reviewDecisionId, storageOwner))) {
     const durable = readOnboardingReviewDecision({ root: projectRoot, reviewDecisionId: review.reviewDecisionId }).reviewDecision;
     if (durable.reviewDecisionHash !== review.reviewDecisionHash) fail("Onboarding decision changed during application.", "ONBOARDING_REVIEW_CONFLICT");
   } else if (!allowUnpublishedReview) fail("Onboarding recovery requires its durable decision.", "ONBOARDING_REVIEW_NOT_FOUND");
   const candidateSet = readOnboardingCandidateSet({ root: projectRoot, candidateSetId: review.candidateSetId }).candidateSet;
-  const canon = readProductModelCanon({ projectRoot });
+  const canon = readProductModelCanon({ storage: storageOwner, projectRoot });
   if (canon.model.productModelHash !== review.previousProductModelHash || state.productModelId !== review.previousProductModelId
     || candidateSet.productModelId !== review.previousProductModelId) {
     fail("A reviewed disposition cannot replace later Product Canon.", "ONBOARDING_PRODUCT_CANON_DRIFT");
@@ -1365,16 +1372,16 @@ function verifiedNonPromotion({ projectRoot, state, review, allowUnpublishedRevi
   if (review.sessionId !== state.sessionId || review.projectId !== state.projectId) fail("Onboarding decision belongs to another Session.", "ONBOARDING_SESSION_MISMATCH");
   const successor = review.disposition === "revise" ? revisionCandidateSet({
     candidateSet,
-    revisionItems: editedCandidates(candidateSet, review.userEdits, review.addedEntities, review.rejectedCandidateIds),
+    revisionItems: editedCandidates(candidateSet, review.userEdits, review.addedEntities, review.rejectedCandidateIds, storageOwner),
     reviewDecision: review,
     // These exact source identities belong to the reviewed immutable candidate;
     // a newer or missing P4 World cannot change the successor's meaning or ID.
     worldModel: { productModel: { productModelId: review.previousProductModelId }, temporalProvenanceGraph: { sourceSnapshotId: candidateSet.sourceSnapshotId } },
-  }) : null;
+  }, storageOwner) : null;
   const applied = onboardingStateLatestReviewDecisionId(state) === review.reviewDecisionId
     && (successor ? state.candidateSetId === successor.candidateSetId && ["awaiting-review", "awaiting-evidence"].includes(state.phase)
       : state.candidateSetId === candidateSet.candidateSetId && state.phase === "rejected");
-  if (successor && fs.existsSync(candidateSetFile(projectRoot, successor.candidateSetId))) {
+  if (successor && fs.existsSync(candidateSetFile(projectRoot, successor.candidateSetId, storageOwner))) {
     const stored = readOnboardingCandidateSet({ root: projectRoot, candidateSetId: successor.candidateSetId }).candidateSet;
     if (stored.candidateSetHash !== successor.candidateSetHash) fail("Onboarding successor differs from its reviewed inputs.", "ONBOARDING_REVIEW_CONFLICT");
   } else if (successor && applied) fail("The applied revision is missing its successor candidate set.", "ONBOARDING_CANDIDATE_SET_NOT_FOUND");
@@ -1407,20 +1414,20 @@ function nonPromotionResult({ state, review, successor, world, reasonCode = null
   };
 }
 
-async function applyNonPromotingReview({ projectRoot, state, review, publishReview = false }) {
+async function applyNonPromotingReview({ projectRoot, state, review, publishReview = false }, storageOwner) {
   const prepared = withProjectMutation({ root: projectRoot, scope: "session-recovery" }, () => {
-    const verified = verifiedNonPromotion({ projectRoot, state, review, allowUnpublishedReview: publishReview });
+    const verified = verifiedNonPromotion({ projectRoot, state, review, allowUnpublishedReview: publishReview }, storageOwner);
     const inspected = readyProject(projectRoot, "onboarding review recovery");
     if (inspected.state.sessionId !== state.sessionId || inspected.state.activeRunId || inspected.state.pendingReview) fail("Onboarding review conflicts with current Session or Run.", "ONBOARDING_RUN_CONFLICT");
     if (ensureOnboardingState(inspected).pointerHash !== state.pointerHash) fail("Onboarding state changed before review application.", "ONBOARDING_REVIEW_CONFLICT");
-    if (publishReview) persistImmutable(reviewDecisionFile(projectRoot, review.reviewDecisionId), review, "Onboarding ReviewDecision");
-    if (verified.successor) persistImmutable(candidateSetFile(projectRoot, verified.successor.candidateSetId), verified.successor, "Onboarding candidate set");
+    if (publishReview) persistImmutable(reviewDecisionFile(projectRoot, review.reviewDecisionId, storageOwner), review, "Onboarding ReviewDecision");
+    if (verified.successor) persistImmutable(candidateSetFile(projectRoot, verified.successor.candidateSetId, storageOwner), verified.successor, "Onboarding candidate set");
     const nextState = verified.applied ? state : writeState(projectRoot, state, {
       phase: verified.successor ? verified.successor.candidates.length ? "awaiting-review" : "awaiting-evidence" : "rejected",
       candidateSetId: verified.successor?.candidateSetId || verified.candidateSet.candidateSetId,
       latestReviewDecisionId: review.reviewDecisionId,
       sourceSnapshotId: verified.candidateSet.sourceSnapshotId,
-    });
+    }, storageOwner);
     return { ...verified, state: nextState };
   });
   let nextState = prepared.state;
@@ -1438,28 +1445,29 @@ async function applyNonPromotingReview({ projectRoot, state, review, publishRevi
       currentProductModelId: prepared.canon.model.productModelId, sourceWorld,
       parentSourceSnapshotIds: sourceWorld.snapshot.temporalProvenanceGraph.parentSourceSnapshotIds || [],
       revisionParentIds: sourceWorld.snapshot.temporalProvenanceGraph.revisionParentIds || {},
-    });
+    }, storageOwner);
     const current = inspectWorldModel({ root: projectRoot });
     const graph = world.snapshot.temporalProvenanceGraph;
     if (current.status !== "current" || !graph.onboardingProjection.reviewDecisionIds.includes(review.reviewDecisionId)
       || (prepared.successor && !graph.onboardingProjection.candidateSetIds.includes(prepared.successor.candidateSetId))) fail("The reviewed disposition projection did not verify.", "ONBOARDING_GRAPH_VERIFICATION_FAILED");
     withProjectMutation({ root: projectRoot, scope: "session-recovery" }, () => {
       const after = ensureOnboardingState(readyProject(projectRoot));
-      verifiedNonPromotion({ projectRoot, state: after, review });
+      verifiedNonPromotion({ projectRoot, state: after, review }, storageOwner);
       if (after.pointerHash !== nextState.pointerHash) fail("Onboarding state changed during projection.", "ONBOARDING_REVIEW_CONFLICT");
       if (after.worldModelId !== world.snapshot.worldModelId || after.sourceSnapshotId !== graph.sourceSnapshotId) {
-        nextState = writeState(projectRoot, after, { worldModelId: world.snapshot.worldModelId, sourceSnapshotId: graph.sourceSnapshotId });
+        nextState = writeState(projectRoot, after, { worldModelId: world.snapshot.worldModelId, sourceSnapshotId: graph.sourceSnapshotId }, storageOwner);
       }
     });
     return nonPromotionResult({ state: nextState, review, successor: prepared.successor, world });
   } catch (error) {
-    verifiedNonPromotion({ projectRoot, state: ensureOnboardingState(readyProject(projectRoot)), review });
+    verifiedNonPromotion({ projectRoot, state: ensureOnboardingState(readyProject(projectRoot)), review }, storageOwner);
     if (["ONBOARDING_REVIEW_CONFLICT", "ONBOARDING_PRODUCT_CANON_DRIFT", "ONBOARDING_RUN_CONFLICT", "ONBOARDING_STATE_IDENTITY_MISMATCH"].includes(error.code)) throw error;
     return nonPromotionResult({ state: nextState, review, successor: prepared.successor, world: null, reasonCode: error.code || "ONBOARDING_GRAPH_REBUILD_FAILED" });
   }
 }
 
-function nonPromotingDecisionForState(projectRoot, state, own = decisionForCandidate(projectRoot, state.candidateSetId)) {
+function nonPromotingDecisionForState(projectRoot, state, own = null, storageOwner) {
+  own ??= decisionForCandidate(projectRoot, state.candidateSetId, storageOwner);
   if (own) return own.promotionAuthority ? null : own;
   const latestId = onboardingStateLatestReviewDecisionId(state);
   if (!latestId || !state.candidateSetId) return null;
@@ -1468,7 +1476,7 @@ function nonPromotingDecisionForState(projectRoot, state, own = decisionForCandi
   return latest.disposition === "revise" && onboardingCandidateProducerReviewDecisionId(candidate) === latestId ? latest : null;
 }
 
-async function reconcileOrphanedOnboardingProjection({ projectRoot, state, candidateSet, world }) {
+async function reconcileOrphanedOnboardingProjection({ projectRoot, state, candidateSet, world }, storageOwner) {
   const changes = world.changes;
   const onlyOnboardingChanged = changes.onboardingProjectionChanged
     && Object.entries(changes).every(([key, value]) => ["onboardingProjectionChanged", "temporalProvenanceChanged"].includes(key)
@@ -1481,7 +1489,7 @@ async function reconcileOrphanedOnboardingProjection({ projectRoot, state, candi
   catch (error) { if (!ABSENT_WORLD_CODES.has(error.code)) throw error; }
   await rebuildWithOnboardingProjection({ projectRoot, projectId: state.projectId,
     currentProductModelId: state.productModelId, sourceWorld,
-  });
+  }, storageOwner);
   const current = inspectWorldModel({ root: projectRoot });
   if (current.status !== "current" || current.snapshot.temporalProvenanceGraph.sourceSnapshotId !== candidateSet.sourceSnapshotId) {
     fail("Canonical evidence changed while reconciling the orphaned projection.", "ONBOARDING_SOURCE_DRIFT");
@@ -1491,25 +1499,26 @@ async function reconcileOrphanedOnboardingProjection({ projectRoot, state, candi
 
 async function recoverOnboardingPromotionLocked({ root = "." } = {}) {
   const inspected = readyProject(root, "onboarding promotion recovery");
+  const storageOwner = inspected.storage;
   const projectRoot = inspected.project.projectRoot;
-  if (!fs.existsSync(stateFile(projectRoot))) return null;
+  if (!fs.existsSync(stateFile(projectRoot, storageOwner))) return null;
   const state = ensureOnboardingState(inspected);
-  const historical = readCommittedHistoricalArtifactBoundary({ root: projectRoot, projectId: inspected.project.projectId, allowAbsent: true });
-  if (state.candidateSetId && historicalEntryForPath(historical, `${ONBOARDING_CANDIDATE_DIRECTORY}/${state.candidateSetId}.json`, "historical-candidate-set")) {
+  const historical = readCommittedHistoricalArtifactBoundary({ storage: storageOwner, root: projectRoot, projectId: inspected.project.projectId, allowAbsent: true });
+  if (state.candidateSetId && historicalEntryForPath(historical, `${relativeProjectArtifact(storageOwner, "onboarding", "candidate-sets")}/${state.candidateSetId}.json`, "historical-candidate-set")) {
     if (state.phase !== "ready") fail("Opaque historical onboarding cannot execute promotion recovery.", "ONBOARDING_HISTORICAL_RECOVERY_RETIRED");
     return null;
   }
-  const own = decisionForCandidate(projectRoot, state.candidateSetId);
-  const nonPromoting = nonPromotingDecisionForState(projectRoot, state, own);
+  const own = decisionForCandidate(projectRoot, state.candidateSetId, storageOwner);
+  const nonPromoting = nonPromotingDecisionForState(projectRoot, state, own, storageOwner);
   if (nonPromoting) {
-    const verified = verifiedNonPromotion({ projectRoot, state, review: nonPromoting });
-    return verified.projectedWorld ? null : applyNonPromotingReview({ projectRoot, state, review: nonPromoting });
+    const verified = verifiedNonPromotion({ projectRoot, state, review: nonPromoting }, storageOwner);
+    return verified.projectedWorld ? null : applyNonPromotingReview({ projectRoot, state, review: nonPromoting }, storageOwner);
   }
   const review = own?.promotionAuthority ? own : null;
   if (!review) return null;
   // A completed historical review is not a request to refresh every later World.
   if (state.phase === "ready" && state.sourceSnapshotId !== readOnboardingCandidateSet({ root: projectRoot, candidateSetId: review.candidateSetId }).candidateSet.sourceSnapshotId) return null;
-  return applyApprovedPromotion({ projectRoot, state, review });
+  return applyApprovedPromotion({ projectRoot, state, review }, storageOwner);
 }
 
 export async function recoverOnboardingPromotion(options = {}) {
@@ -1520,13 +1529,13 @@ export async function reviewOnboarding(options = {}) {
   return withProjectMutationAsync({ root: options.root ?? ".", scope: "onboarding-promotion" }, () => reviewOnboardingLocked(options));
 }
 
-function assertAcceptanceReplay({ projectRoot, state, candidateSet, review, disposition, acceptedCandidateIds, removedCandidateIds, userEdits, addedEntities, rationale }) {
+function assertAcceptanceReplay({ projectRoot, state, candidateSet, review, disposition, acceptedCandidateIds, removedCandidateIds, userEdits, addedEntities, rationale }, storageOwner) {
   const normalizedDisposition = requiredText(disposition, "Review disposition").toLowerCase();
   if (!normalizedDisposition.startsWith("accept") || removedCandidateIds.length || addedEntities.length) {
     fail("The candidate set already has a different durable user decision.", "ONBOARDING_REVIEW_REPLAY_CONFLICT");
   }
-  const previous = normalizeProductModelDocument(verifiedPromotion({ projectRoot, state, review }).previous.document);
-  const items = editedCandidates(candidateSet, userEdits, [], []);
+  const previous = normalizeProductModelDocument(verifiedPromotion({ projectRoot, state, review }, storageOwner).previous.document, storageOwner);
+  const items = editedCandidates(candidateSet, userEdits, [], [], storageOwner);
   const selectedIds = normalizedDisposition === "accept-all" ? candidateSet.candidates.map((item) => item.candidateId) : textList(acceptedCandidateIds, "acceptedCandidateIds");
   const selected = new Set(selectedIds);
   const edits = recordList(userEdits, "userEdits").map((edit) => ({
@@ -1542,25 +1551,25 @@ function assertAcceptanceReplay({ projectRoot, state, candidateSet, review, disp
     addedEntities: [],
     rationale,
     previousProductModel: previous,
-    resultingProductModel: mergeAcceptedIntoCanon(previous, items.filter((item) => selected.has(item.source.candidateId))),
-  });
+    resultingProductModel: mergeAcceptedIntoCanon(previous, items.filter((item) => selected.has(item.source.candidateId)), storageOwner),
+  }, storageOwner);
   if (requested.reviewDecisionHash !== review.reviewDecisionHash) {
     fail("A divergent retry cannot rewrite the durable user decision.", "ONBOARDING_REVIEW_REPLAY_CONFLICT");
   }
 }
 
-function assertNonPromotionReplay({ projectRoot, state, candidateSet, review, disposition, acceptedCandidateIds, removedCandidateIds, userEdits, addedEntities, rationale }) {
+function assertNonPromotionReplay({ projectRoot, state, candidateSet, review, disposition, acceptedCandidateIds, removedCandidateIds, userEdits, addedEntities, rationale }, storageOwner) {
   const normalizedDisposition = requiredText(disposition, "Review disposition").toLowerCase();
   if (normalizedDisposition !== review.disposition || acceptedCandidateIds.length
     || (normalizedDisposition === "reject" && (userEdits.length || addedEntities.length || removedCandidateIds.length))) {
     fail("A divergent retry cannot replace a durable disposition.", "ONBOARDING_REVIEW_REPLAY_CONFLICT");
   }
-  const { normalizedUserEdits, normalizedAddedEntities } = normalizedReviewEdits(candidateSet, userEdits, addedEntities, removedCandidateIds);
-  const { canon } = verifiedNonPromotion({ projectRoot, state, review });
+  const { normalizedUserEdits, normalizedAddedEntities } = normalizedReviewEdits(candidateSet, userEdits, addedEntities, removedCandidateIds, storageOwner);
+  const { canon } = verifiedNonPromotion({ projectRoot, state, review }, storageOwner);
   const requested = buildReviewDecision({ candidateSet, disposition: normalizedDisposition, acceptedCandidateIds: [],
     rejectedCandidateIds: normalizedDisposition === "reject" ? candidateSet.candidates.map((item) => item.candidateId) : textList(removedCandidateIds, "removedCandidateIds"),
     userEdits: normalizedUserEdits, addedEntities: normalizedAddedEntities, rationale, previousProductModel: canon.model,
-  });
+  }, storageOwner);
   if (requested.reviewDecisionHash !== review.reviewDecisionHash) fail("A divergent retry cannot rewrite the durable user decision.", "ONBOARDING_REVIEW_REPLAY_CONFLICT");
 }
 
@@ -1575,6 +1584,7 @@ async function reviewOnboardingLocked({
   rationale,
 } = {}) {
   const inspected = readyProject(root, "onboarding review");
+  const storageOwner = inspected.storage;
   if (inspected.state.activeRunId || inspected.state.pendingReview) {
     fail("Onboarding review cannot change product authority while a Run is active or awaiting review.", "ONBOARDING_RUN_CONFLICT");
   }
@@ -1586,20 +1596,20 @@ async function reviewOnboardingLocked({
     fail("Historical candidates are audit-only and cannot receive a new ReviewDecision.", "ONBOARDING_HISTORICAL_CANDIDATE_REVIEW_RETIRED");
   }
   const candidateSet = candidateRead.candidateSet;
-  const recorded = decisionForCandidate(projectRoot, reviewedSetId);
+  const recorded = decisionForCandidate(projectRoot, reviewedSetId, storageOwner);
   if (recorded) {
     if (recorded.promotionAuthority) {
-      assertAcceptanceReplay({ projectRoot, state, candidateSet, review: recorded, disposition, acceptedCandidateIds, removedCandidateIds, userEdits, addedEntities, rationale });
-      return applyApprovedPromotion({ projectRoot, state, review: recorded });
+      assertAcceptanceReplay({ projectRoot, state, candidateSet, review: recorded, disposition, acceptedCandidateIds, removedCandidateIds, userEdits, addedEntities, rationale }, storageOwner);
+      return applyApprovedPromotion({ projectRoot, state, review: recorded }, storageOwner);
     }
-    assertNonPromotionReplay({ projectRoot, state, candidateSet, review: recorded, disposition, acceptedCandidateIds, removedCandidateIds, userEdits, addedEntities, rationale });
-    return applyNonPromotingReview({ projectRoot, state, review: recorded });
+    assertNonPromotionReplay({ projectRoot, state, candidateSet, review: recorded, disposition, acceptedCandidateIds, removedCandidateIds, userEdits, addedEntities, rationale }, storageOwner);
+    return applyNonPromotingReview({ projectRoot, state, review: recorded }, storageOwner);
   }
   if (state.candidateSetId !== reviewedSetId) fail("Onboarding review references a stale candidate set.", "STALE_ONBOARDING_CANDIDATE_SET");
   if (candidateSet.sourceSnapshotId !== state.sourceSnapshotId) {
     fail("Onboarding candidate set no longer matches the recorded source snapshot.", "ONBOARDING_SOURCE_SNAPSHOT_CONFLICT");
   }
-  const currentWorld = await reconcileOrphanedOnboardingProjection({ projectRoot, state, candidateSet, world: inspectWorldModel({ root: projectRoot }) });
+  const currentWorld = await reconcileOrphanedOnboardingProjection({ projectRoot, state, candidateSet, world: inspectWorldModel({ root: projectRoot }) }, storageOwner);
   if (currentWorld.status !== "current"
     || currentWorld.snapshot.temporalProvenanceGraph.sourceSnapshotId !== candidateSet.sourceSnapshotId) {
     fail("Observed project state changed after candidate proposal; re-index and create a new candidate set.", "ONBOARDING_SOURCE_DRIFT");
@@ -1608,11 +1618,11 @@ async function reviewOnboardingLocked({
   if (!new Set(["accept-all", "accept-selection", "revise", "reject"]).has(normalizedDisposition)) {
     fail("Onboarding ReviewDecision disposition is invalid.", "INVALID_ONBOARDING_REVIEW_DISPOSITION");
   }
-  const currentCanon = readProductModelCanon({ projectRoot });
+  const currentCanon = readProductModelCanon({ storage: storageOwner, projectRoot });
   if (currentCanon.model.productModelId !== candidateSet.productModelId || currentCanon.model.productModelId !== state.productModelId) {
     fail("Product Canon changed after candidate proposal; a new onboarding candidate set is required.", "ONBOARDING_PRODUCT_CANON_DRIFT");
   }
-  const { revisionItems, normalizedUserEdits, normalizedAddedEntities } = normalizedReviewEdits(candidateSet, userEdits, addedEntities, removedCandidateIds);
+  const { revisionItems, normalizedUserEdits, normalizedAddedEntities } = normalizedReviewEdits(candidateSet, userEdits, addedEntities, removedCandidateIds, storageOwner);
   const allCandidateIds = candidateSet.candidates.map((candidate) => candidate.candidateId);
 
   if (normalizedDisposition === "revise") {
@@ -1628,9 +1638,9 @@ async function reviewOnboardingLocked({
       addedEntities: normalizedAddedEntities,
       rationale,
       previousProductModel: currentCanon.model,
-    });
+    }, storageOwner);
     verifyReviewDecision(review, inspected.project.projectId);
-    return applyNonPromotingReview({ projectRoot, state, review, publishReview: true });
+    return applyNonPromotingReview({ projectRoot, state, review, publishReview: true }, storageOwner);
   }
 
   if (normalizedDisposition === "reject") {
@@ -1646,9 +1656,9 @@ async function reviewOnboardingLocked({
       addedEntities: [],
       rationale,
       previousProductModel: currentCanon.model,
-    });
+    }, storageOwner);
     verifyReviewDecision(review, inspected.project.projectId);
-    return applyNonPromotingReview({ projectRoot, state, review, publishReview: true });
+    return applyNonPromotingReview({ projectRoot, state, review, publishReview: true }, storageOwner);
   }
 
   if (!candidateSet.candidates.length) fail("An empty candidate set cannot be accepted.", "ONBOARDING_EVIDENCE_REQUIRED");
@@ -1668,7 +1678,7 @@ async function reviewOnboardingLocked({
     fail("A user edit can only target an accepted candidate.", "INVALID_ONBOARDING_EDIT");
   }
   const acceptedItems = revisionItems.filter((item) => item.source && selected.has(item.source.candidateId));
-  const nextModel = mergeAcceptedIntoCanon(currentCanon.model, acceptedItems);
+  const nextModel = mergeAcceptedIntoCanon(currentCanon.model, acceptedItems, storageOwner);
   const rejectedIds = allCandidateIds.filter((candidateId) => !selected.has(candidateId));
   const review = buildReviewDecision({
     candidateSet,
@@ -1680,12 +1690,12 @@ async function reviewOnboardingLocked({
     rationale,
     previousProductModel: currentCanon.model,
     resultingProductModel: nextModel,
-  });
+  }, storageOwner);
   verifyReviewDecision(review, inspected.project.projectId);
-  return applyApprovedPromotion({ projectRoot, state, review, publishReview: true });
+  return applyApprovedPromotion({ projectRoot, state, review, publishReview: true }, storageOwner);
 }
 
-function verifyCurrentOnboardingReviewLineage({ projectRoot, state, candidateSet, latestReviewDecision }) {
+function verifyCurrentOnboardingReviewLineage({ projectRoot, state, candidateSet, latestReviewDecision }, storageOwner) {
   const latestReviewDecisionId = onboardingStateLatestReviewDecisionId(state);
   const producerReviewDecisionId = candidateSet
     ? onboardingCandidateProducerReviewDecisionId(candidateSet)
@@ -1785,8 +1795,9 @@ function uninspectedWorld(state) {
 
 function inspectOnboardingRecords(root, inspectWorld) {
   const inspected = readyProject(root, "onboarding inspection");
+  const storageOwner = inspected.storage;
   const projectRoot = inspected.project.projectRoot;
-  const file = stateFile(projectRoot);
+  const file = stateFile(projectRoot, storageOwner);
   if (!fs.existsSync(file)) {
     const migration = migrationPreview(inspected);
     return {
@@ -1798,9 +1809,9 @@ function inspectOnboardingRecords(root, inspectWorld) {
         phase: migration.state.phase,
         storageSelectionId: migration.storageSelection.storageSelectionId,
         writesRequired: [
-          ONBOARDING_STATE_RELATIVE_PATH,
-          `${SESSION_RECORD_DIRECTORY}/${migration.sessionRecord.sessionId}.json`,
-          `${ONBOARDING_STORAGE_DIRECTORY}/${migration.storageSelection.storageSelectionId}.json`,
+          relativeProjectArtifact(storageOwner, "onboarding", "current.json"),
+          `${relativeProjectArtifact(storageOwner, "sessions", "records")}/${migration.sessionRecord.sessionId}.json`,
+          `${relativeProjectArtifact(storageOwner, "onboarding", "storage-selections")}/${migration.storageSelection.storageSelectionId}.json`,
         ],
       },
     };
@@ -1808,30 +1819,32 @@ function inspectOnboardingRecords(root, inspectWorld) {
   const state = verifyOnboardingState(readJson(file, "Onboarding state pointer"), {
     projectId: inspected.project.projectId,
     sessionId: inspected.state.sessionId,
+    storage: storageOwner,
   });
   const sessionRecord = verifySessionRecord(
-    readJson(sessionRecordFile(projectRoot, state.sessionId), "HEAD Session record"),
-    { projectId: inspected.project.projectId, sessionId: inspected.state.sessionId },
+    readJson(sessionRecordFile(projectRoot, state.sessionId, storageOwner), "HEAD Session record"),
+    { projectId: inspected.project.projectId, sessionId: inspected.state.sessionId, storage: storageOwner },
   );
   const storageSelection = verifyStorageSelection(
-    readJson(storageSelectionFile(projectRoot, state.storageSelectionId), "Onboarding storage selection"),
+    readJson(storageSelectionFile(projectRoot, state.storageSelectionId, storageOwner), "Onboarding storage selection"),
     inspected.project.projectId,
+    storageOwner,
   );
-  const historical = readCommittedHistoricalArtifactBoundary({ root: projectRoot, projectId: inspected.project.projectId, allowAbsent: true });
+  const historical = readCommittedHistoricalArtifactBoundary({ storage: storageOwner, root: projectRoot, projectId: inspected.project.projectId, allowAbsent: true });
   const historicalCandidate = state.candidateSetId
-    ? historicalEntryForPath(historical, `${ONBOARDING_CANDIDATE_DIRECTORY}/${state.candidateSetId}.json`, "historical-candidate-set")
+    ? historicalEntryForPath(historical, `${relativeProjectArtifact(storageOwner, "onboarding", "candidate-sets")}/${state.candidateSetId}.json`, "historical-candidate-set")
     : null;
   if (historicalCandidate) {
     const latestReviewDecisionId = onboardingStateLatestReviewDecisionId(state);
     const historicalReview = latestReviewDecisionId
-      ? historicalEntryForPath(historical, `${ONBOARDING_REVIEW_DIRECTORY}/${latestReviewDecisionId}.json`, "historical-review")
+      ? historicalEntryForPath(historical, `${relativeProjectArtifact(storageOwner, "onboarding", "review-decisions")}/${latestReviewDecisionId}.json`, "historical-review")
       : null;
     if (state.phase !== "ready" || !historicalReview) fail("Historical onboarding boundary does not cover a complete ready state.", "HISTORICAL_BOUNDARY_INCOMPLETE");
-    const productCanon = readProductModelCanon({ projectRoot });
+    const productCanon = readProductModelCanon({ storage: storageOwner, projectRoot });
     if (productCanon.status !== "present" || productCanon.model.productModelId !== state.productModelId) {
       fail("Historical boundary cannot replace current Product Canon validation.", "ONBOARDING_PRODUCT_CANON_DRIFT");
     }
-    const currentRevision = readProductRevision(projectRoot, state.productModelId).revision;
+    const currentRevision = readProductRevision(projectRoot, state.productModelId, storageOwner).revision;
     if (currentRevision.productModelHash !== productCanon.model.productModelHash) fail("Current Product revision does not match Canon.", "ONBOARDING_PRODUCT_CANON_DRIFT");
     let world = null;
     if (state.worldModelId && !inspectWorld) world = uninspectedWorld(state);
@@ -1878,11 +1891,11 @@ function inspectOnboardingRecords(root, inspectWorld) {
   const reviewDecision = latestReviewDecisionId
     ? readOnboardingReviewDecision({ root: projectRoot, reviewDecisionId: latestReviewDecisionId }).reviewDecision
     : null;
-  const productCanon = readProductModelCanon({ projectRoot });
-  const own = decisionForCandidate(projectRoot, state.candidateSetId);
-  const pendingDisposition = nonPromotingDecisionForState(projectRoot, state, own);
+  const productCanon = readProductModelCanon({ storage: storageOwner, projectRoot });
+  const own = decisionForCandidate(projectRoot, state.candidateSetId, storageOwner);
+  const pendingDisposition = nonPromotingDecisionForState(projectRoot, state, own, storageOwner);
   if (pendingDisposition) {
-    const disposition = verifiedNonPromotion({ projectRoot, state, review: pendingDisposition });
+    const disposition = verifiedNonPromotion({ projectRoot, state, review: pendingDisposition }, storageOwner);
     if (!disposition.projectedWorld) return {
       status: "review_recovery_pending", state, sessionRecord, storageSelection, candidateSet,
       reviewDecision: pendingDisposition, productModel: productCanon.model, worldModel: null,
@@ -1893,7 +1906,7 @@ function inspectOnboardingRecords(root, inspectWorld) {
   const pendingAcceptance = candidateSet && state.sourceSnapshotId === candidateSet.sourceSnapshotId
     ? own?.promotionAuthority ? own : null : null;
   if (pendingAcceptance) {
-    const promotion = verifiedPromotion({ projectRoot, state, review: pendingAcceptance });
+    const promotion = verifiedPromotion({ projectRoot, state, review: pendingAcceptance }, storageOwner);
     return {
       status: "promotion_recovery_pending",
       state,
@@ -1917,13 +1930,13 @@ function inspectOnboardingRecords(root, inspectWorld) {
     state,
     candidateSet,
     latestReviewDecision: reviewDecision,
-  });
+  }, storageOwner);
   if (productCanon.model.productModelId !== state.productModelId) {
     fail("Onboarding state Product Model identity does not match current canon.", "ONBOARDING_PRODUCT_CANON_DRIFT");
   }
   const productModelRevisions = reviewDecision?.promotionAuthority ? {
-    previous: readProductRevision(projectRoot, reviewDecision.previousProductModelId).revision,
-    resulting: readProductRevision(projectRoot, reviewDecision.resultingProductModelId).revision,
+    previous: readProductRevision(projectRoot, reviewDecision.previousProductModelId, storageOwner).revision,
+    resulting: readProductRevision(projectRoot, reviewDecision.resultingProductModelId, storageOwner).revision,
   } : null;
   let world = null;
   if (state.worldModelId && !inspectWorld) world = uninspectedWorld(state);

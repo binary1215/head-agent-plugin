@@ -14,17 +14,62 @@ import { artifactAuthorityBoundary } from "../scripts/lib/authority-plane-contra
 import { createHeadSession, withSessionRoute } from "../scripts/lib/session-routing.mjs";
 import { updateProjectDirection } from "../scripts/lib/project-direction.mjs";
 
+import { initialOnboardingDocuments } from "../scripts/lib/onboarding-contract.mjs";
+import { emptyProductModelDocument, normalizeProductModelDocument } from "../scripts/lib/product-model.mjs";
+import { formatForVerifiedOwner } from "../scripts/lib/project-storage-format.mjs";
+
+// Synthetic legacy contract seed only; genuine old-producer interoperability is verified separately.
+function seedLegacyProject(root) {
+  root = fs.realpathSync(root);
+  const createdAt = "2026-09-22T00:00:00.000Z";
+  const project = { schemaVersion: 1, projectId: `head-${crypto.createHash("sha256").update(root).digest("hex").slice(0, 20)}`,
+    projectRoot: root, createdAt, runtimes: ["claude", "codex", "opencode"], integrations: {},
+    authority: { head: "ordinary investigation, strategy, integration, and completion judgment",
+      user: "material product, policy, architecture, cost, workflow, and consequential external actions" } };
+  const sessionState = { schemaVersion: 1, sessionId: `session-${crypto.randomUUID()}`, mode: "session",
+    currentWholePlanId: null, activeRunId: null, activeExecutionContractId: null, lastResultPacketId: null,
+    pendingReview: null, lastReviewDecisionId: null, requiredPlanAction: null, latestCheckpoint: null, updatedAt: createdAt };
+  const product = emptyProductModelDocument();
+  const onboarding = initialOnboardingDocuments({ project, sessionState,
+    productModelId: normalizeProductModelDocument(product).productModelId, updatedAt: createdAt });
+  const records = new Map([
+    [".head/project.json", project], [".head/sessions/current.json", sessionState],
+    [".head/context/knowledge.json", { schemaVersion: 1, evidence: [], claims: [], decisions: [], unknowns: [] }],
+    [".head/context/product-model.json", product], [".head/onboarding/current.json", onboarding.state],
+    [`.head/sessions/records/${onboarding.sessionRecord.sessionId}.json`, onboarding.sessionRecord],
+    [`.head/onboarding/storage-selections/${onboarding.storageSelection.storageSelectionId}.json`, onboarding.storageSelection],
+  ]);
+  for (const [relative, value] of records) {
+    const file = path.join(root, relative); fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`, { flag: "wx" });
+  }
+  fs.mkdirSync(path.join(root, ".head/instructions"), { recursive: true });
+  fs.writeFileSync(path.join(root, ".head/instructions/project.md"), "# Project-specific HEAD context\n\nRecord project identity, canonical sources, repository boundaries, and fixed constraints here.\n", { flag: "wx" });
+  const immutable = [...records.keys()].filter(relative => relative === ".head/project.json"
+    || relative.startsWith(".head/sessions/records/") || relative.startsWith(".head/onboarding/storage-selections/"));
+  const manifest = { schemaVersion: 1, generatedAt: createdAt, pluginRoot,
+    packageVersion: JSON.parse(fs.readFileSync(path.join(pluginRoot, "package.json"))).version,
+    managed: immutable.map(relative => ({ path: relative, sha256: crypto.createHash("sha256").update(fs.readFileSync(path.join(root, relative))).digest("hex") })) };
+  fs.mkdirSync(path.join(root, ".head/generated"), { recursive: true });
+  fs.writeFileSync(path.join(root, ".head/generated/manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, { flag: "wx" });
+  const inspected = inspectProject(root); assert.equal(inspected.status, "ready");
+  assert.equal(inspected.storage.directory, ".head");
+  return { project };
+}
+
 const pluginRoot = path.resolve(import.meta.dirname, "..");
 const canonical = (value) => Array.isArray(value) ? value.map(canonical) : value && typeof value === "object"
   ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])])) : value;
 const hash = (value) => crypto.createHash("sha256").update(JSON.stringify(canonical(value))).digest("hex");
 const write = (file, value) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`); };
-function fixture(t) {
+function fixture(t, { legacy = false } = {}) {
   const parent = process.env.HEAD_AGENT_TEST_TMP || os.tmpdir();
   fs.mkdirSync(parent, { recursive: true });
   const root = fs.mkdtempSync(path.join(parent, "head-legacy-integration-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  if (legacy) seedLegacyProject(root);
+  else initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const storage = inspectProject(root).storage, directory = formatForVerifiedOwner(storage).directory;
   const capsule = compileContext({ root, task: "Verify legacy integration original reading", budget: 2048, persist: true }).capsule;
   const plan = createWholePlanSnapshot({ root, objective: "Preserve original approval", plan: [{ id: "execute", outcome: "Original identity survives" }] }).artifact;
   const contract = createExecutionContract({ root, wholePlanId: plan.wholePlanId, capsuleId: capsule.capsuleId,
@@ -36,7 +81,7 @@ function fixture(t) {
     disposition: "accept", rationale: "Exact fixture verified", nextActions: ["Record explicit direction"] }).reviewDecision;
   const input = { runId: run.runId, reviewDecisionId: review.reviewDecisionId, purpose: "Preserve reviewed original",
     approvedDecisions: ["Exact result accepted"], currentPosition: "Accepted fixture", nextExpectedResult: "Manual next authorized work", openReviewIds: [] };
-  return { root, input, stateFile: path.join(root, ".head", "sessions", "current.json") };
+  return { root, input, storage, directory, stateFile: path.join(root, directory, "sessions", "current.json") };
 }
 
 // Frozen 0.1 request/receipt shapes are copied from the historical producer,
@@ -95,14 +140,14 @@ test("new integration accepts only three fields and never produces historical re
   const recorded = integrateReviewedRunCheckpoint({ root: f.root, ...f.input });
   assert.equal(Object.hasOwn(recorded.integration, "integrationRequestId"), false);
   assert.equal(Object.hasOwn(recorded.integration, "previousCheckpointId"), true);
-  assert.equal(fs.existsSync(path.join(f.root, ".head", "sessions", "integrations")), false);
+  assert.equal(fs.existsSync(path.join(f.root, f.directory, "sessions", "integrations")), false);
   const originals = bytes([f.stateFile, recorded.file]);
   assert.equal(integrateReviewedRunCheckpoint({ root: f.root, ...f.input }).checkpoint.checkpointId, recorded.checkpoint.checkpointId);
   assert.deepEqual(bytes([f.stateFile, recorded.file]), originals);
 });
 
 test("fully committed historical originals reuse identity and bytes even after independent newer direction", (t) => {
-  const f = fixture(t);
+  const f = fixture(t, { legacy: true });
   const legacy = committedHistorical(f);
   const files = [legacy.requestFile, legacy.checkpointFile, legacy.receiptFile, f.stateFile];
   const originals = bytes(files);
@@ -118,7 +163,7 @@ test("fully committed historical originals reuse identity and bytes even after i
 });
 
 test("historical restore preserves missing optional result evidence and latest common cancellation", (t) => {
-  const f = fixture(t);
+  const f = fixture(t, { legacy: true });
   const legacy = committedHistorical(f);
   const originals = bytes([legacy.requestFile, legacy.checkpointFile, legacy.receiptFile]);
   const direction = updateProjectDirection({ root: f.root, input: { goal: "Current common goal", cancelledActions: ["Manual next authorized work"] } }).direction;
@@ -131,7 +176,7 @@ test("historical restore preserves missing optional result evidence and latest c
 });
 
 test("verified request-only interruption remains pending without writes and cannot block independent Session work", (t) => {
-  const f = fixture(t);
+  const f = fixture(t, { legacy: true });
   const legacy = historicalRequest(f.root, f.input);
   const cancellation = updateProjectDirection({ root: f.root, input: { goal: "Current goal", cancelledActions: [f.input.nextExpectedResult] } }).direction;
   const originals = bytes([legacy.file, f.stateFile]);
@@ -169,7 +214,7 @@ test("verified request-only interruption remains pending without writes and cann
 });
 
 test("historical target request corruption, wrong owner and malformed originals fail locally and are preserved", (t) => {
-  const f = fixture(t);
+  const f = fixture(t, { legacy: true });
   let legacy = historicalRequest(f.root, f.input, { projectId: "another-project" });
   assert.throws(() => readRunResultIntegration({ root: f.root, reviewDecisionId: f.input.reviewDecisionId }), { code: "RUN_RESULT_INTEGRATION_REQUEST_CONFLICT" });
   legacy = historicalRequest(f.root, f.input, { sessionId: "session-00000000-0000-0000-0000-000000000000" });
@@ -186,7 +231,7 @@ test("historical target request corruption, wrong owner and malformed originals 
 });
 
 test("historical committed receipt damage is not bypassed by an exact replay", (t) => {
-  const f = fixture(t);
+  const f = fixture(t, { legacy: true });
   const legacy = committedHistorical(f);
   write(legacy.receiptFile, { ...legacy.receipt, checkpointDigest: "0".repeat(64) });
   const originals = bytes([legacy.requestFile, legacy.checkpointFile, legacy.receiptFile, f.stateFile]);

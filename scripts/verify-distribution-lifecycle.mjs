@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -10,6 +11,7 @@ import {
   rollbackDistribution,
   uninstallDistribution,
 } from "./lib/distribution-lifecycle.mjs";
+import { resolveProjectStorage } from "./lib/project-storage-format.mjs";
 
 const sourceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const sourceVersion = JSON.parse(fs.readFileSync(path.join(sourceRoot, "package.json"), "utf8")).version;
@@ -46,7 +48,7 @@ function assertRuntimeSurfaceIsolated(root) {
 
 function copySourceFixture() {
   fs.mkdirSync(upgradedSource, { recursive: true });
-  for (const entry of [".codex-plugin", ".mcp.json", "LICENSE", "README.md", "README.ko.md", "assets", "docs", "native", "package.json", "scripts", "skills"]) {
+  for (const entry of [".codex-plugin", ".mcp.json", "LICENSE", "README.md", "README.ko.md", "assets", "compat", "docs", "hooks", "native", "package.json", "scripts", "skills"]) {
     const source = path.join(sourceRoot, entry);
     if (!fs.existsSync(source)) continue;
     fs.cpSync(source, path.join(upgradedSource, entry), {
@@ -73,14 +75,87 @@ function runNode(args) {
   return JSON.parse(result.stdout);
 }
 
-function runGlobal(args) {
-  const command = process.platform === "win32" ? path.join(binDirectory, "head-agent.cmd") : path.join(binDirectory, "head-agent");
+function runGlobal(args, identity = "lode", directory = binDirectory) {
+  const command = process.platform === "win32" ? path.join(directory, `${identity}-agent.cmd`) : path.join(directory, `${identity}-agent`);
   const machineArgs = args.includes("--json") ? args : [...args, "--json"];
   const result = process.platform === "win32"
     ? spawnSync(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", `""${command}" ${machineArgs.map((item) => `"${item}"`).join(" ")}"`], { encoding: "utf8", shell: false, windowsHide: true, windowsVerbatimArguments: true })
     : spawnSync(command, machineArgs, { encoding: "utf8", shell: false });
   assert.equal(result.status, 0, result.stderr || result.error?.message || result.stdout);
   return JSON.parse(result.stdout);
+}
+
+function canonical(value) {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+  if (value && typeof value === "object") return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`;
+  return JSON.stringify(value);
+}
+
+function sha256(value) { return crypto.createHash("sha256").update(value).digest("hex"); }
+
+function verifyHistoricalEntrypointRollback() {
+  const root = path.join(scratchRoot, "owned-legacy-install");
+  const directory = path.join(scratchRoot, "legacy-bin");
+  // A bounded old-format installation fixture: this proves verified entrypoint
+  // selection and immutable history, not execution of a historical HEAD engine.
+  const files = new Map([
+    ["package.json", `${JSON.stringify({ name: "@local/head-agent-core-plugin", version: "old-fixture" })}\n`],
+    [".codex-plugin/plugin.json", `${JSON.stringify({ name: "head-agent-core", version: "old-fixture" })}\n`],
+    ["scripts/head.mjs", 'process.stdout.write(JSON.stringify({ version: "old-fixture" }) + "\\n");\n'],
+  ]);
+  const identity = {
+    protocolVersion: "0.1.0", name: "head-agent-core", version: "old-fixture",
+    files: [...files].map(([relative, text]) => ({ path: relative, bytes: Buffer.byteLength(text), sha256: sha256(text) })).sort((a, b) => a.path.localeCompare(b.path, "en")),
+  };
+  const releaseId = `release-${sha256(canonical(identity)).slice(0, 24)}`;
+  const release = path.join(root, "releases", releaseId);
+  for (const [relative, text] of files) {
+    const file = path.join(release, relative);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, text, { flag: "wx" });
+  }
+  const oldManifest = `${JSON.stringify({ ...identity, releaseId, packageName: "@local/head-agent-core-plugin" }, null, 2)}\n`;
+  const oldOwnership = `${JSON.stringify({ product: "head-agent-core", protocolVersion: "0.1.0" })}\n`;
+  fs.writeFileSync(path.join(release, "distribution-manifest.json"), oldManifest);
+  fs.writeFileSync(path.join(root, "installation.json"), oldOwnership);
+  fs.writeFileSync(path.join(root, "current.json"), JSON.stringify({ protocolVersion: "0.1.0", activeReleaseId: releaseId, history: [] }));
+  const upgraded = installDistribution({ sourceRoot, installRoot: root, binDirectory: directory });
+  assert.equal(upgraded.status, "upgraded");
+  assert.equal(upgraded.previousReleaseId, releaseId);
+  assert.equal(fs.readFileSync(path.join(root, "installation.json"), "utf8"), oldOwnership);
+  for (const name of ["head", "lode"]) assert.equal(runGlobal(["--version"], name, directory).version, sourceVersion);
+  rollbackDistribution({ installRoot: root, binDirectory: directory });
+  for (const name of ["head", "lode"]) assert.equal(runGlobal(["--version"], name, directory).version, "old-fixture");
+  assert.equal(fs.readFileSync(path.join(release, "distribution-manifest.json"), "utf8"), oldManifest);
+  // An existing but unlisted lode.mjs must not win entrypoint selection.
+  fs.writeFileSync(path.join(release, "scripts", "lode.mjs"), 'throw new Error("unlisted entrypoint executed");\n');
+  assert.equal(runGlobal(["--version"], "lode", directory).version, "old-fixture");
+  const oldHead = fs.readFileSync(path.join(release, "scripts", "head.mjs"));
+  fs.appendFileSync(path.join(release, "scripts", "head.mjs"), "// integrity drift\n");
+  const rejected = spawnSync(process.execPath, [path.join(directory, "lode-agent-launcher.mjs"), "--version"], { encoding: "utf8", shell: false, windowsHide: true });
+  assert.notEqual(rejected.status, 0);
+  assert.match(rejected.stderr, /HEAD_DISTRIBUTION_FILE_DRIFT/);
+  fs.writeFileSync(path.join(release, "scripts", "head.mjs"), oldHead);
+  const aliases = ["HEAD_AGENT_INSTALL_ROOT", "LODE_AGENT_INSTALL_ROOT", "HEAD_AGENT_BIN_DIR", "LODE_AGENT_BIN_DIR"];
+  const saved = aliases.map(name => process.env[name]);
+  try {
+    process.env.HEAD_AGENT_INSTALL_ROOT = root;
+    process.env.LODE_AGENT_INSTALL_ROOT = root;
+    process.env.HEAD_AGENT_BIN_DIR = directory;
+    process.env.LODE_AGENT_BIN_DIR = directory;
+    assert.equal(inspectDistribution().activeReleaseId, releaseId);
+    process.env.LODE_AGENT_INSTALL_ROOT = path.join(scratchRoot, "different-install");
+    assert.throws(() => inspectDistribution(), { code: "HEAD_DISTRIBUTION_INSTALL_ROOT_CONFLICT" });
+  } finally {
+    aliases.forEach((name, index) => { if (saved[index] === undefined) delete process.env[name]; else process.env[name] = saved[index]; });
+  }
+  const conflictingBin = path.join(scratchRoot, "unowned-lode-bin");
+  fs.mkdirSync(conflictingBin);
+  fs.writeFileSync(path.join(conflictingBin, "lode-agent.cmd"), "unowned\n");
+  const pointerBefore = fs.readFileSync(path.join(root, "current.json"));
+  assert.throws(() => installDistribution({ sourceRoot, installRoot: root, binDirectory: conflictingBin }), { code: "HEAD_DISTRIBUTION_COMMAND_CONFLICT" });
+  assert.deepEqual(fs.readFileSync(path.join(root, "current.json")), pointerBefore);
+  assert.equal(fs.readFileSync(path.join(conflictingBin, "lode-agent.cmd"), "utf8"), "unowned\n");
 }
 
 function runGlobalFailure(args) {
@@ -114,7 +189,9 @@ try {
   assert.equal(installed.project.status, "product_evidence_required");
   assert.equal(installed.project.onboarding.storageMode, "local");
   assert.equal(installed.project.onboarding.candidateCount, 0);
-  const generatedInstructions = fs.readFileSync(path.join(projectRoot, ".head", "generated", "head-instructions.md"), "utf8").toLowerCase();
+  const projectStorage = resolveProjectStorage(projectRoot);
+  assert.ok(projectStorage);
+  const generatedInstructions = fs.readFileSync(path.join(projectRoot, projectStorage.directory, "generated", `${projectStorage.dialect}-instructions.md`), "utf8").toLowerCase();
   assert.equal(runtimeForbiddenMarkers.some((marker) => generatedInstructions.includes(marker)), false);
   const installedReleaseRoot = path.join(installRoot, "releases", installed.releaseId);
   assert.equal(fs.existsSync(path.join(installedReleaseRoot, "legacy")), false, "standalone legacy migrator must not enter the installed runtime");
@@ -135,7 +212,7 @@ try {
   assert.equal(fs.existsSync(path.join(projectRoot, ".git")), false);
   assert.equal(inspectDistribution({ installRoot, binDirectory }).activeReleaseId, installed.releaseId);
 
-  const command = process.platform === "win32" ? path.join(binDirectory, "head-agent.cmd") : path.join(binDirectory, "head-agent");
+  const command = process.platform === "win32" ? path.join(binDirectory, "lode-agent.cmd") : path.join(binDirectory, "lode-agent");
   const version = process.platform === "win32"
     ? spawnSync(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", `""${command}" --version"`], { encoding: "utf8", shell: false, windowsHide: true, windowsVerbatimArguments: true })
     : spawnSync(command, ["--version"], { encoding: "utf8", shell: false });
@@ -151,9 +228,9 @@ try {
   assert.equal(coreOnly.onboardingAction, "not-activated");
   assert.equal(coreOnly.onboarding.candidateSetId, null);
 
-  const projectBeforeResume = JSON.parse(fs.readFileSync(path.join(projectRoot, ".head", "project.json"), "utf8"));
-  const sessionBeforeResume = JSON.parse(fs.readFileSync(path.join(projectRoot, ".head", "sessions", "current.json"), "utf8"));
-  const onboardingStateFile = path.join(projectRoot, ".head", "onboarding", "current.json");
+  const projectBeforeResume = JSON.parse(fs.readFileSync(projectStorage.projectFile, "utf8"));
+  const sessionBeforeResume = JSON.parse(fs.readFileSync(path.join(projectRoot, projectStorage.directory, "sessions", "current.json"), "utf8"));
+  const onboardingStateFile = path.join(projectRoot, projectStorage.directory, "onboarding", "current.json");
   const onboardingBeforeResume = fs.readFileSync(onboardingStateFile, "utf8");
   const resumed = runGlobal(["resume", projectRoot, "--runtime", "claude,codex,opencode", "--profile", "product"]);
   assert.equal(resumed.projectAction, "resumed");
@@ -254,11 +331,15 @@ try {
   assert.equal(purged.status, "not-installed");
   assert.equal(fs.existsSync(installRoot), false);
 
+  verifyHistoricalEntrypointRollback();
+
   process.stdout.write(`${JSON.stringify({
     status: "passed",
     installedReleaseId: installed.releaseId,
     upgradedReleaseId: upgraded.releaseId,
     rollbackVerified: true,
+    syntheticHistoricalEntrypointRollbackVerified: true,
+    bothLauncherAliasesVerified: true,
     failedUpgradePreservedCurrent: true,
     launcherVerified: true,
     workspaceHostExportBridgePackaged: true,

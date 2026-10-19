@@ -22,8 +22,8 @@ function temporaryProject(t, label) {
   return root;
 }
 
-function reviewFiles(root) {
-  const directory = path.join(root, ".head", "change-sets", "impact-review-decisions");
+function reviewFiles(root, layout) {
+  const directory = path.join(root, layout.directory, "change-sets", "impact-review-decisions");
   return fs.existsSync(directory) ? fs.readdirSync(directory).filter((name) => name.endsWith(".json")).sort() : [];
 }
 
@@ -45,6 +45,7 @@ async function captureError(action) {
 async function changeSetFixture(t, label) {
   const root = temporaryProject(t, label);
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const layout = inspectProject(root).storage;
   const product = {
     schemaVersion: 1,
     featureGroups: [{ key: "messaging", name: "Messaging", description: "Communication features." }],
@@ -61,7 +62,7 @@ async function changeSetFixture(t, label) {
     constraints: [],
     decisions: [],
   };
-  fs.writeFileSync(path.join(root, ".head", "context", "product-model.json"), `${JSON.stringify(product, null, 2)}\n`);
+  fs.writeFileSync(path.join(root, layout.directory, "context", "product-model.json"), `${JSON.stringify(product, null, 2)}\n`);
   fs.mkdirSync(path.join(root, "src"), { recursive: true });
   fs.writeFileSync(path.join(root, "src", "message.mjs"), "export function send(message) { return message; }\n");
 
@@ -136,7 +137,7 @@ async function changeSetFixture(t, label) {
     disposition: "accept-all",
     rationale: "The exact contained impact candidates are explicitly accepted.",
   };
-  return { root, recordRequest, recorded, reviewRequest };
+  return { root, layout, recordRequest, recorded, reviewRequest };
 }
 
 test("stale Change impact candidates remain explicitly rejectable without another gate", async (t) => {
@@ -166,13 +167,13 @@ test("Change impact review recovers exact P1 decisions across durable write boun
     await t.test(boundary, async (subtest) => {
       const fixture = await changeSetFixture(subtest, `boundary-${boundary}`);
       const realRename = fs.renameSync;
-      const worldPointer = path.resolve(fixture.root, ".head", "world-model", "current.json");
-      const statePointer = path.resolve(fixture.root, ".head", "change-sets", "current.json");
+      const worldPointer = path.resolve(fixture.root, fixture.layout.directory, "world-model", "current.json");
+      const statePointer = path.resolve(fixture.root, fixture.layout.directory, "change-sets", "current.json");
       let injected = false;
       try {
         fs.renameSync = function (from, to) {
           const target = path.resolve(String(to));
-          const decisionTarget = target.includes(`${path.sep}.head${path.sep}change-sets${path.sep}impact-review-decisions${path.sep}`)
+          const decisionTarget = target.includes(`${path.sep}${fixture.layout.directory}${path.sep}change-sets${path.sep}impact-review-decisions${path.sep}`)
             && path.basename(target).startsWith("change-impact-review-decision-");
           const matches = boundary === "decision" ? decisionTarget : boundary === "projection" ? target === worldPointer : target === statePointer;
           if (!injected && matches) {
@@ -186,7 +187,7 @@ test("Change impact review recovers exact P1 decisions across durable write boun
         fs.renameSync = realRename;
       }
       assert.equal(injected, true);
-      assert.equal(reviewFiles(fixture.root).length, boundary === "decision" ? 0 : 1);
+      assert.equal(reviewFiles(fixture.root, fixture.layout).length, boundary === "decision" ? 0 : 1);
 
       if (boundary !== "decision") {
         const divergent = await captureError(() => reviewChangeImpact({
@@ -194,7 +195,7 @@ test("Change impact review recovers exact P1 decisions across durable write boun
           rationale: "A divergent retry must not replace the saved user decision.",
         }));
         assert.equal(divergent.error?.code, "CHANGE_IMPACT_REVIEW_CONFLICT");
-        assert.equal(reviewFiles(fixture.root).length, 1);
+        assert.equal(reviewFiles(fixture.root, fixture.layout).length, 1);
         const pending = inspectChangeSets({ root: fixture.root });
         assert.equal(pending.reviewRecovery?.requiresNewUserDecision, false);
       }
@@ -202,7 +203,7 @@ test("Change impact review recovers exact P1 decisions across durable write boun
       const recovered = await reviewChangeImpact(fixture.reviewRequest);
       assert.equal(recovered.status, "change_impacts_reviewed");
       assert.equal(recovered.reusedReviewDecision, boundary !== "decision");
-      assert.equal(reviewFiles(fixture.root).length, 1);
+      assert.equal(reviewFiles(fixture.root, fixture.layout).length, 1);
       assert.equal(inspectChangeSets({ root: fixture.root }).status, "reviewed");
       assert.equal(inspectWorldModel({ root: fixture.root }).status, "current");
       assert.equal((await reviewChangeImpact(fixture.reviewRequest)).reusedReviewDecision, true);
@@ -212,10 +213,10 @@ test("Change impact review recovers exact P1 decisions across durable write boun
 
 test("legacy orphan P4 cannot authorize a divergent review but exact user intent can repair it", async (t) => {
   const fixture = await changeSetFixture(t, "orphan-projection");
-  const stateFile = path.join(fixture.root, ".head", "change-sets", "current.json");
+  const stateFile = path.join(fixture.root, fixture.layout.directory, "change-sets", "current.json");
   const pendingState = fs.readFileSync(stateFile, "utf8");
   const accepted = await reviewChangeImpact(fixture.reviewRequest);
-  const reviewFile = path.join(fixture.root, ".head", "change-sets", "impact-review-decisions", `${accepted.reviewDecision.reviewDecisionId}.json`);
+  const reviewFile = path.join(fixture.root, fixture.layout.directory, "change-sets", "impact-review-decisions", `${accepted.reviewDecision.reviewDecisionId}.json`);
   fs.unlinkSync(reviewFile);
   fs.writeFileSync(stateFile, pendingState);
   assert.equal(inspectWorldModel({ root: fixture.root }).status, "stale");
@@ -224,12 +225,12 @@ test("legacy orphan P4 cannot authorize a divergent review but exact user intent
     ...fixture.reviewRequest,
     rationale: "This changed intent must not inherit authority from Graph.",
   }), (error) => error.code === "CHANGE_IMPACT_SOURCE_DRIFT");
-  assert.equal(reviewFiles(fixture.root).length, 0);
+  assert.equal(reviewFiles(fixture.root, fixture.layout).length, 0);
 
   const repaired = await reviewChangeImpact(fixture.reviewRequest);
   assert.equal(repaired.status, "change_impacts_reviewed");
   assert.equal(repaired.reusedReviewDecision, false);
-  assert.equal(reviewFiles(fixture.root).length, 1);
+  assert.equal(reviewFiles(fixture.root, fixture.layout).length, 1);
   assert.equal(inspectWorldModel({ root: fixture.root }).status, "current");
 });
 

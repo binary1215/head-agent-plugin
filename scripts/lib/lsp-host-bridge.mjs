@@ -271,7 +271,7 @@ export async function collectOutgoingCallEvidence({
         if (event.type === "provider.exited") onProcessEvent({ type: "exit", pid: event.providerPid, parentPid: supervised?.child.pid || process.pid, exitCode: event.exitCode, signal: "none" });
       },
     });
-    onProcessEvent({ type: "spawn", pid: supervised.child.pid, parentPid: process.pid, command: "head-agent-supervisor", cwd: path.dirname(supervisorSelection.binaryPath), ports: "none" });
+    onProcessEvent({ type: "spawn", pid: supervised.child.pid, parentPid: process.pid, command: path.basename(supervisorSelection.binaryPath), cwd: path.dirname(supervisorSelection.binaryPath), ports: "none" });
     const requestCancel = () => {
       if (!fs.existsSync(cancelFile)) {
         try { fs.writeFileSync(cancelFile, canonicalJson({ collectionId, requestedAt: Date.now() }), { encoding: "utf8", flag: "wx" }); } catch {}
@@ -1146,7 +1146,7 @@ async function collectRealOutgoingCallObservation({
         if (event.type === "provider.exited") onProcessEvent({ type: "exit", pid: event.providerPid, parentPid: supervised?.child.pid || process.pid, exitCode: event.exitCode, signal: "none" });
       },
     });
-    onProcessEvent({ type: "spawn", pid: supervised.child.pid, parentPid: process.pid, command: "head-agent-supervisor", cwd: path.dirname(supervisorSelection.binaryPath), ports: "none" });
+    onProcessEvent({ type: "spawn", pid: supervised.child.pid, parentPid: process.pid, command: path.basename(supervisorSelection.binaryPath), cwd: path.dirname(supervisorSelection.binaryPath), ports: "none" });
     if (externalCancellation) {
       externalCancelTimer = setInterval(() => {
         if (!fs.existsSync(externalCancellation.readyFile) || fs.existsSync(externalCancellation.signalFile)) return;

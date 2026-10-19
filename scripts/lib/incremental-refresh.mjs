@@ -22,6 +22,7 @@ import {
   readPostRefreshProjectionReceipt as readPostRefreshProjectionReceiptArtifact,
 } from "./post-refresh-projection.mjs";
 import { withRefreshWriterLease } from "./refresh-writer-lease.mjs";
+import { formatForVerifiedOwner, familyFormatForOriginal } from "./project-storage-format.mjs";
 
 export const INCREMENTAL_REFRESH_VERSION = "0.2.0";
 const LEGACY_INCREMENTAL_REFRESH_VERSION = "0.1.0";
@@ -120,8 +121,9 @@ function buildIncrementalRefreshRequestVersion({
   triggerEvidenceIds = [],
   expectedChangedPaths = null,
   additionalParentSourceSnapshotIds = [],
-} = {}, protocolVersion = INCREMENTAL_REFRESH_VERSION) {
-  if (typeof projectId !== "string" || !/^head-[a-f0-9]{20}$/.test(projectId)) fail("Refresh projectId is invalid.", "INVALID_REFRESH_SCHEMA");
+} = {}, protocolVersion = INCREMENTAL_REFRESH_VERSION, storage = null, originalFormat = null) {
+  const format = originalFormat || formatForVerifiedOwner(storage);
+  if (typeof projectId !== "string" || !new RegExp(`^${format.projectPrefix}[a-f0-9]{20}$`).test(projectId)) fail("Refresh projectId is invalid.", "INVALID_REFRESH_SCHEMA");
   if (typeof baseWorldModelId !== "string" || !/^world-model-[a-f0-9]{24}$/.test(baseWorldModelId)) fail("Refresh base World Model id is invalid.", "INVALID_REFRESH_SCHEMA");
   normalizedSourceSnapshotId(baseSourceSnapshotId, "baseSourceSnapshotId");
   if (!TRIGGER_KINDS.has(triggerKind)) fail("Refresh trigger kind is unsupported.", "INVALID_REFRESH_TRIGGER");
@@ -134,7 +136,7 @@ function buildIncrementalRefreshRequestVersion({
   const payload = {
     schemaVersion: SCHEMA_VERSION,
     kind: "IncrementalRefreshRequest",
-    protocol: { name: "head-agent-core-incremental-refresh", version: protocolVersion },
+    protocol: { name: format.protocol("head-agent-core-incremental-refresh"), version: protocolVersion },
     projectId,
     baseWorldModelId,
     baseSourceSnapshotId,
@@ -150,15 +152,16 @@ function buildIncrementalRefreshRequestVersion({
   return { ...payload, refreshRequestId: requestIdentity.id, refreshRequestHash: requestIdentity.hash };
 }
 
-export function buildIncrementalRefreshRequest(options = {}) {
-  return buildIncrementalRefreshRequestVersion(options, INCREMENTAL_REFRESH_VERSION);
+export function buildIncrementalRefreshRequest(options = {}, storage = null) {
+  return buildIncrementalRefreshRequestVersion(options, INCREMENTAL_REFRESH_VERSION, storage);
 }
 
-export function verifyIncrementalRefreshRequest(request) {
+export function verifyIncrementalRefreshRequest(request, expectedOwner = null) {
   if (!request || typeof request !== "object" || Array.isArray(request)) fail("Incremental refresh request is invalid.", "INVALID_REFRESH_SCHEMA");
+  const format = familyFormatForOriginal("head-agent-core-incremental-refresh", request, expectedOwner);
   const protocolVersion = request.protocol?.version;
   if (![LEGACY_INCREMENTAL_REFRESH_VERSION, INCREMENTAL_REFRESH_VERSION].includes(protocolVersion)
-    || request.protocol?.name !== "head-agent-core-incremental-refresh") fail("Incremental refresh request protocol is unsupported.", "INVALID_REFRESH_SCHEMA");
+    || !format) fail("Incremental refresh request protocol is unsupported.", "INVALID_REFRESH_SCHEMA");
   const rebuilt = buildIncrementalRefreshRequestVersion({
     projectId: request.projectId,
     baseWorldModelId: request.baseWorldModelId,
@@ -167,7 +170,7 @@ export function verifyIncrementalRefreshRequest(request) {
     triggerEvidenceIds: request.trigger?.evidenceIds,
     expectedChangedPaths: request.expectation?.mode === "exact" ? request.expectation.paths : null,
     additionalParentSourceSnapshotIds: request.additionalParentSourceSnapshotIds,
-  }, protocolVersion);
+  }, protocolVersion, expectedOwner, format);
   if (!REQUEST_PATTERN.test(request.refreshRequestId || "") || canonicalJson(rebuilt) !== canonicalJson(request)) fail("Incremental refresh request identity verification failed.", "REFRESH_REQUEST_DIGEST_MISMATCH");
   return request;
 }
@@ -190,7 +193,7 @@ function runBinding(inspected, nextSourceSnapshotId) {
   const state = inspected.state;
   if (state.activeRunId) {
     if (!/^run-[A-Za-z0-9-]+$/.test(state.activeRunId)) fail("Active Run id is invalid.", "REFRESH_RUN_STATE_INVALID");
-    const runFile = path.join(inspected.project.projectRoot, ".head", "sessions", "runs", state.activeRunId, "run.json");
+    const runFile = path.join(inspected.project.projectRoot, formatForVerifiedOwner(inspected.storage).directory, "sessions", "runs", state.activeRunId, "run.json");
     const run = readJson(runFile, "Active Run canon");
     if (run.status !== "active" || run.executionContractId !== state.activeExecutionContractId || !run.capsuleId) fail("Active Run canon does not match Session state.", "REFRESH_RUN_STATE_INVALID");
     const capsule = readContextCapsule({ root: inspected.project.projectRoot, capsuleId: run.capsuleId }).capsule;
@@ -282,7 +285,7 @@ function buildReceipt({ request, previousSnapshot, nextSnapshot, status, inspect
   return { ...payload, refreshReceiptId: receiptIdentity.id, refreshReceiptHash: receiptIdentity.hash };
 }
 
-export function verifyIncrementalRefreshReceipt(receipt) {
+export function verifyIncrementalRefreshReceipt(receipt, expectedOwner = null) {
   if (!receipt || typeof receipt !== "object" || Array.isArray(receipt)) fail("Incremental refresh receipt is invalid.", "INVALID_REFRESH_SCHEMA");
   assertFields(receipt, ["schemaVersion", "kind", "protocol", "projectId", "refreshRequestId", "refreshRequestHash", "status", "base", "next", "observedChanges", "revisionTransition", "executionDrift", "projectionDisposition", "authority", "instructionAuthority", "promotionAuthority", "canonMutation", "refreshReceiptId", "refreshReceiptHash"], "Incremental refresh receipt");
   assertFields(receipt.base, ["worldModelId", "sourceSnapshotId", "graphSnapshotId"], "Incremental refresh receipt base");
@@ -291,11 +294,12 @@ export function verifyIncrementalRefreshReceipt(receipt) {
   assertFields(receipt.revisionTransition, ["reusedRevisionCount", "createdRevisionCount", "parentedRevisionCount"], "Incremental refresh receipt revision transition");
   assertFields(receipt.executionDrift, ["status", "activeRunId", "wholePlanId", "executionContractId", "capsuleId", "pinnedWorldModelId", "pinnedSourceSnapshotId", "refreshedSourceSnapshotId", "driftDetected", "requiredHeadAction"], "Incremental refresh receipt execution drift");
   assertFields(receipt.projectionDisposition, ["graph", "documents"], "Incremental refresh receipt projection disposition");
+  const format = familyFormatForOriginal("head-agent-core-incremental-refresh", receipt, expectedOwner);
   const protocolVersion = receipt.protocol?.version;
   if (!RECEIPT_PATTERN.test(receipt.refreshReceiptId || "") || !REQUEST_PATTERN.test(receipt.refreshRequestId || "")
     || !["unchanged", "refreshed"].includes(receipt.status)
     || receipt.schemaVersion !== SCHEMA_VERSION
-    || receipt.protocol?.name !== "head-agent-core-incremental-refresh"
+    || !format
     || ![LEGACY_INCREMENTAL_REFRESH_VERSION, INCREMENTAL_REFRESH_VERSION].includes(protocolVersion)
     || receipt.authority !== "verified-observed-state-refresh-evidence"
     || receipt.instructionAuthority !== false || receipt.promotionAuthority !== false || receipt.canonMutation !== "none") {
@@ -351,18 +355,18 @@ export function verifyIncrementalRefreshReceipt(receipt) {
   return receipt;
 }
 
-function requestFile(projectRoot, requestId) {
+function requestFile(projectRoot, requestId, storage = null) {
   if (!REQUEST_PATTERN.test(requestId || "")) fail("Incremental refresh request id is invalid.", "INVALID_REFRESH_REQUEST_ID");
-  return path.join(projectRoot, ".head", "refresh", "requests", `${requestId}.json`);
+  return path.join(projectRoot, formatForVerifiedOwner(storage).directory, "refresh", "requests", `${requestId}.json`);
 }
 
-function receiptFile(projectRoot, receiptId) {
+function receiptFile(projectRoot, receiptId, storage = null) {
   if (!RECEIPT_PATTERN.test(receiptId || "")) fail("Incremental refresh receipt id is invalid.", "INVALID_REFRESH_RECEIPT_ID");
-  return path.join(projectRoot, ".head", "refresh", "receipts", `${receiptId}.json`);
+  return path.join(projectRoot, formatForVerifiedOwner(storage).directory, "refresh", "receipts", `${receiptId}.json`);
 }
 
-function currentFile(projectRoot) {
-  return path.join(projectRoot, ".head", "refresh", "current.json");
+function currentFile(projectRoot, storage = null) {
+  return path.join(projectRoot, formatForVerifiedOwner(storage).directory, "refresh", "current.json");
 }
 
 function persistImmutable(file, document, verifier, label) {
@@ -391,10 +395,11 @@ function buildPointer(receipt) {
   return { ...payload, refreshPointerId: pointerIdentity.id, refreshPointerHash: pointerIdentity.hash };
 }
 
-function verifyPointer(pointer) {
+function verifyPointer(pointer, storage = null) {
+  const format = formatForVerifiedOwner(storage);
   assertFields(pointer, ["schemaVersion", "kind", "projectId", "refreshRequestId", "refreshReceiptId", "worldModelId", "sourceSnapshotId", "refreshPointerId", "refreshPointerHash"], "Incremental refresh pointer");
   if (!pointer || pointer.schemaVersion !== SCHEMA_VERSION || pointer.kind !== "IncrementalRefreshPointer"
-    || !/^head-[a-f0-9]{20}$/.test(pointer.projectId || "")
+    || !new RegExp(`^${format.projectPrefix}[a-f0-9]{20}$`).test(pointer.projectId || "")
     || !RECEIPT_PATTERN.test(pointer.refreshReceiptId || "") || !REQUEST_PATTERN.test(pointer.refreshRequestId || "")
     || !/^world-model-[a-f0-9]{24}$/.test(pointer.worldModelId || "") || !SOURCE_SNAPSHOT_PATTERN.test(pointer.sourceSnapshotId || "")) {
     fail("Incremental refresh pointer is invalid.", "INVALID_REFRESH_POINTER");
@@ -411,18 +416,18 @@ function verifyPointer(pointer) {
 
 export function readIncrementalRefreshRequest({ root = ".", refreshRequestId } = {}) {
   const inspected = readyProject(root);
-  const file = requestFile(inspected.project.projectRoot, refreshRequestId);
+  const file = requestFile(inspected.project.projectRoot, refreshRequestId, inspected.storage);
   if (!fs.existsSync(file)) fail(`Incremental refresh request is missing: ${refreshRequestId}`, "REFRESH_REQUEST_NOT_FOUND");
-  const request = verifyIncrementalRefreshRequest(readJson(file, "Incremental refresh request"));
+  const request = verifyIncrementalRefreshRequest(readJson(file, "Incremental refresh request"), inspected.storage);
   if (request.projectId !== inspected.project.projectId) fail("Incremental refresh request belongs to another project.", "REFRESH_PROJECT_MISMATCH");
   return { status: "verified", file, request };
 }
 
 export function readIncrementalRefreshReceipt({ root = ".", refreshReceiptId, storeAdapter = null } = {}) {
   const inspected = readyProject(root);
-  const file = receiptFile(inspected.project.projectRoot, refreshReceiptId);
+  const file = receiptFile(inspected.project.projectRoot, refreshReceiptId, inspected.storage);
   if (!fs.existsSync(file)) fail(`Incremental refresh receipt is missing: ${refreshReceiptId}`, "REFRESH_RECEIPT_NOT_FOUND");
-  const receipt = verifyIncrementalRefreshReceipt(readJson(file, "Incremental refresh receipt"));
+  const receipt = verifyIncrementalRefreshReceipt(readJson(file, "Incremental refresh receipt"), inspected.storage);
   if (receipt.projectId !== inspected.project.projectId) fail("Incremental refresh receipt belongs to another project.", "REFRESH_PROJECT_MISMATCH");
   const requestEntry = readIncrementalRefreshRequest({ root: inspected.project.projectRoot, refreshRequestId: receipt.refreshRequestId });
   if (requestEntry.request.refreshRequestHash !== receipt.refreshRequestHash
@@ -448,14 +453,14 @@ export function readIncrementalRefreshReceipt({ root = ".", refreshReceiptId, st
 
 export function inspectIncrementalRefresh({ root = ".", storeAdapter = null } = {}) {
   const inspected = readyProject(root);
-  const file = currentFile(inspected.project.projectRoot);
+  const file = currentFile(inspected.project.projectRoot, inspected.storage);
   const world = readWorldModel({ root: inspected.project.projectRoot, storeAdapter });
   if (!fs.existsSync(file)) return {
     status: "not-refreshed",
     currentWorldModelId: world.snapshot.worldModelId,
     currentSourceSnapshotId: world.snapshot.temporalProvenanceGraph.sourceSnapshotId,
   };
-  const pointer = verifyPointer(readJson(file, "Incremental refresh pointer"));
+  const pointer = verifyPointer(readJson(file, "Incremental refresh pointer"), inspected.storage);
   if (pointer.projectId !== inspected.project.projectId) fail("Incremental refresh pointer belongs to another project.", "REFRESH_PROJECT_MISMATCH");
   const receipt = readIncrementalRefreshReceipt({ root: inspected.project.projectRoot, refreshReceiptId: pointer.refreshReceiptId, storeAdapter }).receipt;
   if (receipt.refreshRequestId !== pointer.refreshRequestId || receipt.next.worldModelId !== pointer.worldModelId || receipt.next.sourceSnapshotId !== pointer.sourceSnapshotId) {
@@ -529,12 +534,13 @@ async function refreshWorldModelLocked({
     triggerEvidenceIds,
     expectedChangedPaths,
     additionalParentSourceSnapshotIds,
-  });
+  }, inspected.storage);
   const repositoryScanExecution = await executeIncrementalRepositoryScan({
     projectRoot,
-    managedRootFiles: managedRootFilesForProject(inspected.project),
-    sourceScope: readRepositorySourceScope({ projectRoot }).sourceScope,
+    managedRootFiles: managedRootFilesForProject(inspected.project, inspected.storage),
+    sourceScope: readRepositorySourceScope({ projectRoot, storage: inspected.storage }).sourceScope,
     previousSnapshot,
+    storage: inspected.storage,
   });
   const observedPaths = combinedPaths(repositoryScanExecution.diagnostics.changes);
   if (request.expectation.mode === "exact" && canonicalJson(observedPaths) !== canonicalJson(request.expectation.paths)) {
@@ -580,7 +586,7 @@ async function refreshWorldModelLocked({
     status: requiresRefresh ? "refreshed" : "unchanged",
     inspected,
   });
-  const requestEntry = persistImmutable(requestFile(projectRoot, request.refreshRequestId), request, verifyIncrementalRefreshRequest, "Incremental refresh request");
+  const requestEntry = persistImmutable(requestFile(projectRoot, request.refreshRequestId, inspected.storage), request, (record) => verifyIncrementalRefreshRequest(record, inspected.storage), "Incremental refresh request");
 
   let world = stored;
   if (requiresRefresh) {
@@ -602,17 +608,17 @@ async function refreshWorldModelLocked({
       fail("Persisted World Model does not match the verified refresh receipt.", "REFRESH_PERSISTENCE_MISMATCH");
     }
   }
-  const receiptEntry = persistImmutable(receiptFile(projectRoot, receipt.refreshReceiptId), receipt, verifyIncrementalRefreshReceipt, "Incremental refresh receipt");
+  const receiptEntry = persistImmutable(receiptFile(projectRoot, receipt.refreshReceiptId, inspected.storage), receipt, (record) => verifyIncrementalRefreshReceipt(record, inspected.storage), "Incremental refresh receipt");
   const pointer = buildPointer(receipt);
-  atomicWrite(currentFile(projectRoot), json(pointer));
-  const storedPointer = verifyPointer(readJson(currentFile(projectRoot), "Incremental refresh pointer"));
+  atomicWrite(currentFile(projectRoot, inspected.storage), json(pointer));
+  const storedPointer = verifyPointer(readJson(currentFile(projectRoot, inspected.storage), "Incremental refresh pointer"), inspected.storage);
   if (canonicalJson(storedPointer) !== canonicalJson(pointer)) fail("Incremental refresh pointer changed during persistence.", "REFRESH_POINTER_WRITE_MISMATCH");
 
   return {
     status: receipt.status,
     requestFile: requestEntry.file,
     receiptFile: receiptEntry.file,
-    pointerFile: currentFile(projectRoot),
+    pointerFile: currentFile(projectRoot, inspected.storage),
     request,
     receipt,
     pointer,
@@ -635,11 +641,13 @@ export async function refreshWorldModel(options = {}) {
     projectRoot: inspected.project.projectRoot,
     projectId: inspected.project.projectId,
     lease: options.writerLease || null,
+    storage: inspected.storage,
   }, async (writerLease) => {
     const beforeSnapshot = readWorldModel({ root: inspected.project.projectRoot, storeAdapter: options.storeAdapter || null }).snapshot;
     const preflight = preparePostRefreshProjection({
       projectRoot: inspected.project.projectRoot,
       projectId: inspected.project.projectId,
+      storage: inspected.storage,
       graph: beforeSnapshot.temporalProvenanceGraph,
       documentProjectionAdapter: options.documentProjectionAdapter || null,
     });
@@ -648,6 +656,7 @@ export async function refreshWorldModel(options = {}) {
     const postRefreshProjection = completePostRefreshProjection({
       projectRoot: inspected.project.projectRoot,
       projectId: inspected.project.projectId,
+      storage: inspected.storage,
       beforeSnapshot,
       afterSnapshot,
       refreshRequest: refreshed.request,

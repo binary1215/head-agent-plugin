@@ -1,5 +1,6 @@
 // Routing only: the retained implementations still enforce their own contracts.
 // Keep discovery and raw CLI/MCP dispatch on this same exact classification.
+import { resolveOperation } from "./lode-operation-contract.mjs";
 const mutations = Object.freeze([
   ["worker-prepare", "head_bounded_worker_prepare"],
   ["worker-start", "head_bounded_worker_start"],
@@ -20,7 +21,8 @@ export function requireSurface(surface) {
 }
 
 export function isManagedMutation(name) {
-  return typeof name === "string" && mutations.some(pair => pair.includes(name));
+  const semantic = resolveOperation(name)?.semanticName ?? name;
+  return typeof semantic === "string" && mutations.some(pair => pair.includes(semantic));
 }
 
 export function requireOperationSurface(name, surface = "ordinary", { workerBound = false } = {}) {

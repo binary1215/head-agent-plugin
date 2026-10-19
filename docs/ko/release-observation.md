@@ -4,7 +4,7 @@
 
 상태: 프로토콜 `0.1.0`에 따른 provider-neutral 관측 vertical이 구현되어 있습니다.
 
-HEAD는 제품 Git ref 상태와 호스트가 제공한 배포 결과를 기록하지만, 어느 쪽도 배포 권한, 제품 결정 또는 복구 방향으로 취급하지 않습니다.
+Lode는 제품 Git ref 상태와 호스트가 제공한 배포 결과를 기록하지만, 어느 쪽도 배포 권한, 제품 결정 또는 복구 방향으로 취급하지 않습니다.
 
 ## 흐름과 권한
 
@@ -62,7 +62,7 @@ head release-status <project>
 
 ## MCP
 
-- `head_release_observe`
-- `head_release_status`
+- `lode_release_observe`
+- `lode_release_status`
 
-`head_release_observe`에는 `confirm_host_observation: true`가 필요합니다. 이 확인은 모델이 실수로 만든 입력의 수집을 막지만, 배포 승인이 아니며 관측 결과에 권한을 더하지 않습니다.
+`lode_release_observe`에는 `confirm_host_observation: true`가 필요합니다. 이 확인은 모델이 실수로 만든 입력의 수집을 막지만, 배포 승인이 아니며 관측 결과에 권한을 더하지 않습니다.

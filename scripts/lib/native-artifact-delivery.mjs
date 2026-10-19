@@ -8,16 +8,23 @@ import { resolveVerifiedProcessSupervisor, verifyProcessSupervisorManifest } fro
 import { resolveVerifiedArcadeDbNativeBridge, verifyArcadeDbNativeBridgeManifest } from "./arcadedb-native-bridge.mjs";
 
 export const NATIVE_ARTIFACT_DELIVERY_VERSION = "0.1.0";
-const DEFAULT_RELEASE_ROOT = "https://github.com/binary1215/head-agent-plugin/releases/download";
+const DEFAULT_RELEASE_ROOT = "https://github.com/binary1215/lode/releases/download";
 const MAX_CHECKSUM_BYTES = 1024 * 1024;
 const MAX_ARCHIVE_BYTES = 128 * 1024 * 1024;
 const MAX_EXPANDED_BYTES = 256 * 1024 * 1024;
-const TARGETS = Object.freeze({
+const LEGACY_TARGETS = Object.freeze({
   "darwin-arm64": Object.freeze({ package: "head-agent-worker-darwin-arm64", directory: "darwin-arm64", goos: "darwin", goarch: "arm64", binaries: ["head-agent-worker", "head-agent-supervisor", "head-agent-arcadedb-bridge"] }),
   "darwin-x64": Object.freeze({ package: "head-agent-worker-darwin-amd64", directory: "darwin-x64", goos: "darwin", goarch: "amd64", binaries: ["head-agent-worker", "head-agent-supervisor", "head-agent-arcadedb-bridge"] }),
   "linux-arm64": Object.freeze({ package: "head-agent-worker-linux-arm64", directory: "linux-arm64", goos: "linux", goarch: "arm64", binaries: ["head-agent-worker", "head-agent-supervisor", "head-agent-arcadedb-bridge"] }),
   "linux-x64": Object.freeze({ package: "head-agent-worker-linux-amd64", directory: "linux-x64", goos: "linux", goarch: "amd64", binaries: ["head-agent-worker", "head-agent-supervisor", "head-agent-arcadedb-bridge"] }),
   "win32-x64": Object.freeze({ package: "head-agent-worker-windows-amd64", directory: "windows-x64", goos: "windows", goarch: "amd64", binaries: ["head-agent-worker.exe", "head-agent-supervisor.exe", "head-agent-arcadedb-bridge.exe"] }),
+});
+const TARGETS = Object.freeze({
+  "darwin-arm64": Object.freeze({ package: "lode-agent-worker-darwin-arm64", directory: "darwin-arm64", goos: "darwin", goarch: "arm64", binaries: ["lode-agent-worker", "lode-agent-supervisor", "lode-agent-arcadedb-bridge"] }),
+  "darwin-x64": Object.freeze({ package: "lode-agent-worker-darwin-amd64", directory: "darwin-x64", goos: "darwin", goarch: "amd64", binaries: ["lode-agent-worker", "lode-agent-supervisor", "lode-agent-arcadedb-bridge"] }),
+  "linux-arm64": Object.freeze({ package: "lode-agent-worker-linux-arm64", directory: "linux-arm64", goos: "linux", goarch: "arm64", binaries: ["lode-agent-worker", "lode-agent-supervisor", "lode-agent-arcadedb-bridge"] }),
+  "linux-x64": Object.freeze({ package: "lode-agent-worker-linux-amd64", directory: "linux-x64", goos: "linux", goarch: "amd64", binaries: ["lode-agent-worker", "lode-agent-supervisor", "lode-agent-arcadedb-bridge"] }),
+  "win32-x64": Object.freeze({ package: "lode-agent-worker-windows-amd64", directory: "windows-x64", goos: "windows", goarch: "amd64", binaries: ["lode-agent-worker.exe", "lode-agent-supervisor.exe", "lode-agent-arcadedb-bridge.exe"] }),
 });
 
 function fail(code, message) {
@@ -44,8 +51,8 @@ function normalizedMode(mode) {
   return value;
 }
 
-function supportedTarget(platform, arch) {
-  return TARGETS[`${platform}-${arch}`] || null;
+function supportedTarget(platform, arch, legacy = false) {
+  return (legacy ? LEGACY_TARGETS : TARGETS)[`${platform}-${arch}`] || null;
 }
 
 function releaseUrls(version, target, releaseRoot = DEFAULT_RELEASE_ROOT) {
@@ -71,7 +78,7 @@ async function fetchBytes(url, { fetchImplementation, maximumBytes, unavailableC
   try {
     response = await fetchImplementation(url, {
       redirect: "follow",
-      headers: { "user-agent": "head-agent-core-native-installer" },
+      headers: { "user-agent": "lode-agent-core-native-installer" },
       signal: AbortSignal.timeout(30_000),
     });
   } catch (error) {
@@ -221,23 +228,30 @@ export async function acquireVerifiedNativeArtifact({
 } = {}) {
   const selectedMode = normalizedMode(mode);
   if (selectedMode === "off") return { status: "disabled", mode: selectedMode, cleanup() {} };
-  const target = supportedTarget(platform, arch);
+  let target = supportedTarget(platform, arch);
   if (!target) {
     const error = Object.assign(new Error(`No native artifact is published for ${platform}-${arch}.`), { code: "HEAD_NATIVE_TARGET_UNSUPPORTED" });
     if (selectedMode === "auto") return { status: "unavailable", mode: selectedMode, reasonCode: error.code, cleanup() {} };
     throw error;
   }
   if (typeof fetchImplementation !== "function") fail("HEAD_NATIVE_FETCH_UNAVAILABLE", "A fetch implementation is required for native artifact delivery.");
-  const temporaryRoot = fs.mkdtempSync(path.join(path.resolve(temporaryParent), "head-agent-native-"));
+  const temporaryRoot = fs.mkdtempSync(path.join(path.resolve(temporaryParent), "lode-agent-native-"));
   const pluginRoot = path.join(temporaryRoot, "plugin");
   fs.mkdirSync(path.join(pluginRoot, "dist"), { recursive: true });
   const cleanup = () => fs.rmSync(temporaryRoot, { recursive: true, force: true });
   try {
-    const urls = releaseUrls(version, target, releaseRoot);
+    let urls = releaseUrls(version, target, releaseRoot);
     let checksums;
     let archive;
     try {
       checksums = await fetchBytes(urls.checksumsUrl, { fetchImplementation, maximumBytes: MAX_CHECKSUM_BYTES, unavailableCode: "HEAD_NATIVE_RELEASE_UNAVAILABLE" });
+      try { expectedChecksum(checksums, urls.assetName); }
+      catch (error) {
+        if (error.code !== "HEAD_NATIVE_CHECKSUM_MISSING") throw error;
+        target = supportedTarget(platform, arch, true);
+        urls = releaseUrls(version, target, releaseRoot);
+        expectedChecksum(checksums, urls.assetName);
+      }
       archive = await fetchBytes(urls.assetUrl, { fetchImplementation, maximumBytes: MAX_ARCHIVE_BYTES, unavailableCode: "HEAD_NATIVE_RELEASE_UNAVAILABLE" });
     } catch (error) {
       if (selectedMode === "auto" && isUnavailable(error)) {
@@ -274,10 +288,10 @@ export async function acquireVerifiedNativeArtifact({
 }
 
 export function verifyNativeOverlay({ pluginRoot, platform = process.platform, arch = process.arch, version = null } = {}) {
-  const target = supportedTarget(platform, arch);
+  let target = supportedTarget(platform, arch);
   if (!target) fail("HEAD_NATIVE_TARGET_UNSUPPORTED", `No native artifact is published for ${platform}-${arch}.`);
   const targetRoot = path.join(path.resolve(pluginRoot), "dist", target.directory);
-  const expectedEntries = ["ARCADEDB-BRIDGE-MANIFEST.json", "BUILD-METADATA.json", "SUPERVISOR-MANIFEST.json", "WORKER-MANIFEST.json", ...target.binaries].sort();
+
   let entries;
   try {
     const targetStat = fs.lstatSync(targetRoot);
@@ -285,8 +299,14 @@ export function verifyNativeOverlay({ pluginRoot, platform = process.platform, a
     entries = fs.readdirSync(targetRoot).sort();
   }
   catch { fail("HEAD_NATIVE_OVERLAY_INVALID", "Native overlay target directory is unavailable."); }
-  // Older archives remain readable; new builds carry this additional notice file.
+  // File names select only a candidate tuple; every original manifest and
+  // binary is still verified below before this overlay is accepted.
   const requiredEntries = entries.filter((entry) => entry !== "GO-NOTICES.txt");
+  const legacyTarget = supportedTarget(platform, arch, true);
+  const legacyEntries = ["ARCADEDB-BRIDGE-MANIFEST.json", "BUILD-METADATA.json", "SUPERVISOR-MANIFEST.json", "WORKER-MANIFEST.json", ...legacyTarget.binaries].sort();
+  const legacy = JSON.stringify(requiredEntries) === JSON.stringify(legacyEntries);
+  target = legacy ? legacyTarget : target;
+  const expectedEntries = ["ARCADEDB-BRIDGE-MANIFEST.json", "BUILD-METADATA.json", "SUPERVISOR-MANIFEST.json", "WORKER-MANIFEST.json", ...target.binaries].sort();
   if (JSON.stringify(requiredEntries) !== JSON.stringify(expectedEntries)) {
     fail("HEAD_NATIVE_OVERLAY_INVALID", "Native overlay must contain the exact verified target file set.");
   }
@@ -326,6 +346,11 @@ export function verifyNativeOverlay({ pluginRoot, platform = process.platform, a
   const arcadedbBridge = currentTarget
     ? resolveVerifiedArcadeDbNativeBridge({ pluginRoot, platform, arch })
     : verifyForeignBinary("ARCADEDB-BRIDGE-MANIFEST.json", verifyArcadeDbNativeBridgeManifest);
+  if (worker.manifest.kind !== (legacy ? "HeadAgentWorkerManifest" : "LodeAgentWorkerManifest")
+    || supervisor.manifest.kind !== (legacy ? "HeadAgentProcessSupervisorManifest" : "LodeAgentProcessSupervisorManifest")
+    || arcadedbBridge.manifest.kind !== (legacy ? "HeadAgentArcadeDbBridgeManifest" : "LodeAgentArcadeDbBridgeManifest")) {
+    fail("HEAD_NATIVE_OVERLAY_INVALID", "Native overlay manifest families are incoherent.");
+  }
   return {
     targetDirectory: path.basename(path.dirname(worker.manifestPath)),
     buildCommit: metadata?.commit || null,
@@ -360,9 +385,12 @@ export function verifyNativeBundleOverlay({ pluginRoot, version, commit = null }
   });
   const buildCommits = [...new Set(targets.map((target) => target.buildCommit))];
   if (buildCommits.length !== 1) fail("HEAD_NATIVE_BUNDLE_COMMIT_MISMATCH", "Native bundle targets do not share one source commit.");
+  const manifestKinds = new Set(targets.map(target => JSON.parse(fs.readFileSync(path.join(distRoot, target.targetDirectory, "WORKER-MANIFEST.json"), "utf8")).kind));
+  if (manifestKinds.size !== 1) fail("HEAD_NATIVE_BUNDLE_INVALID", "Native bundle targets do not share one manifest family.");
   const identity = {
     protocolVersion: NATIVE_ARTIFACT_DELIVERY_VERSION,
-    kind: "HeadAgentNativeBundle",
+    kind: manifestKinds.has("HeadAgentWorkerManifest")
+      ? "HeadAgentNativeBundle" : "LodeAgentNativeBundle",
     version,
     buildCommit: buildCommits[0],
     targets,
@@ -389,15 +417,17 @@ export function assembleVerifiedNativeBundle({ artifactsRoot, outputRoot, versio
   } catch {
     fail("HEAD_NATIVE_BUNDLE_ARTIFACTS_INVALID", "Native bundle artifact directory is unavailable or unsafe.");
   }
-  const expectedArchives = Object.values(TARGETS).map((target) => `${target.package}.tar.gz`).sort();
   const actualArchives = artifactEntries.map((entry) => entry.name).sort();
+  const legacyArchives = Object.values(LEGACY_TARGETS).map((target) => `${target.package}.tar.gz`).sort();
+  const selectedTargets = JSON.stringify(actualArchives) === JSON.stringify(legacyArchives) ? LEGACY_TARGETS : TARGETS;
+  const expectedArchives = Object.values(selectedTargets).map((target) => `${target.package}.tar.gz`).sort();
   if (artifactEntries.some((entry) => !entry.isFile() || entry.isSymbolicLink())
     || JSON.stringify(actualArchives) !== JSON.stringify(expectedArchives)) {
     fail("HEAD_NATIVE_BUNDLE_ARTIFACTS_INVALID", "Native bundle requires the exact supported platform archives.");
   }
   fs.mkdirSync(path.join(output, "dist"), { recursive: true });
   try {
-    for (const target of Object.values(TARGETS)) {
+    for (const target of Object.values(selectedTargets)) {
       const archiveFile = path.join(artifacts, `${target.package}.tar.gz`);
       const archive = fs.readFileSync(archiveFile);
       if (archive.length > MAX_ARCHIVE_BYTES) fail("HEAD_NATIVE_ARTIFACT_TOO_LARGE", "Native artifact exceeds the fixed download budget.");

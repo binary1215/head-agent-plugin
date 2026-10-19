@@ -1,8 +1,15 @@
+import { formatForVerifiedOwner, familyFormatForOriginal } from "./project-storage-format.mjs";
+const sessionIdOf = record => {
+  const format = familyFormatForOriginal({ sessionIdentity: true }, record);
+  return format ? record?.[format.sessionIdField] : undefined;
+};
+const originalFormat = record => familyFormatForOriginal({ kind: record?.kind }, record);
+const lineageFormat = record => familyFormatForOriginal({ sessionIdentity: true }, record);
 import fs from "node:fs";
 import path from "node:path";
 import { assertRunSession } from "./session-routing.mjs";
 import { artifactAuthorityBoundary, verifyArtifactAuthorityBoundary } from "./authority-plane-contract.mjs";
-import { inspectProject } from "./head-core.mjs";
+import { inspectProject } from "./lode-core.mjs";
 import { buildFreshHeadReview, createResultPacket, readLineageArtifact } from "./execution-lineage.mjs";
 import { finishRun, getPendingReviewContext, inspectRunStorageTransition } from "./run-lineage.mjs";
 import { withProjectMutationAsync } from "./project-mutation-lock.mjs";
@@ -36,10 +43,10 @@ function assertIdentity(document, kind, prefix, idField, hashField) {
     || !same(identify(payload, prefix, idField, hashField), document)) fail("Integration result identity or authority differs.");
   verifyArtifactAuthorityBoundary(kind, document.authorityBoundary);
 }
-function fileFor(root, integrationId, suffix, create = false) {
+function fileFor(root, integrationId, suffix, create = false, storage) {
   if (!/^worker-integration-[a-f0-9]{24}--[a-f0-9]{24}$/.test(integrationId || "")) fail("Invalid integration identity.");
   if (suffix !== "result-application" && !/^worker-integration-verification-[a-f0-9]{24}$/.test(suffix || "")) fail("Invalid integration result suffix.");
-  return path.join(workerIntegrationDirectory(root, create), `${integrationId}--${suffix}.json`);
+  return path.join(workerIntegrationDirectory(root, create, storage), `${integrationId}--${suffix}.json`);
 }
 function membersFor(intent) {
   return intent.members.map(({ candidate, ...member }) => ({ ...member,
@@ -94,16 +101,16 @@ function resultFields(document) {
       effectDisposition: document.effectDisposition, effectEvidence: document.effectEvidence, dependencyObservations: document.dependencyObservations,
       basisObservation: document.basisObservation,
       basisDigest: document.basisDigest, headReportDigest: digest(json(report)), evidence: report.evidence, ...flags }],
-    verification: [{ kind: "HeadWorkerIntegrationVerification", basisDigest: document.basisDigest,
+    verification: [{ kind: lineageFormat(document.lineage).kind("HeadWorkerIntegrationVerification"), basisDigest: document.basisDigest,
       headReportDigest: digest(json(report)), checks: report.verification,
-      semanticAssessmentOwner: "head", compilerSufficiencyClaimed: false, ...flags }] };
+      semanticAssessmentOwner: lineageFormat(document.lineage).roleField, compilerSufficiencyClaimed: false, ...flags }] };
 }
 
 export function verifyWorkerIntegrationVerification(document) {
   fields(document, ["kind", "protocolVersion", "authorityBoundary", "integrationId", "integrationHash", "lineage",
     "memberProvenance", "basisDigest", "observedBasisDigest", "effectDisposition", "effectEvidence", "dependencyObservations", "basisObservation", "headReport", "wholeResultPacket", ...Object.keys(flags), "verificationId", "verificationHash"]);
   assertIdentity(document, "WorkerIntegrationVerification", "worker-integration-verification", "verificationId", "verificationHash");
-  if (!validHash(document.basisDigest) || !validHash(document.observedBasisDigest)
+  if (!lineageFormat(document.lineage) || !validHash(document.basisDigest) || !validHash(document.observedBasisDigest)
     || !same(normalizedReport(document.headReport), document.headReport) || !Array.isArray(document.dependencyObservations)
     || !["complete", "settled-incomplete"].includes(document.effectDisposition)
     || document.effectDisposition !== document.effectEvidence?.disposition
@@ -121,11 +128,11 @@ export function verifyWorkerIntegrationVerification(document) {
   return document;
 }
 function readVerification(root, intent, verificationId) {
-  const document = verifyWorkerIntegrationVerification(JSON.parse(readIntegrationBytes(fileFor(root, intent.integrationId, verificationId))));
+  const document = verifyWorkerIntegrationVerification(JSON.parse(readIntegrationBytes(fileFor(root, intent.integrationId, verificationId, false, lineageFormat(intent.lineage)))));
   if (document.verificationId !== verificationId || document.integrationId !== intent.integrationId
     || document.integrationHash !== intent.integrationHash || !same(document.lineage, intent.lineage)
     || !same(document.memberProvenance, membersFor(intent))) fail("HEAD verification belongs to different integration provenance.");
-  const application = readWorkerPatchApplicationEvidence({ root, integrationId: intent.integrationId });
+  const application = readWorkerPatchApplicationEvidence({ root, integrationId: intent.integrationId, storage: lineageFormat(intent.lineage) });
   if (!same(document.effectEvidence, effectEvidence(application))) fail("Frozen verification differs from exact stored effect and settlement evidence.");
   return document;
 }
@@ -148,27 +155,27 @@ async function applicationFor(input, inspection) {
   return read(input);
 }
 async function requireSettledApplication(root, intent, basisDigest, inspection) {
-  const application = await applicationFor({ root, integrationId: intent.integrationId }, inspection);
+  const application = await applicationFor({ root, integrationId: intent.integrationId, storage: lineageFormat(intent.lineage) }, inspection);
   // Caller prose, a test observation hook, or an allEffectsCompleted boolean
   // cannot substitute for the stored exact claim/attempt/receipt/settlement.
-  const stored = readWorkerPatchApplicationEvidence({ root, integrationId: intent.integrationId });
+  const stored = readWorkerPatchApplicationEvidence({ root, integrationId: intent.integrationId, storage: lineageFormat(intent.lineage) });
   const effects = effectEvidence(stored);
   if (!same(application.intent, intent) || !same(effectEvidence(application), effects)) fail("Observed effects differ from exact stored evidence.");
   requireBasis(intent, application.currentBasis, basisDigest);
-  const basis = readWorkerIntegrationBasis({ root, integrationId: intent.integrationId });
+  const basis = readWorkerIntegrationBasis({ root, integrationId: intent.integrationId, storage: lineageFormat(intent.lineage) });
   requireBasis(intent, basis, basisDigest);
   return { effects, basis };
 }
 
 // Explicit HEAD assessment, not a user approval gate. A changed observation gets
 // a new immutable verification; no stale candidate reserves publication forever.
-export async function prepareWorkerIntegrationResult({ root = ".", integrationId, basisDigest, ...report } = {}, inspection = {}) {
+export async function prepareWorkerIntegrationResult({ root = ".", integrationId, basisDigest, storage, ...report } = {}, inspection = {}) {
   if (Object.hasOwn(report, "effectDisposition") || Object.hasOwn(report, "effectEvidence")) fail("Effect disposition is derived from stored evidence, not caller-selected.");
   return withProjectMutationAsync({ root, scope: "session-recovery" }, async () => {
-    const intent = requireCurrentWorkerPatchIntegration({ root, integrationId });
+    const intent = requireCurrentWorkerPatchIntegration({ root, integrationId, storage });
     const { effects } = await requireSettledApplication(root, intent, basisDigest, inspection);
     const headReport = normalizedReport(report);
-    const basis = readWorkerIntegrationBasis({ root, integrationId });
+    const basis = readWorkerIntegrationBasis({ root, integrationId, storage });
     requireBasis(intent, basis, basisDigest);
     const payload = { kind: "WorkerIntegrationVerification", protocolVersion: "0.1.0",
       authorityBoundary: artifactAuthorityBoundary("WorkerIntegrationVerification"),
@@ -181,15 +188,15 @@ export async function prepareWorkerIntegrationResult({ root = ".", integrationId
       "worker-integration-verification", "verificationId", "verificationHash"));
     // Recheck after the only asynchronous boundary; no source or P2 mutation is
     // authorized by the observation or by its semantic-assessment prose.
-    requireCurrentWorkerPatchIntegration({ root, integrationId });
-    requireBasis(intent, readWorkerIntegrationBasis({ root, integrationId }), basisDigest);
-    const created = publishIntegrationJson(fileFor(root, integrationId, document.verificationId, true), document);
+    requireCurrentWorkerPatchIntegration({ root, integrationId, storage });
+    requireBasis(intent, readWorkerIntegrationBasis({ root, integrationId, storage }), basisDigest);
+    const created = publishIntegrationJson(fileFor(root, integrationId, document.verificationId, true, lineageFormat(intent.lineage)), document);
     return { status: created ? "prepared" : "existing", verification: document, resultPacketPublished: false, ...flags };
   });
 }
 
 function readApplication(root, intent) {
-  const file = fileFor(root, intent.integrationId, "result-application");
+  const file = fileFor(root, intent.integrationId, "result-application", false, lineageFormat(intent.lineage));
   if (!fs.existsSync(file)) return null;
   const application = JSON.parse(readIntegrationBytes(file));
   fields(application, ["kind", "protocolVersion", "authorityBoundary", "integrationId", "integrationHash", "lineage",
@@ -201,15 +208,15 @@ function readApplication(root, intent) {
     || !same(application.lineage, intent.lineage) || application.verificationHash !== verification.verificationHash
     || application.resultPacketId !== verification.wholeResultPacket.resultPacketId
     || application.status !== "whole-result-published-awaiting-review" || application.freshHeadReviewRequired !== true
-    || !validHash(application.reviewContextHash) || application.reviewContextId !== `fresh-head-review-${application.reviewContextHash.slice(0, 24)}`) fail("Integration result receipt differs from its frozen provenance.");
+    || !validHash(application.reviewContextHash) || application.reviewContextId !== `${lineageFormat(intent.lineage).value("fresh-head-review")}-${application.reviewContextHash.slice(0, 24)}`) fail("Integration result receipt differs from its frozen provenance.");
   const resultPacket = readLineageArtifact({ root, artifactId: application.resultPacketId }).artifact;
   if (!same(resultPacket, verification.wholeResultPacket)) fail("Published ResultPacket differs from frozen whole result.");
-  const run = JSON.parse(readIntegrationBytes(path.join(fs.realpathSync(root), ".head/sessions/runs", intent.lineage.runId, "run.json")));
+  const run = JSON.parse(readIntegrationBytes(path.join(fs.realpathSync(root), lineageFormat(intent.lineage).directory, "sessions/runs", intent.lineage.runId, "run.json")));
   if (run.runId !== intent.lineage.runId || run.resultPacketId !== resultPacket.resultPacketId
     || run.wholePlanId !== intent.lineage.wholePlanId || run.executionContractId !== intent.lineage.executionContractId
     || run.capsuleId !== intent.lineage.contextCapsuleId || !["awaiting_review", "reviewed"].includes(run.status)) fail("Published whole result differs from its historical Run.");
   const historicalReview = buildFreshHeadReview({ root, wholePlanId: intent.lineage.wholePlanId,
-    resultPacketId: resultPacket.resultPacketId, sessionId: intent.lineage.headSessionId, runId: intent.lineage.runId, historical: true }).review;
+    resultPacketId: resultPacket.resultPacketId, sessionId: sessionIdOf(intent.lineage), runId: intent.lineage.runId, historical: true }).review;
   if (historicalReview.reviewContextId !== application.reviewContextId
     || historicalReview.reviewContextHash !== application.reviewContextHash) fail("Publication receipt references a different historical Fresh HEAD review.");
   return { application, verification, resultPacket };
@@ -218,8 +225,8 @@ function readApplication(root, intent) {
 // Immutable historical receipts need no current source/provider, same Session
 // pointer or role-projection readiness. Selected Session record integrity checks
 // still apply through existing readers. This cannot finish another Run.
-export function readWorkerIntegrationResult({ root = ".", integrationId, verificationId } = {}) {
-  const { intent } = readWorkerPatchIntegration({ root, integrationId });
+export function readWorkerIntegrationResult({ root = ".", integrationId, verificationId, storage } = {}) {
+  const { intent } = readWorkerPatchIntegration({ root, integrationId, storage });
   const existing = readApplication(root, intent);
   if (existing) {
     if (verificationId && verificationId !== existing.verification.verificationId) fail("Publication already selected a different exact HEAD verification.");
@@ -235,11 +242,11 @@ function currentTarget(root, intent, packet) {
   const state = inspected.state;
   if (inspected.status !== "ready" || inspected.project.projectId !== lineage.projectId
     || digest(fs.realpathSync(inspected.project.projectRoot)) !== lineage.projectRootDigest
-    || state.sessionId !== lineage.headSessionId || (state.activeRunId || state.pendingReview?.runId) !== lineage.runId
+    || state.sessionId !== sessionIdOf(lineage) || (state.activeRunId || state.pendingReview?.runId) !== lineage.runId
     || state.currentWholePlanId !== lineage.wholePlanId
     || state.activeRunId && (state.mode !== "run" || state.pendingReview || state.activeExecutionContractId !== lineage.executionContractId)
     || !state.activeRunId && (state.mode !== "review" || state.activeExecutionContractId)) fail("Whole result belongs to a different current Run or HEAD Session; current work was not changed.");
-  const run = JSON.parse(readIntegrationBytes(path.join(inspected.project.projectRoot, ".head/sessions/runs", lineage.runId, "run.json")));
+  const run = JSON.parse(readIntegrationBytes(path.join(inspected.project.projectRoot, formatForVerifiedOwner(inspected).directory, "sessions/runs", lineage.runId, "run.json")));
   assertRunSession(inspected.project.projectRoot, run, state);
   if (run.runId !== lineage.runId || !["active", "awaiting_review"].includes(run.status)
     || run.wholePlanId !== lineage.wholePlanId || run.executionContractId !== lineage.executionContractId || run.capsuleId !== lineage.contextCapsuleId
@@ -250,15 +257,15 @@ function currentTarget(root, intent, packet) {
     const storage = inspectRunStorageTransition({ root, inspected });
     if (storage.status !== "committed" || storage.runId !== lineage.runId) fail("Run start storage is not exact and committed.");
   } else if (run.sessionTransition && (run.sessionTransition.kind !== "finish" || run.sessionTransition.artifactId !== packet.resultPacketId
-    || run.sessionTransition.projectId !== lineage.projectId || run.sessionTransition.sessionId !== lineage.headSessionId
+    || run.sessionTransition.projectId !== lineage.projectId || run.sessionTransition.sessionId !== sessionIdOf(lineage)
     || run.sessionTransition.runId !== lineage.runId)) fail("Run already froze a different exact result transition.");
   if (run.status === "awaiting_review" && !run.sessionTransition) fail("Completed result lacks its exact finish transition.");
   return { replay: run.sessionTransition?.kind === "finish" };
 }
 
-export async function publishWorkerIntegrationResult({ root = ".", integrationId, verificationId } = {}, inspection = {}) {
+export async function publishWorkerIntegrationResult({ root = ".", integrationId, verificationId, storage } = {}, inspection = {}) {
   return withProjectMutationAsync({ root, scope: "session-recovery" }, async () => {
-    const historical = readWorkerIntegrationResult({ root, integrationId, verificationId });
+    const historical = readWorkerIntegrationResult({ root, integrationId, verificationId, storage });
     if (historical.application) return { ...historical, status: "already-published", freshHeadReview: null,
       canonicalCommit: "committed", executionReplayAllowed: false, projectionUpdate: { status: "not-requested", ordinaryWorkBlocked: false } };
     const { intent, verification } = historical;
@@ -266,7 +273,7 @@ export async function publishWorkerIntegrationResult({ root = ".", integrationId
     const packet = verification.wholeResultPacket;
     const target = currentTarget(root, intent, packet);
     if (!target.replay) {
-      requireCurrentWorkerPatchIntegration({ root, integrationId });
+      requireCurrentWorkerPatchIntegration({ root, integrationId, storage });
       const { effects, basis } = await requireSettledApplication(root, intent, verification.basisDigest, inspection);
       if (!same(effects, verification.effectEvidence)) fail("Effect evidence changed after HEAD assessment; prepare a new verification.");
       if (verification.observedBasisDigest !== basis.observedBasisDigest
@@ -274,7 +281,7 @@ export async function publishWorkerIntegrationResult({ root = ".", integrationId
         || !same(verification.basisObservation, basisObservation(basis))) {
         fail("Frozen machine observations differ from the current verified basis; prepare a new HEAD verification.", "WORKER_INTEGRATION_REVERIFICATION_REQUIRED");
       }
-      requireCurrentWorkerPatchIntegration({ root, integrationId });
+      requireCurrentWorkerPatchIntegration({ root, integrationId, storage });
       currentTarget(root, intent, packet);
     }
     // The existing Run transition freezes this exact packet before canonical
@@ -302,7 +309,7 @@ export async function publishWorkerIntegrationResult({ root = ".", integrationId
       resultPacketId: packet.resultPacketId, reviewContextId: fresh.review.reviewContextId, reviewContextHash: fresh.review.reviewContextHash,
       status: "whole-result-published-awaiting-review", freshHeadReviewRequired: true, ...flags },
     "worker-integration-result-application", "applicationId", "applicationHash");
-    publishIntegrationJson(fileFor(root, integrationId, "result-application", true), application);
+    publishIntegrationJson(fileFor(root, integrationId, "result-application", true, lineageFormat(intent.lineage)), application);
     return { status: "published", intent, application, verification, resultPacket: packet, freshHeadReview: fresh.review,
       canonicalCommit: result.canonicalCommit, projectionUpdate: result.projectionUpdate, executionReplayAllowed: false, ...flags };
   });

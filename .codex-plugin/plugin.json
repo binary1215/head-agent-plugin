@@ -1,13 +1,13 @@
 {
-  "name": "head-agent-core",
-  "version": "0.3.0-beta.44",
-  "description": "Provider-neutral HEAD continuity with a small constitutional core and optional review-gated Product, Graph, and execution governance.",
+  "name": "lode-agent-core",
+  "version": "0.3.0-beta.45",
+  "description": "Provider-neutral Lode continuity with a small constitutional core and optional review-gated Product, Graph, and execution governance.",
   "author": {
     "name": "ccolt"
   },
   "license": "MIT",
   "keywords": [
-    "head-agent",
+    "lode-agent",
     "claude-code",
     "codex",
     "opencode",
@@ -18,13 +18,13 @@
   "mcpServers": "./.mcp.json",
   "hooks": "./hooks/codex.json",
   "interface": {
-    "displayName": "HEAD Agent Core",
-    "shortDescription": "HEAD-owned coordination and continuity",
-    "longDescription": "A provider-neutral HEAD core with one Project, a common user-directed goal, and independently routed logical HEAD Sessions. Ordinary work uses bounded graph-first discovery with source fallback; review-gated Product governance, durable Runs, compaction recovery, bounded workers, and host coordination activate only when their protected outcome requires them.",
+    "displayName": "Lode Agent Core",
+    "shortDescription": "Lode-owned coordination and continuity",
+    "longDescription": "A provider-neutral Lode core with one Project, a common user-directed goal, and independently routed logical Lode Sessions. Ordinary work uses bounded graph-first discovery with source fallback; review-gated Product governance, durable Runs, compaction recovery, bounded workers, and host coordination activate only when their protected outcome requires them.",
     "developerName": "ccolt",
     "category": "Developer Tools",
     "capabilities": [
-      "Small Provider-neutral HEAD Constitution",
+      "Small Provider-neutral Lode Constitution",
       "Core-first Project and Session Continuity",
       "Independent Logical Sessions with Common User Direction",
       "Bounded Graph-first Discovery with Source Fallback",
@@ -38,19 +38,19 @@
       "Quiet Success and Actionable Exception Presentation",
       "Loaded-versus-configured Package Version Visibility",
       "Provider-neutral Host Compaction Lifecycle",
-      "Durable Runs with Fresh HEAD Review",
+      "Durable Runs with Fresh Lode Review",
       "Provider-neutral Bounded Worker Waves",
       "Provider-neutral Common Observation Evidence",
       "Per-target Delivery State and Rollback Genealogy",
       "Reuse-first Observation Preparation and Project-bound Host Source Collection",
-      "Non-blocking Provider-HEAD Conformance Reconciliation",
+      "Non-blocking Provider-Lode Conformance Reconciliation",
       "Rebuildable World Graph and Markdown Projections",
       "Bounded Non-persisted Graph Lineage Trace and Diff",
       "Claude Code, Codex, and OpenCode Runtime Adapters",
       "Integrity-verified Native Distribution"
     ],
     "defaultPrompt": [
-      "Initialize or resume the small provider-neutral HEAD Core and report readiness.",
+      "Initialize or resume the small provider-neutral Lode Core and report readiness.",
       "Inspect readiness and show the next safe action without activating optional governance.",
       "Discover evidence for my exact task through bounded graph views or original sources, without requiring World activation."
     ],

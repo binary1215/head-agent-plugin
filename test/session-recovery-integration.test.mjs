@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { initializeProject, createCheckpoint } from "../scripts/lib/head-core.mjs";
+import { initializeProject, inspectProject, createCheckpoint } from "../scripts/lib/head-core.mjs";
 import { inspectProjectExperience } from "../scripts/lib/project-bootstrap.mjs";
 import { compileContext } from "../scripts/lib/context-compiler.mjs";
 import { createExecutionContract, createWholePlanSnapshot } from "../scripts/lib/execution-lineage.mjs";
@@ -19,6 +19,49 @@ import {
 import { dispatch, catalogTools as mcpTools } from "../scripts/mcp-server.mjs";
 import { runCommand } from "../scripts/head.mjs";
 
+import { initialOnboardingDocuments } from "../scripts/lib/onboarding-contract.mjs";
+import { emptyProductModelDocument, normalizeProductModelDocument } from "../scripts/lib/product-model.mjs";
+import { formatForVerifiedOwner } from "../scripts/lib/project-storage-format.mjs";
+
+// Synthetic legacy contract seed only; genuine old-producer interoperability is verified separately.
+function seedLegacyProject(root) {
+  root = fs.realpathSync(root);
+  const createdAt = "2026-09-22T00:00:00.000Z";
+  const project = { schemaVersion: 1, projectId: `head-${crypto.createHash("sha256").update(root).digest("hex").slice(0, 20)}`,
+    projectRoot: root, createdAt, runtimes: ["claude", "codex", "opencode"], integrations: {},
+    authority: { head: "ordinary investigation, strategy, integration, and completion judgment",
+      user: "material product, policy, architecture, cost, workflow, and consequential external actions" } };
+  const sessionState = { schemaVersion: 1, sessionId: `session-${crypto.randomUUID()}`, mode: "session",
+    currentWholePlanId: null, activeRunId: null, activeExecutionContractId: null, lastResultPacketId: null,
+    pendingReview: null, lastReviewDecisionId: null, requiredPlanAction: null, latestCheckpoint: null, updatedAt: createdAt };
+  const product = emptyProductModelDocument();
+  const onboarding = initialOnboardingDocuments({ project, sessionState,
+    productModelId: normalizeProductModelDocument(product).productModelId, updatedAt: createdAt });
+  const records = new Map([
+    [".head/project.json", project], [".head/sessions/current.json", sessionState],
+    [".head/context/knowledge.json", { schemaVersion: 1, evidence: [], claims: [], decisions: [], unknowns: [] }],
+    [".head/context/product-model.json", product], [".head/onboarding/current.json", onboarding.state],
+    [`.head/sessions/records/${onboarding.sessionRecord.sessionId}.json`, onboarding.sessionRecord],
+    [`.head/onboarding/storage-selections/${onboarding.storageSelection.storageSelectionId}.json`, onboarding.storageSelection],
+  ]);
+  for (const [relative, value] of records) {
+    const file = path.join(root, relative); fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`, { flag: "wx" });
+  }
+  fs.mkdirSync(path.join(root, ".head/instructions"), { recursive: true });
+  fs.writeFileSync(path.join(root, ".head/instructions/project.md"), "# Project-specific HEAD context\n\nRecord project identity, canonical sources, repository boundaries, and fixed constraints here.\n", { flag: "wx" });
+  const immutable = [...records.keys()].filter(relative => relative === ".head/project.json"
+    || relative.startsWith(".head/sessions/records/") || relative.startsWith(".head/onboarding/storage-selections/"));
+  const manifest = { schemaVersion: 1, generatedAt: createdAt, pluginRoot,
+    packageVersion: JSON.parse(fs.readFileSync(path.join(pluginRoot, "package.json"))).version,
+    managed: immutable.map(relative => ({ path: relative, sha256: crypto.createHash("sha256").update(fs.readFileSync(path.join(root, relative))).digest("hex") })) };
+  fs.mkdirSync(path.join(root, ".head/generated"), { recursive: true });
+  fs.writeFileSync(path.join(root, ".head/generated/manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, { flag: "wx" });
+  const inspected = inspectProject(root); assert.equal(inspected.status, "ready");
+  assert.equal(inspected.storage.directory, ".head");
+  return { project };
+}
+
 const pluginRoot = path.resolve(import.meta.dirname, "..");
 const cliFile = path.join(pluginRoot, "scripts", "head.mjs");
 
@@ -30,7 +73,8 @@ function temporaryProject(prefix = "head-session-recovery-test-") {
 
 function initialize(root) {
   initializeProject({ root, pluginRoot, runtimes: ["claude", "codex", "opencode"] });
-  return root;
+  const storage = inspectProject(root).storage;
+  return { root, storage, directory: formatForVerifiedOwner(storage).directory };
 }
 
 function startFixtureRun(root, suffix = "artifact-only recovery") {
@@ -108,7 +152,7 @@ function canonical(value) {
 const canonicalJson = (value) => JSON.stringify(canonical(value));
 
 test("the public checkpoint surface creates one content-addressed P2 canon and restores identically across fresh provider processes", (t) => {
-  const root = initialize(temporaryProject());
+  const { root, directory } = initialize(temporaryProject());
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const beforeCheckpoint = inspectProjectExperience({ root });
   assert.equal(beforeCheckpoint.readiness.recovery.state, "no-current-checkpoint");
@@ -125,8 +169,8 @@ test("the public checkpoint surface creates one content-addressed P2 canon and r
   assert.equal(checkpointed.checkpoint.authorityBoundary.planeId, "P2");
   assert.equal(checkpointed.checkpoint.protocol.version, "0.3.0");
   assert.equal(checkpointed.checkpoint.sessionPointer.mode, "session");
-  const stateFile = path.join(root, ".head", "sessions", "current.json");
-  const checkpointFile = path.join(root, ".head", "sessions", "ledger", `${checkpointed.checkpoint.checkpointId}.json`);
+  const stateFile = path.join(root, directory, "sessions", "current.json");
+  const checkpointFile = path.join(root, directory, "sessions", "ledger", `${checkpointed.checkpoint.checkpointId}.json`);
   const stateBeforeReadiness = fs.readFileSync(stateFile, "utf8");
   const checkpointBeforeReadiness = fs.readFileSync(checkpointFile, "utf8");
   const afterCheckpoint = inspectProjectExperience({ root });
@@ -150,7 +194,7 @@ test("the public checkpoint surface creates one content-addressed P2 canon and r
 });
 
 test("artifact-only restore revalidates the exact active Run lineage and rejects pointer drift", (t) => {
-  const root = initialize(temporaryProject());
+  const { root, directory } = initialize(temporaryProject());
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const fixture = startFixtureRun(root, "active Run restore");
   const checkpoint = createRecoveryCheckpoint({
@@ -170,7 +214,7 @@ test("artifact-only restore revalidates the exact active Run lineage and rejects
   });
   assert.equal(restored.checkpoint.checkpointId, checkpoint.checkpointId);
 
-  const stateFile = path.join(root, ".head", "sessions", "current.json");
+  const stateFile = path.join(root, directory, "sessions", "current.json");
   const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
   state.activeExecutionContractId = "execution-contract-000000000000000000000000";
   fs.writeFileSync(stateFile, `${JSON.stringify(state, null, 2)}\n`);
@@ -186,7 +230,9 @@ test("artifact-only restore revalidates the exact active Run lineage and rejects
 });
 
 test("legacy content-addressed checkpoints stay readable but cannot drive current Session restore", (t) => {
-  const root = initialize(temporaryProject());
+  const root = temporaryProject();
+  seedLegacyProject(root);
+  const directory = ".head";
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const current = createRecoveryCheckpoint({
     root,
@@ -203,8 +249,8 @@ test("legacy content-addressed checkpoints stay readable but cannot drive curren
   const checkpointDigest = crypto.createHash("sha256").update(canonicalJson(payload)).digest("hex");
   const checkpointId = `checkpoint-${checkpointDigest.slice(0, 24)}`;
   const legacy = { ...payload, checkpointId, checkpointDigest };
-  fs.writeFileSync(path.join(root, ".head", "sessions", "ledger", `${checkpointId}.json`), `${JSON.stringify(legacy, null, 2)}\n`);
-  const stateFile = path.join(root, ".head", "sessions", "current.json");
+  fs.writeFileSync(path.join(root, directory, "sessions", "ledger", `${checkpointId}.json`), `${JSON.stringify(legacy, null, 2)}\n`);
+  const stateFile = path.join(root, directory, "sessions", "current.json");
   const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
   fs.writeFileSync(stateFile, `${JSON.stringify({ ...state, latestCheckpoint: checkpointId }, null, 2)}\n`);
 
@@ -213,7 +259,7 @@ test("legacy content-addressed checkpoints stay readable but cannot drive curren
 });
 
 test("checkpoint direction survives deletion of pending ResultPacket evidence without inventing a Fresh HEAD review", (t) => {
-  const root = initialize(temporaryProject());
+  const { root, directory } = initialize(temporaryProject());
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   startFixtureRun(root, "pending review recovery");
   const finished = finishFixtureRun(root);
@@ -225,7 +271,7 @@ test("checkpoint direction survives deletion of pending ResultPacket evidence wi
     currentPosition: "One ResultPacket is awaiting Fresh HEAD review",
     nextExpectedResult,
   });
-  const resultFile = path.join(root, ".head", "lineage", "result-packets", `${finished.resultPacket.resultPacketId}.json`);
+  const resultFile = path.join(root, directory, "lineage", "result-packets", `${finished.resultPacket.resultPacketId}.json`);
   fs.unlinkSync(resultFile);
 
   const restored = restoreSessionFromArtifacts({ root });
@@ -237,7 +283,7 @@ test("checkpoint direction survives deletion of pending ResultPacket evidence wi
 });
 
 test("accepted worker evidence integrates once through Fresh HEAD into an explicit P2 checkpoint", (t) => {
-  const root = initialize(temporaryProject());
+  const { root, directory } = initialize(temporaryProject());
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const fixture = startFixtureRun(root, "bounded worker integration");
   const finished = finishFixtureRun(root);
@@ -248,7 +294,7 @@ test("accepted worker evidence integrates once through Fresh HEAD into an explic
   assert.equal(integrated.status, "run_result_integrated_checkpointed");
   assert.equal(integrated.checkpoint.authorityBoundary.planeId, "P2");
   assert.equal(integrated.integrationReceipt, undefined);
-  assert.equal(fs.existsSync(path.join(root, ".head/sessions/integrations")), false);
+  assert.equal(fs.existsSync(path.join(root, directory, "sessions/integrations")), false);
   assert.equal(integrated.checkpoint.reviewedRunIntegration.runId, fixture.run.runId);
   assert.equal(integrated.checkpoint.reviewedRunIntegration.resultPacketId, finished.resultPacket.resultPacketId);
   assert.equal(integrated.checkpoint.reviewedRunIntegration.reviewDecisionId, reviewed.reviewDecision.reviewDecisionId);
@@ -288,9 +334,9 @@ test("accepted worker evidence integrates once through Fresh HEAD into an explic
   });
   assert.equal(readRunResultIntegration({ root, reviewDecisionId: reviewed.reviewDecision.reviewDecisionId }).checkpoint.checkpointId, integrated.checkpoint.checkpointId);
 
-  const resultFile = path.join(root, ".head", "lineage", "result-packets", `${finished.resultPacket.resultPacketId}.json`);
+  const resultFile = path.join(root, directory, "lineage", "result-packets", `${finished.resultPacket.resultPacketId}.json`);
   fs.unlinkSync(resultFile);
-  const requestFile = path.join(root, ".head", "sessions", "integrations", "requests", `${reviewed.reviewDecision.reviewDecisionId}.json`);
+  const requestFile = path.join(root, directory, "sessions", "integrations", "requests", `${reviewed.reviewDecision.reviewDecisionId}.json`);
   const restored = restoreSessionFromArtifacts({ root });
   assert.equal(restored.projection.consumerInstruction.historicalCheckpointContext.nextExpectedResult, input.nextExpectedResult);
   assert.equal(restored.projection.integrationEvidence.status, "missing-evidence");
@@ -299,7 +345,7 @@ test("accepted worker evidence integrates once through Fresh HEAD into an explic
 });
 
 test("non-accept review cannot be mislabeled as worker-result integration", (t) => {
-  const root = initialize(temporaryProject());
+  const { root, directory } = initialize(temporaryProject());
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const fixture = startFixtureRun(root, "rejected worker integration");
   finishFixtureRun(root);
@@ -307,12 +353,12 @@ test("non-accept review cannot be mislabeled as worker-result integration", (t) 
   assert.throws(() => integrateReviewedRunCheckpoint({ root, ...integrationInput(fixture.run, reviewed.reviewDecision) }), {
     code: "RUN_RESULT_NOT_ACCEPTED",
   });
-  assert.equal(fs.existsSync(path.join(root, ".head", "sessions", "integrations", `${reviewed.reviewDecision.reviewDecisionId}.json`)), false);
-  assert.equal(fs.existsSync(path.join(root, ".head", "sessions", "integrations", "requests", `${reviewed.reviewDecision.reviewDecisionId}.json`)), false);
+  assert.equal(fs.existsSync(path.join(root, directory, "sessions", "integrations", `${reviewed.reviewDecision.reviewDecisionId}.json`)), false);
+  assert.equal(fs.existsSync(path.join(root, directory, "sessions", "integrations", "requests", `${reviewed.reviewDecision.reviewDecisionId}.json`)), false);
 });
 
 test("CLI help and MCP expose artifact restore plus explicit integration without provider resume", async (t) => {
-  const root = initialize(temporaryProject());
+  const { root, directory } = initialize(temporaryProject());
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const fixture = startFixtureRun(root, "MCP integration surface");
   finishFixtureRun(root);
@@ -324,18 +370,18 @@ test("CLI help and MCP expose artifact restore plus explicit integration without
   assert.equal(runCommand(["help-all"]).commands.some((command) => command.includes("session-continue")), true);
   assert.equal(runCommand(["help-all"]).commands.some((command) => command.includes("worker-dispatch")), false);
   assert.equal(runCommand(["managed-maintenance", "help-all"]).commands.some((command) => command.includes("worker-wave-create")), true);
-  assert.equal(mcpTools.some((tool) => tool.name === "head_session_restore"), true);
-  assert.equal(mcpTools.some((tool) => tool.name === "head_session_continue"), true);
-  assert.equal(mcpTools.some((tool) => tool.name === "head_bounded_worker_dispatch"), true);
-  assert.equal(mcpTools.some((tool) => tool.name === "head_bounded_worker_wait"), true);
-  assert.equal(mcpTools.some((tool) => tool.name === "head_bounded_worker_wave_create"), true);
-  assert.equal(mcpTools.some((tool) => tool.name === "head_bounded_worker_wave_read"), true);
-  assert.equal(mcpTools.some((tool) => tool.name === "head_bounded_worker_wave_seal"), true);
-  assert.equal(mcpTools.some((tool) => tool.name === "head_bounded_worker_wave_status"), true);
-  assert.equal(mcpTools.some((tool) => tool.name === "head_bounded_worker_wave_results"), true);
-  assert.equal(mcpTools.some((tool) => tool.name === "head_bounded_worker_wave_wait"), true);
-  assert.equal(mcpTools.some((tool) => tool.name === "head_bounded_worker_wave_abandon"), true);
-  assert.equal(mcpTools.some((tool) => tool.name === "head_run_integrate_checkpoint"), true);
+  assert.equal(mcpTools.some((tool) => tool.name === "lode_session_restore"), true);
+  assert.equal(mcpTools.some((tool) => tool.name === "lode_session_continue"), true);
+  assert.equal(mcpTools.some((tool) => tool.name === "lode_bounded_worker_dispatch"), true);
+  assert.equal(mcpTools.some((tool) => tool.name === "lode_bounded_worker_wait"), true);
+  assert.equal(mcpTools.some((tool) => tool.name === "lode_bounded_worker_wave_create"), true);
+  assert.equal(mcpTools.some((tool) => tool.name === "lode_bounded_worker_wave_read"), true);
+  assert.equal(mcpTools.some((tool) => tool.name === "lode_bounded_worker_wave_seal"), true);
+  assert.equal(mcpTools.some((tool) => tool.name === "lode_bounded_worker_wave_status"), true);
+  assert.equal(mcpTools.some((tool) => tool.name === "lode_bounded_worker_wave_results"), true);
+  assert.equal(mcpTools.some((tool) => tool.name === "lode_bounded_worker_wave_wait"), true);
+  assert.equal(mcpTools.some((tool) => tool.name === "lode_bounded_worker_wave_abandon"), true);
+  assert.equal(mcpTools.some((tool) => tool.name === "lode_run_integrate_checkpoint"), true);
 
   const integrated = await dispatch({
     jsonrpc: "2.0",

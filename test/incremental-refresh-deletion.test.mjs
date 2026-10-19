@@ -6,7 +6,8 @@ import path from "node:path";
 import test from "node:test";
 
 import { diffGraphLineage } from "../scripts/lib/graph-lineage.mjs";
-import { initializeProject } from "../scripts/lib/head-core.mjs";
+import { initializeProject, inspectProject } from "../scripts/lib/head-core.mjs";
+import { formatForVerifiedOwner } from "../scripts/lib/project-storage-format.mjs";
 import { refreshWorldModel } from "../scripts/lib/incremental-refresh.mjs";
 import { normalizeProductModelDocument } from "../scripts/lib/product-model.mjs";
 import { writeRepositorySourceScope } from "../scripts/lib/repository-source-scope.mjs";
@@ -44,16 +45,18 @@ function createProject(t, label) {
   const root = fs.mkdtempSync(path.join(temporaryRoot, `head-refresh-${label}-`));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
-  fs.writeFileSync(path.join(root, ".head", "context", "product-model.json"), `${JSON.stringify(productModelDocument(), null, 2)}\n`);
+  const storage = inspectProject(root).storage;
+  const layout = formatForVerifiedOwner(storage);
+  fs.writeFileSync(path.join(root, layout.directory, "context", "product-model.json"), `${JSON.stringify(productModelDocument(), null, 2)}\n`);
   fs.mkdirSync(path.join(root, "src"), { recursive: true });
-  return root;
+  return { root, storage, layout };
 }
 
-function authorityBytes(root) {
+function authorityBytes(root, layout) {
   return Object.fromEntries([
-    ".head/project.json",
-    ".head/sessions/current.json",
-    ".head/context/product-model.json",
+    `${layout.directory}/project.json`,
+    `${layout.directory}/sessions/current.json`,
+    `${layout.directory}/context/product-model.json`,
   ].map((relativePath) => [relativePath, fs.readFileSync(path.join(root, ...relativePath.split("/")))]));
 }
 
@@ -62,7 +65,7 @@ function currentRevision(graph, kind, predicate) {
 }
 
 test("refresh drops deleted revision-parent keys while preserving surviving and historical lineage", async (t) => {
-  const root = createProject(t, "linked-delete");
+  const { root, layout } = createProject(t, "linked-delete");
   fs.writeFileSync(path.join(root, "src", "tokens.py"), [
     "def removed_token():",
     "    return 1",
@@ -84,9 +87,9 @@ test("refresh drops deleted revision-parent keys while preserving surviving and 
   ].join("\n"));
   const evolvedProductModel = productModelDocument();
   evolvedProductModel.features[0].description = "Continue from exact verified project artifacts.";
-  fs.writeFileSync(path.join(root, ".head", "context", "product-model.json"), `${JSON.stringify(evolvedProductModel, null, 2)}\n`);
+  fs.writeFileSync(path.join(root, layout.directory, "context", "product-model.json"), `${JSON.stringify(evolvedProductModel, null, 2)}\n`);
   assert.equal((await refreshWorldModel({ root })).status, "refreshed");
-  const protectedBefore = authorityBytes(root);
+  const protectedBefore = authorityBytes(root, layout);
   const beforeDeletion = readWorldModel({ root }).snapshot;
   const beforeGraph = beforeDeletion.temporalProvenanceGraph;
   const removedRevision = currentRevision(beforeGraph, "SymbolRevision", (node) => node.name === "removed_token");
@@ -124,12 +127,12 @@ test("refresh drops deleted revision-parent keys while preserving surviving and 
   });
   assert.equal(lineageDiff.kind, "GraphLineageDiffProjection");
   assert.ok(lineageDiff.changes.removedNodes.count > 0);
-  assert.deepEqual(authorityBytes(root), protectedBefore);
+  assert.deepEqual(authorityBytes(root, layout), protectedBefore);
 
   const unchanged = await refreshWorldModel({ root });
   assert.equal(unchanged.status, "unchanged");
   assert.equal(unchanged.worldModel.worldModelId, afterDeletion.worldModelId);
-  assert.deepEqual(authorityBytes(root), protectedBefore);
+  assert.deepEqual(authorityBytes(root, layout), protectedBefore);
 
   const currentWorldModelId = afterDeletion.worldModelId;
   await assert.rejects(buildWorldModel({
@@ -144,7 +147,7 @@ test("refresh drops deleted revision-parent keys while preserving surviving and 
 });
 
 test("refresh handles linked symbol rename, file deletion, and source-scope exclusion", async (t) => {
-  const renameRoot = createProject(t, "rename");
+  const { root: renameRoot } = createProject(t, "rename");
   fs.writeFileSync(path.join(renameRoot, "src", "rename.py"), "def old_name():\n    return 1\n");
   await buildWorldModel({ root: renameRoot });
   fs.writeFileSync(path.join(renameRoot, "src", "rename.py"), "def old_name():\n    return 2\n");
@@ -159,7 +162,7 @@ test("refresh handles linked symbol rename, file deletion, and source-scope excl
   assert.deepEqual(currentRevision(afterRename, "SymbolRevision", (node) => node.name === "new_name").parentRevisionIds, []);
 
   for (const mode of ["delete-file", "exclude-scope"]) {
-    const root = createProject(t, mode);
+    const { root, layout } = createProject(t, mode);
     fs.writeFileSync(path.join(root, "src", "item.py"), "def item():\n    return 1\n");
     fs.writeFileSync(path.join(root, "src", "keep.py"), "def keep():\n    return 1\n");
     await buildWorldModel({ root });

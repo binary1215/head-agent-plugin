@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { compileContext } from "../scripts/lib/context-compiler.mjs";
 import { createExecutionContract, createResultPacket, createWholePlanSnapshot } from "../scripts/lib/execution-lineage.mjs";
 import { diffGraphLineage, inspectGraphLineage, projectExecutionLineageOverlay, traceGraphLineage } from "../scripts/lib/graph-lineage.mjs";
-import { initializeProject } from "../scripts/lib/head-core.mjs";
+import { initializeProject, inspectProject } from "../scripts/lib/head-core.mjs";
 import { normalizeProductModelDocument } from "../scripts/lib/product-model.mjs";
 import { buildTemporalProvenanceGraph, verifyTemporalProvenanceGraph } from "../scripts/lib/temporal-provenance.mjs";
 import { buildWorldModel } from "../scripts/lib/world-model.mjs";
@@ -28,12 +28,13 @@ const graphDigest = (value) => crypto.createHash("sha256").update(JSON.stringify
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "head-agent-graph-lineage-"));
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const layout = inspectProject(root).storage;
   fs.mkdirSync(path.join(root, "src"), { recursive: true });
-  return root;
+  return { root, layout };
 }
 
 test("projects retained graph genealogy without creating another artifact stream", async (t) => {
-  const root = fixture();
+  const { root, layout } = fixture();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const content = "export const stable = true;\n";
   fs.writeFileSync(path.join(root, "src", "before.mjs"), content);
@@ -41,7 +42,7 @@ test("projects retained graph genealogy without creating another artifact stream
   fs.renameSync(path.join(root, "src", "before.mjs"), path.join(root, "src", "after.mjs"));
   const second = await buildWorldModel({ root, parentSourceSnapshotIds: [first.snapshot.temporalProvenanceGraph.sourceSnapshotId] });
 
-  const snapshotsDirectory = path.join(root, ".head", "world-model", "snapshots");
+  const snapshotsDirectory = path.join(root, layout.directory, "world-model", "snapshots");
   const beforeRead = fs.readdirSync(snapshotsDirectory).sort();
   const status = inspectGraphLineage({ root, limit: 100 });
   const afterRead = fs.readdirSync(snapshotsDirectory).sort();
@@ -66,7 +67,7 @@ test("projects retained graph genealogy without creating another artifact stream
 
   const cli = await runCommand(["graph-lineage-diff", root, "--from", first.snapshot.worldModelId, "--to", second.snapshot.worldModelId]);
   assert.equal(cli.kind, "GraphLineageDiffProjection");
-  assert.equal(mcpTools.some((tool) => tool.name === "head_graph_lineage_status"), true);
+  assert.equal(mcpTools.some((tool) => tool.name === "lode_graph_lineage_status"), true);
   const mcp = await dispatchMcp({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "head_graph_lineage_trace", arguments: { project_root: root, anchor_id: afterFile.nodeId, depth: 0 } } });
   assert.equal(mcp.result.structuredContent.kind, "GraphLineageTraceProjection");
 
@@ -78,7 +79,7 @@ test("projects retained graph genealogy without creating another artifact stream
 });
 
 test("execution overlay reads exact lineage but cannot promote or recover", (t) => {
-  const root = fixture();
+  const { root, layout } = fixture();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const compiled = compileContext({ root, task: "Verify a bounded execution overlay", persist: true });
   const plan = createWholePlanSnapshot({ root, objective: "Keep graph reads non-authoritative", plan: ["create lineage", "read projection"] });

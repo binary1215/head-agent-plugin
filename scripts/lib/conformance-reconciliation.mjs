@@ -1,7 +1,9 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { inspectProject, SCHEMA_VERSION } from "./head-core.mjs";
+import { inspectProject, SCHEMA_VERSION } from "./lode-core.mjs";
+import { formatForVerifiedOwner, relativeProjectArtifact } from "./project-storage-format.mjs";
+import { publicToolName } from "./lode-artifact-composition.mjs";
 import { artifactAuthorityBoundary } from "./authority-plane-contract.mjs";
 import { readProductModelCanon } from "./product-model.mjs";
 import { inspectWorldModel } from "./world-model.mjs";
@@ -24,10 +26,10 @@ import {
   verifyConformanceResolutionCandidate,
 } from "./conformance-contract.mjs";
 
-const DIRECTORIES = Object.freeze({
-  findings: ".head/conformance/findings",
-  dispositions: ".head/conformance/dispositions",
-  resolutions: ".head/conformance/resolutions",
+const directories = (storage) => ({
+  findings: relativeProjectArtifact(storage, "conformance", "findings"),
+  dispositions: relativeProjectArtifact(storage, "conformance", "dispositions"),
+  resolutions: relativeProjectArtifact(storage, "conformance", "resolutions"),
 });
 const MAX_PAGE = 64;
 const MAX_SOURCE_FILE_BYTES = 64 * 1024 * 1024;
@@ -109,8 +111,8 @@ function worldState(projectRoot) {
   }
 }
 
-function currentBaseline(projectRoot) {
-  const canon = readProductModelCanon({ projectRoot });
+function currentBaseline(projectRoot, storage) {
+  const canon = readProductModelCanon({ projectRoot, storage });
   const world = worldState(projectRoot);
   return {
     canon,
@@ -222,18 +224,19 @@ function verifyEvidenceAnchors({ projectRoot, projectId, baseline, world, anchor
   return [...disclosures].sort();
 }
 
-function readArtifacts(projectRoot, projectId) {
-  const findings = readDirectory(projectRoot, DIRECTORIES.findings, "Conformance Finding").map((item) => verifyConformanceFindingCandidate(item, projectId)).sort((a, b) => a.findingId.localeCompare(b.findingId));
+function readArtifacts(projectRoot, projectId, storage) {
+  const DIRECTORIES = directories(storage);
+  const findings = readDirectory(projectRoot, DIRECTORIES.findings, "Conformance Finding").map((item) => verifyConformanceFindingCandidate(item, projectId, storage)).sort((a, b) => a.findingId.localeCompare(b.findingId));
   const findingMap = new Map(findings.map((item) => [item.findingId, item]));
   const dispositions = readDirectory(projectRoot, DIRECTORIES.dispositions, "Conformance disposition").map((item) => {
     const finding = findingMap.get(item.findingId);
     if (!finding) fail("Conformance disposition references a missing Finding.", "CONFORMANCE_FINDING_NOT_FOUND");
-    return verifyConformanceDispositionReceipt(item, finding, projectId);
+    return verifyConformanceDispositionReceipt(item, finding, projectId, storage);
   }).sort((a, b) => a.dispositionId.localeCompare(b.dispositionId));
   const resolutions = readDirectory(projectRoot, DIRECTORIES.resolutions, "Conformance resolution").map((item) => {
     const finding = findingMap.get(item.findingId);
     if (!finding) fail("Conformance resolution references a missing Finding.", "CONFORMANCE_FINDING_NOT_FOUND");
-    return verifyConformanceResolutionCandidate(item, finding, projectId);
+    return verifyConformanceResolutionCandidate(item, finding, projectId, storage);
   }).sort((a, b) => a.resolutionId.localeCompare(b.resolutionId));
   const resolutionMap = new Map(resolutions.map((item) => [item.resolutionId, item]));
   const dispositionMap = new Map(dispositions.map((item) => [item.dispositionId, item]));
@@ -242,7 +245,7 @@ function readArtifacts(projectRoot, projectId) {
     if (disposition.previousDispositionId) {
       const previous = dispositionMap.get(disposition.previousDispositionId);
       if (!previous || previous.dispositionHash !== disposition.previousDispositionHash || previous.findingId !== disposition.findingId) fail("Conformance disposition chain is invalid.", "INVALID_CONFORMANCE_DISPOSITION_CHAIN");
-      if (disposition.authority === HEAD_CONFORMANCE_MAINTENANCE_AUTHORITY && previous.authority !== HEAD_CONFORMANCE_MAINTENANCE_AUTHORITY) fail("HEAD maintenance cannot supersede a user disposition.", "INVALID_CONFORMANCE_DISPOSITION_CHAIN");
+      if (disposition.authority === formatForVerifiedOwner(storage).value(HEAD_CONFORMANCE_MAINTENANCE_AUTHORITY) && previous.authority !== formatForVerifiedOwner(storage).value(HEAD_CONFORMANCE_MAINTENANCE_AUTHORITY)) fail("HEAD maintenance cannot supersede a user disposition.", "INVALID_CONFORMANCE_DISPOSITION_CHAIN");
     }
     if (disposition.resolutionId) {
       const resolution = resolutionMap.get(disposition.resolutionId);
@@ -318,7 +321,7 @@ function findingGraphProjection(finding, dispositions, resolutions) {
 
 export function prepareConformanceAssessment({ root = ".", limit = 32, projectionId = "", cursor = "" } = {}) {
   const inspected = readyProject(root, "Conformance preparation");
-  const current = currentBaseline(inspected.project.projectRoot);
+  const current = currentBaseline(inspected.project.projectRoot, inspected.storage);
   const entities = productEntities(current.canon.model);
   const boundedLimit = Number(limit);
   if (!Number.isInteger(boundedLimit) || boundedLimit < 1 || boundedLimit > MAX_PAGE) fail(`Conformance preparation limit must be between 1 and ${MAX_PAGE}.`, "INVALID_CONFORMANCE_PAGE_LIMIT");
@@ -337,7 +340,7 @@ export function prepareConformanceAssessment({ root = ".", limit = 32, projectio
   return {
     schemaVersion: SCHEMA_VERSION,
     kind: "ConformancePreparationProjection",
-    protocol: { name: "head-agent-core-conformance-reconciliation", version: CONFORMANCE_PROTOCOL_VERSION },
+    protocol: { name: formatForVerifiedOwner(inspected.storage).protocol("head-agent-core-conformance-reconciliation"), version: CONFORMANCE_PROTOCOL_VERSION },
     projectId: inspected.project.projectId,
     sessionId: inspected.state.sessionId,
     projectionId: currentProjectionId,
@@ -346,7 +349,7 @@ export function prepareConformanceAssessment({ root = ".", limit = 32, projectio
     world: { status: current.world.status, exactGraphAnchorsAvailable: current.world.status === "current" },
     nextCursor: remaining ? { projectionId: currentProjectionId, cursor: `${page.at(-1).kind}:${page.at(-1).key}` } : null,
     resynchronization: { occurred: resynchronized, reason: resynchronized ? "stale-or-missing-read-only-cursor" : null, restartedAtFirstPage: resynchronized },
-    workflow: { semanticAssessmentOwner: "provider-head", coreRole: "exact-anchor-validation-only", userStructuredInputRequired: false, ordinaryWorkBlocked: false, graphRequired: false },
+    workflow: { semanticAssessmentOwner: formatForVerifiedOwner(inspected.storage).value("provider-head"), coreRole: "exact-anchor-validation-only", userStructuredInputRequired: false, ordinaryWorkBlocked: false, graphRequired: false },
     authority: "non-persisted-conformance-preparation-view",
     authorityBoundary: artifactAuthorityBoundary("ConformancePreparationProjection"),
     instructionAuthority: false,
@@ -356,29 +359,29 @@ export function prepareConformanceAssessment({ root = ".", limit = 32, projectio
 }
 
 function assertCurrentBaseline(expected, current) {
-  if (conformanceCanonicalJson(expected) !== conformanceCanonicalJson(current.baseline)) fail("Conformance baseline changed; rerun head_conformance_prepare and retry the read-only semantic assessment. Ordinary work remains available.", "CONFORMANCE_BASELINE_DRIFT");
+  if (conformanceCanonicalJson(expected) !== conformanceCanonicalJson(current.baseline)) fail(`Conformance baseline changed; rerun ${publicToolName("head_conformance_prepare")} and retry the read-only semantic assessment. Ordinary work remains available.`, "CONFORMANCE_BASELINE_DRIFT");
 }
 
 export function proposeConformanceFindings({ root = ".", baseline, findings } = {}) {
   const inspected = readyProject(root, "Conformance proposal");
   if (!Array.isArray(findings) || findings.length < 1 || findings.length > 64) fail("Conformance proposal requires one through 64 candidates.", "INVALID_CONFORMANCE_FINDING_COUNT");
-  const current = currentBaseline(inspected.project.projectRoot);
+  const current = currentBaseline(inspected.project.projectRoot, inspected.storage);
   assertCurrentBaseline(baseline, current);
   if (!productEntities(current.canon.model).length) fail("Conformance assessment requires an existing Product Canon, but ordinary HEAD work remains available.", "CONFORMANCE_PRODUCT_CANON_UNAVAILABLE");
-  const existingArtifacts = readArtifacts(inspected.project.projectRoot, inspected.project.projectId);
+  const existingArtifacts = readArtifacts(inspected.project.projectRoot, inspected.project.projectId, inspected.storage);
   const existingByFingerprint = new Map(existingArtifacts.findings.map((item) => [item.fingerprintId, item]));
   const candidates = findings.map((input) => {
     const entity = findProductEntity(current.canon.model, input.canonAnchor);
     if (!entity) fail("Conformance proposal references an unknown current Product Canon entity.", "CONFORMANCE_CANON_ANCHOR_NOT_FOUND");
     const computedDisclosures = verifyEvidenceAnchors({ projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId, baseline, world: current.world, anchors: input.evidenceAnchors });
-    return createConformanceFindingCandidate({ projectId: inspected.project.projectId, sessionId: inspected.state.sessionId, baseline, canonAnchor: input.canonAnchor, evidenceAnchors: input.evidenceAnchors, claim: input.claim, disclosures: computedDisclosures });
+    return createConformanceFindingCandidate({ projectId: inspected.project.projectId, sessionId: inspected.state.sessionId, baseline, canonAnchor: input.canonAnchor, evidenceAnchors: input.evidenceAnchors, claim: input.claim, disclosures: computedDisclosures }, inspected.storage);
   });
   const uniqueByFingerprint = new Map();
   for (const item of candidates) {
     if (!uniqueByFingerprint.has(item.fingerprintId)) uniqueByFingerprint.set(item.fingerprintId, existingByFingerprint.get(item.fingerprintId) || item);
   }
   const unique = [...uniqueByFingerprint.values()];
-  const persisted = unique.map((finding) => ({ finding, ...persistImmutable(inspected.project.projectRoot, DIRECTORIES.findings, finding.findingId, finding, "Conformance Finding") }));
+  const persisted = unique.map((finding) => ({ finding, ...persistImmutable(inspected.project.projectRoot, directories(inspected.storage).findings, finding.findingId, finding, "Conformance Finding") }));
   return {
     status: persisted.every((item) => item.status === "existing") ? "existing" : "recorded",
     outcome: unique.some((item) => item.disclosures.length) ? "accepted-with-disclosure" : "accepted",
@@ -391,13 +394,13 @@ export function proposeConformanceFindings({ root = ".", baseline, findings } = 
 
 export function readConformanceFinding({ root = ".", findingId } = {}) {
   const inspected = readyProject(root, "Conformance Finding inspection");
-  const artifacts = readArtifacts(inspected.project.projectRoot, inspected.project.projectId);
+  const artifacts = readArtifacts(inspected.project.projectRoot, inspected.project.projectId, inspected.storage);
   const finding = artifacts.findingsById.get(findingId);
   if (!finding) fail(`Conformance Finding not found: ${findingId}`, "CONFORMANCE_FINDING_NOT_FOUND");
   const dispositions = artifacts.dispositions.filter((item) => item.findingId === findingId);
   const resolutions = artifacts.resolutions.filter((item) => item.findingId === findingId);
   const tail = artifacts.tails.get(findingId);
-  return { status: "verified", finding, dispositions, resolutions, latestDisposition: tail ? { ...tail, actor: tail.authority === HEAD_CONFORMANCE_MAINTENANCE_AUTHORITY ? "head" : "user" } : null, graphProjection: findingGraphProjection(finding, dispositions, resolutions) };
+  return { status: "verified", finding, dispositions, resolutions, latestDisposition: tail ? { ...tail, actor: tail.authority === formatForVerifiedOwner(inspected.storage).value(HEAD_CONFORMANCE_MAINTENANCE_AUTHORITY) ? formatForVerifiedOwner(inspected.storage).roleField : "user" } : null, graphProjection: findingGraphProjection(finding, dispositions, resolutions) };
 }
 
 export function inspectConformanceQueue({ root = ".", status = "all", riskHint = "", limit = 25, projectionId = "", cursor = "", canonAnchor = null } = {}) {
@@ -407,14 +410,14 @@ export function inspectConformanceQueue({ root = ".", status = "all", riskHint =
   if (riskHint && !new Set(["unknown", "low", "medium", "high"]).has(riskHint)) fail("Conformance queue risk filter is invalid.", "INVALID_CONFORMANCE_QUEUE_FILTER");
   const boundedLimit = Number(limit);
   if (!Number.isInteger(boundedLimit) || boundedLimit < 1 || boundedLimit > MAX_PAGE) fail(`Conformance queue limit must be between 1 and ${MAX_PAGE}.`, "INVALID_CONFORMANCE_PAGE_LIMIT");
-  const artifacts = readArtifacts(inspected.project.projectRoot, inspected.project.projectId);
-  const current = currentBaseline(inspected.project.projectRoot);
+  const artifacts = readArtifacts(inspected.project.projectRoot, inspected.project.projectId, inspected.storage);
+  const current = currentBaseline(inspected.project.projectRoot, inspected.storage);
   const selectedFindings = artifacts.findings.filter((finding) => !selectedCanon || (finding.canonAnchor.entityKind === selectedCanon.entityKind && finding.canonAnchor.entityKey === selectedCanon.entityKey));
   const rows = selectedFindings.map((finding) => {
     const tail = artifacts.tails.get(finding.findingId);
     const resolutions = artifacts.resolutions.filter((item) => item.findingId === finding.findingId);
     const currency = findingCurrency(inspected.project.projectRoot, current, finding);
-    return { findingId: finding.findingId, findingHash: finding.findingHash, canonAnchor: finding.canonAnchor, claim: { kind: finding.claim.kind, summary: finding.claim.summary, riskHint: finding.claim.riskHint }, disclosures: finding.disclosures, status: queueStatus({ tail, resolutions, currency }), currency, latestDisposition: tail ? { dispositionId: tail.dispositionId, disposition: tail.disposition, deferUntil: tail.deferUntil, authority: tail.authority, actor: tail.authority === HEAD_CONFORMANCE_MAINTENANCE_AUTHORITY ? "head" : "user" } : null, resolutionCandidateCount: resolutions.length, authority: "P4-derived-queue-row" };
+    return { findingId: finding.findingId, findingHash: finding.findingHash, canonAnchor: finding.canonAnchor, claim: { kind: finding.claim.kind, summary: finding.claim.summary, riskHint: finding.claim.riskHint }, disclosures: finding.disclosures, status: queueStatus({ tail, resolutions, currency }), currency, latestDisposition: tail ? { dispositionId: tail.dispositionId, disposition: tail.disposition, deferUntil: tail.deferUntil, authority: tail.authority, actor: tail.authority === formatForVerifiedOwner(inspected.storage).value(HEAD_CONFORMANCE_MAINTENANCE_AUTHORITY) ? formatForVerifiedOwner(inspected.storage).roleField : "user" } : null, resolutionCandidateCount: resolutions.length, authority: "P4-derived-queue-row" };
   }).filter((row) => (status === "all" || row.status === status) && (!riskHint || row.claim.riskHint === riskHint)).sort((a, b) => a.findingId.localeCompare(b.findingId));
   const projectionPayload = { projectId: inspected.project.projectId, sessionId: inspected.state.sessionId, baseline: current.baseline, ...(selectedCanon ? { canonAnchor: selectedCanon } : {}), findingStates: rows.map((row) => [row.findingId, row.status, row.currency.state, row.latestDisposition?.dispositionId || null, row.resolutionCandidateCount]) };
   const currentProjectionId = `conformance-queue-${conformanceDigest(conformanceCanonicalJson(projectionPayload)).slice(0, 24)}`;
@@ -431,7 +434,7 @@ export function inspectConformanceQueue({ root = ".", status = "all", riskHint =
   return {
     schemaVersion: SCHEMA_VERSION,
     kind: "ConformanceQueueProjection",
-    protocol: { name: "head-agent-core-conformance-reconciliation", version: CONFORMANCE_PROTOCOL_VERSION },
+    protocol: { name: formatForVerifiedOwner(inspected.storage).protocol("head-agent-core-conformance-reconciliation"), version: CONFORMANCE_PROTOCOL_VERSION },
     projectId: inspected.project.projectId,
     sessionId: inspected.state.sessionId,
     projectionId: currentProjectionId,
@@ -455,12 +458,12 @@ export function recordConformanceDisposition(options = {}) {
 }
 
 function recordConformanceDispositionLocked({ root = ".", findingId, disposition, rationale, deferUntil = null, resolutionId = null, confirmUserDisposition = false, actor = "user" } = {}) {
-  if (!["user", "head"].includes(actor)) fail("Conformance disposition actor is invalid.", "INVALID_CONFORMANCE_DISPOSITION");
+  if (!["user", "head", "lode"].includes(actor)) fail("Conformance disposition actor is invalid.", "INVALID_CONFORMANCE_DISPOSITION");
   if (actor === "user" && confirmUserDisposition !== true) fail("User disposition requires explicit user confirmation; HEAD may acknowledge/defer honestly as maintenance.", "CONFORMANCE_USER_CONFIRMATION_REQUIRED");
-  if (actor === "head" && (confirmUserDisposition !== false || !["acknowledge", "defer"].includes(disposition) || resolutionId !== null)) fail("HEAD maintenance is acknowledge/defer only and must not claim user confirmation.", "CONFORMANCE_HEAD_MAINTENANCE_ONLY");
-  const authority = actor === "head" ? HEAD_CONFORMANCE_MAINTENANCE_AUTHORITY : USER_CONFORMANCE_DISPOSITION_AUTHORITY;
+  if (actor !== "user" && (confirmUserDisposition !== false || !["acknowledge", "defer"].includes(disposition) || resolutionId !== null)) fail("HEAD maintenance is acknowledge/defer only and must not claim user confirmation.", "CONFORMANCE_HEAD_MAINTENANCE_ONLY");
   const inspected = readyProject(root, "Conformance disposition");
-  const artifacts = readArtifacts(inspected.project.projectRoot, inspected.project.projectId);
+  const authority = actor !== "user" ? formatForVerifiedOwner(inspected.storage).value(HEAD_CONFORMANCE_MAINTENANCE_AUTHORITY) : USER_CONFORMANCE_DISPOSITION_AUTHORITY;
+  const artifacts = readArtifacts(inspected.project.projectRoot, inspected.project.projectId, inspected.storage);
   const finding = artifacts.findingsById.get(findingId);
   if (!finding) fail(`Conformance Finding not found: ${findingId}`, "CONFORMANCE_FINDING_NOT_FOUND");
   const resolution = resolutionId ? artifacts.resolutions.find((item) => item.resolutionId === resolutionId && item.findingId === findingId) || null : null;
@@ -469,7 +472,7 @@ function recordConformanceDispositionLocked({ root = ".", findingId, disposition
   const previous = artifacts.tails.get(findingId);
   if (previous && previous.authority === authority && previous.disposition === disposition && previous.rationale === String(rationale || "").trim() && previous.deferUntil === normalizedDeferUntil && previous.resolutionId === (resolution?.resolutionId || null)) return { status: "existing", disposition: previous, ordinaryWorkBlocked: false };
   if (resolution) {
-    const current = currentBaseline(inspected.project.projectRoot);
+    const current = currentBaseline(inspected.project.projectRoot, inspected.storage);
     if (resolution.assessment !== "appears-resolved" || conformanceCanonicalJson(resolution.baseline) !== conformanceCanonicalJson(current.baseline)) fail("Conformance resolution is not an exact current appears-resolved candidate.", "CONFORMANCE_RESOLUTION_STALE");
     try {
       verifyEvidenceAnchors({ projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId, baseline: resolution.baseline, world: current.world, anchors: resolution.evidenceAnchors });
@@ -478,21 +481,21 @@ function recordConformanceDispositionLocked({ root = ".", findingId, disposition
       throw error;
     }
   }
-  const receipt = createConformanceDispositionReceipt({ projectId: inspected.project.projectId, sessionId: inspected.state.sessionId, finding, disposition, rationale, deferUntil, previousDisposition: previous, resolution, actor });
-  const persisted = persistImmutable(inspected.project.projectRoot, DIRECTORIES.dispositions, receipt.dispositionId, receipt, "Conformance disposition");
+  const receipt = createConformanceDispositionReceipt({ projectId: inspected.project.projectId, sessionId: inspected.state.sessionId, finding, disposition, rationale, deferUntil, previousDisposition: previous, resolution, actor }, inspected.storage);
+  const persisted = persistImmutable(inspected.project.projectRoot, directories(inspected.storage).dispositions, receipt.dispositionId, receipt, "Conformance disposition");
   return { ...persisted, disposition: receipt, ordinaryWorkBlocked: false, authority: { disposition: "P3-exact-finding-evidence", executionAuthorized: false, productCanonMutated: false, recoveryDirectionMutated: false } };
 }
 
 export function proposeConformanceResolution({ root = ".", findingId, baseline, evidenceAnchors, assessment, rationale } = {}) {
   const inspected = readyProject(root, "Conformance resolution proposal");
-  const artifacts = readArtifacts(inspected.project.projectRoot, inspected.project.projectId);
+  const artifacts = readArtifacts(inspected.project.projectRoot, inspected.project.projectId, inspected.storage);
   const finding = artifacts.findingsById.get(findingId);
   if (!finding) fail(`Conformance Finding not found: ${findingId}`, "CONFORMANCE_FINDING_NOT_FOUND");
-  const current = currentBaseline(inspected.project.projectRoot);
+  const current = currentBaseline(inspected.project.projectRoot, inspected.storage);
   assertCurrentBaseline(baseline, current);
   const disclosures = verifyEvidenceAnchors({ projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId, baseline, world: current.world, anchors: evidenceAnchors });
-  const resolution = createConformanceResolutionCandidate({ projectId: inspected.project.projectId, sessionId: inspected.state.sessionId, finding, baseline, evidenceAnchors, assessment, rationale, disclosures });
-  const persisted = persistImmutable(inspected.project.projectRoot, DIRECTORIES.resolutions, resolution.resolutionId, resolution, "Conformance resolution");
+  const resolution = createConformanceResolutionCandidate({ projectId: inspected.project.projectId, sessionId: inspected.state.sessionId, finding, baseline, evidenceAnchors, assessment, rationale, disclosures }, inspected.storage);
+  const persisted = persistImmutable(inspected.project.projectRoot, directories(inspected.storage).resolutions, resolution.resolutionId, resolution, "Conformance resolution");
   return { ...persisted, resolution, ordinaryWorkBlocked: false, authority: { resolution: "P3-candidate-evidence", findingClosed: false, productCanonMutated: false, recoveryDirectionMutated: false } };
 }
 

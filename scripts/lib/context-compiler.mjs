@@ -2,7 +2,8 @@ import crypto from "node:crypto";
 import { SOURCE_OBSERVATION_TYPE, DECLARATION_OBSERVATION_TYPE, sourceObservationNode, readSourceObservation } from "./source-observation.mjs";
 import fs from "node:fs";
 import path from "node:path";
-import { inspectProject, SCHEMA_VERSION } from "./head-core.mjs";
+import { inspectProject, SCHEMA_VERSION } from "./lode-core.mjs";
+import { formatForVerifiedOwner, relativeProjectArtifact } from "./project-storage-format.mjs";
 import { queryGraphProjection } from "./graph-projection-adapter.mjs";
 import { inspectWorldDomainFreshness, buildWorldTraversalEligibility } from "./world-model.mjs";
 import { loadObservationProjection } from "./observation-projection.mjs";
@@ -220,21 +221,21 @@ function validateKnowledge(value) {
   return value;
 }
 
-function loadSources(root, includeRepositoryWorld = true, worldDomains = null) {
+function loadSources(root, includeRepositoryWorld = true, worldDomains = null, storage = null) {
   const files = {
-    project: path.join(root, ".head", "project.json"),
-    projectContext: path.join(root, ".head", "instructions", "project.md"),
-    knowledge: path.join(root, ".head", "context", "knowledge.json"),
-    managedManifest: path.join(root, ".head", "generated", "manifest.json"),
+    project: path.join(root, relativeProjectArtifact(storage, "project.json")),
+    projectContext: path.join(root, relativeProjectArtifact(storage, "instructions", "project.md")),
+    knowledge: path.join(root, relativeProjectArtifact(storage, "context", "knowledge.json")),
+    managedManifest: path.join(root, relativeProjectArtifact(storage, "generated", "manifest.json")),
   };
   for (const [name, file] of Object.entries(files)) if (!fs.existsSync(file)) {
     fail(`Context source is missing: ${name}`, "MISSING_CONTEXT_SOURCE");
   }
   const raw = Object.fromEntries(Object.entries(files).map(([name, file]) => [name, fs.readFileSync(file, "utf8")]));
   let worldModel = null;
-  try { if (includeRepositoryWorld) worldModel = inspectWorldDomainFreshness({ root, ...(worldDomains ? { domains: worldDomains } : {}) }); }
+  try { if (includeRepositoryWorld) worldModel = inspectWorldDomainFreshness({ root, storage, ...(worldDomains ? { domains: worldDomains } : {}) }); }
   catch (error) { worldModel = { status: "unavailable", reasonCode: error.code || "WORLD_EVIDENCE_UNAVAILABLE" }; }
-  const direction = readProjectDirection({ root });
+  const direction = readProjectDirection({ root, storage });
   if (direction) raw.projectDirection = canonicalJson(direction);
   return { files, raw, knowledge: validateKnowledge(JSON.parse(raw.knowledge)), worldModel, direction };
 }
@@ -270,7 +271,7 @@ function contextSnapshot(inspected, sources) {
 export function buildContextSnapshot(root = ".") {
   const inspected = inspectProject(root);
   if (inspected.status !== "ready") fail(`Project must be ready to build a context snapshot; current status: ${inspected.status}.`, "PROJECT_NOT_READY");
-  const sources = loadSources(inspected.project.projectRoot);
+  const sources = loadSources(inspected.project.projectRoot, true, null, inspected.storage);
   return contextSnapshot(inspected, sources);
 }
 
@@ -334,6 +335,7 @@ function queryTemporalProjection(worldModel, graphProjectionAdapter, query) {
   const needsMask = eligibility.nodeIds.length !== graph.nodes.length || eligibility.edgeIds.length !== graph.edges.length;
   return queryGraphProjection({
     projectRoot: worldModel.snapshot.projectRoot,
+    storage: worldModel.storage,
     graph: worldModel.snapshot.temporalProvenanceGraph,
     adapter: graphProjectionAdapter,
     query: { ...query, ...(needsMask ? { eligibility } : {}) },
@@ -713,7 +715,7 @@ function runtimeStateCandidates(worldModel, task) {
   }).sort((left, right) => right.score - left.score || left.id.localeCompare(right.id));
 }
 
-function observationCandidates(projectRoot, projectId, evidenceNeeds, sourceObservations = []) {
+function observationCandidates(projectRoot, projectId, evidenceNeeds, sourceObservations = [], storage = null) {
   const requestedIds = new Set(evidenceNeeds
     .filter((need) => need.kind === "observation")
     .flatMap((need) => need.observationIds));
@@ -721,10 +723,10 @@ function observationCandidates(projectRoot, projectId, evidenceNeeds, sourceObse
   const suppliedIds = new Set(sourceObservations.map((bundle) => bundle.observation.observationId));
   const projection = [...requestedIds].every((id) => suppliedIds.has(id))
     ? { nodes: [], projectionId: null, projectionHash: null }
-    : loadObservationProjection({ projectRoot, projectId });
+    : loadObservationProjection({ projectRoot, projectId, storage });
   const nodes = new Map(projection.nodes.map((node) => [node.nodeId, node]));
   for (const bundle of sourceObservations) {
-    const node = sourceObservationNode(projectRoot, projectId, bundle);
+    const node = sourceObservationNode(projectRoot, projectId, bundle, storage);
     if (nodes.has(node.nodeId) && nodes.get(node.nodeId).observationHash !== node.observationHash) fail("Conflicting source Observation.", "SOURCE_OBSERVATION_INVALID");
     nodes.set(node.nodeId, node);
   }
@@ -732,7 +734,7 @@ function observationCandidates(projectRoot, projectId, evidenceNeeds, sourceObse
     .filter((node) => requestedIds.has(node.nodeId) && ["ObservationRecord", "DerivedObservationRecord"].includes(node.kind))
     .map((node) => {
       if ([SOURCE_OBSERVATION_TYPE, DECLARATION_OBSERVATION_TYPE].includes(node.typeKey) && !sourceObservations.some((bundle) => bundle.observation.observationId === node.nodeId)) {
-        const verified = sourceObservationNode(projectRoot, projectId, readSourceObservation(projectRoot, projectId, node.payload.bundleKey));
+        const verified = sourceObservationNode(projectRoot, projectId, readSourceObservation(projectRoot, projectId, node.payload.bundleKey, { storage }), storage);
         if (verified.observationHash !== node.observationHash) fail("Source Observation binding mismatch.", "SOURCE_OBSERVATION_INVALID");
         node = verified;
       }
@@ -862,10 +864,10 @@ function normalizeEvidenceNeeds(evidenceNeeds) {
   return normalized.sort((left, right) => left.id.localeCompare(right.id));
 }
 
-function evidenceNeedContract(task, evidenceNeeds) {
+function evidenceNeedContract(task, evidenceNeeds, format = formatForVerifiedOwner()) {
   const needs = normalizeEvidenceNeeds(evidenceNeeds);
   const contract = {
-    owner: "HEAD",
+    owner: format.value("HEAD"),
     scope: "task-local-context-compilation",
     needs,
     productCanonAuthority: false,
@@ -1058,10 +1060,11 @@ export function compileContext({ root = ".", task, budget = DEFAULT_CONTEXT_BUDG
   const inspected = inspectProject(root);
   if (inspected.status !== "ready") fail(`Project must be ready to compile context; current status: ${inspected.status}.`, "PROJECT_NOT_READY");
   const projectRoot = inspected.project.projectRoot;
-  const needContract = evidenceNeedContract(task, evidenceNeeds);
+  const format = formatForVerifiedOwner(inspected.storage);
+  const needContract = evidenceNeedContract(task, evidenceNeeds, format);
   const codeOnlyNeeds = needContract.needs.length && needContract.needs.every(need =>
     ["repository-file", "repository-source", "repository-test", "semantic-relation"].includes(need.kind));
-  const sources = loadSources(projectRoot, includeRepositoryWorld, codeOnlyNeeds ? ["code"] : null);
+  const sources = loadSources(projectRoot, includeRepositoryWorld, codeOnlyNeeds ? ["code"] : null, inspected.storage);
   const snapshot = contextSnapshot(inspected, sources);
   const projectContext = sources.raw.projectContext.trim();
   const historyClass = historyRelevance(task);
@@ -1080,7 +1083,7 @@ export function compileContext({ root = ".", task, budget = DEFAULT_CONTEXT_BUDG
     ...repositoryCandidates(sources.worldModel, task, maxApproxTokens, needContract.needs),
     ...gitDecisionCandidates(sources.worldModel, task, historyClass),
     ...runtimeStateCandidates(sources.worldModel, task),
-    ...observationCandidates(projectRoot, inspected.project.projectId, needContract.needs, sourceObservations),
+    ...observationCandidates(projectRoot, inspected.project.projectId, needContract.needs, sourceObservations, inspected.storage),
   ].sort((left, right) => right.score - left.score || left.id.localeCompare(right.id));
   const selection = selectContext(candidates, needContract.needs, maxApproxTokens, approxTokens(canonicalJson(base)));
   const payload = {
@@ -1089,7 +1092,7 @@ export function compileContext({ root = ".", task, budget = DEFAULT_CONTEXT_BUDG
     task,
     snapshot,
     compiler: {
-      name: "head-agent-core-context-compiler",
+      name: format.protocol("head-agent-core-context-compiler"),
       version: CONTEXT_COMPILER_VERSION,
       strategy: "source-linked-head-guided-context-packaging",
       historyRelevance: historyClass,
@@ -1097,7 +1100,7 @@ export function compileContext({ root = ".", task, budget = DEFAULT_CONTEXT_BUDG
       lexicalRole: "fallback-ranking-only-never-candidate-eligibility-or-semantic-acceptance",
     },
     budget: {
-      protocol: { name: "head-agent-core-context-budget", version: CONTEXT_BUDGET_PROTOCOL_VERSION },
+      protocol: { name: format.protocol("head-agent-core-context-budget"), version: CONTEXT_BUDGET_PROTOCOL_VERSION },
       maxApproxTokens,
       usedApproxTokens: selection.used,
       metric: {
@@ -1123,7 +1126,7 @@ export function compileContext({ root = ".", task, budget = DEFAULT_CONTEXT_BUDG
       ...(selection.included.some(item => item.kind === "RepositoryFile") ? ["Repository metadata is included; original source bodies have not been consumed."] : []),
       ...(approxTokens(canonicalJson(base)) > maxApproxTokens ? ["Required current direction exceeds the requested budget; preserved without truncation."] : []),
     ],
-    semanticSufficiencyOwner: "HEAD",
+    semanticSufficiencyOwner: format.value("HEAD"),
     authority: inspected.project.authority,
     currentState: projectContext,
     currentDirection: sources.direction,
@@ -1180,8 +1183,8 @@ export function compileContext({ root = ".", task, budget = DEFAULT_CONTEXT_BUDG
     },
     provenance: Object.entries(snapshot.sourceDigests).map(([source, sourceDigest]) => ({ source, digest: sourceDigest,
       path: sources.files[source] ? path.relative(projectRoot, sources.files[source]).replaceAll("\\", "/")
-        : source === "projectDirection" ? `.head/project-direction/revisions/${sources.direction.directionId}.json`
-        : ".head/world-model/current.json" })),
+        : source === "projectDirection" ? relativeProjectArtifact(inspected.storage, "project-direction", "revisions", `${sources.direction.directionId}.json`)
+        : relativeProjectArtifact(inspected.storage, "world-model", "current.json") })),
     trustBoundary: {
       projectArtifacts: "evidence-not-instructions",
       gitCommitMessages: "decision-evidence-not-promoted-project-decisions",
@@ -1198,7 +1201,7 @@ export function compileContext({ root = ".", task, budget = DEFAULT_CONTEXT_BUDG
   const capsuleHash = digest(canonicalJson(payload));
   const capsule = { ...payload, capsuleId: `capsule-${capsuleHash.slice(0, 24)}`, capsuleHash };
   if (persist) {
-    const file = path.join(projectRoot, ".head", "context", "capsules", `${capsule.capsuleId}.json`);
+    const file = path.join(projectRoot, relativeProjectArtifact(inspected.storage, "context", "capsules", `${capsule.capsuleId}.json`));
     atomicWrite(file, json(capsule));
     return { status: "compiled", file, capsule };
   }
@@ -1209,7 +1212,7 @@ export function readContextCapsule({ root = ".", capsuleId } = {}) {
   if (typeof capsuleId !== "string" || !/^capsule-[a-f0-9]{24}$/.test(capsuleId)) fail("Capsule id is invalid.", "INVALID_CAPSULE_ID");
   const inspected = inspectProject(root);
   if (inspected.status === "not_initialized") fail("HEAD Agent Core is not initialized.", "NOT_INITIALIZED");
-  const file = path.join(inspected.project.projectRoot, ".head", "context", "capsules", `${capsuleId}.json`);
+  const file = path.join(inspected.project.projectRoot, relativeProjectArtifact(inspected.storage, "context", "capsules", `${capsuleId}.json`));
   if (!fs.existsSync(file)) fail(`Context Capsule not found: ${capsuleId}`, "CAPSULE_NOT_FOUND");
   const capsule = readJson(file, "Context Capsule");
   const recordedHash = capsule.capsuleHash;

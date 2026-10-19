@@ -1,5 +1,7 @@
 import crypto from "node:crypto";
 
+import { formatForVerifiedOwner } from "./project-storage-format.mjs";
+
 export const AUTHORITY_PLANE_CONTRACT_VERSION = "0.9.0";
 
 const fail = (message, code = "AUTHORITY_PLANE_ERROR") => {
@@ -179,7 +181,7 @@ const ARTIFACT_PLANES_V01 = Object.freeze({
 
 function boundaryPayload(kind, contractVersion = AUTHORITY_PLANE_CONTRACT_VERSION) {
   const artifactPlanes = contractVersion === "0.1.0" ? ARTIFACT_PLANES_V01 : ARTIFACT_PLANES;
-  const planeId = artifactPlanes[kind];
+  const planeId = artifactPlanes[kind] || ({ LodeSession: "P2", LodeContinuitySnapshot: "P4" })[kind];
   if (!planeId) fail(`Artifact kind is not assigned to an authority plane: ${kind}`, "UNKNOWN_AUTHORITY_PLANE_ARTIFACT");
   const plane = PLANE_DEFINITIONS[planeId];
   return {
@@ -215,12 +217,13 @@ export function verifyArtifactAuthorityBoundary(kind, boundary) {
   return boundary;
 }
 
-export function authorityPlaneContract() {
+export function authorityPlaneContract(storage = undefined) {
+  const format = formatForVerifiedOwner(storage);
   const payload = {
     kind: "AuthorityPlaneContract",
-    protocol: { name: "head-agent-core-authority-plane-contract", version: AUTHORITY_PLANE_CONTRACT_VERSION },
+    protocol: { name: format.protocol("head-agent-core-authority-plane-contract"), version: AUTHORITY_PLANE_CONTRACT_VERSION },
     semanticPlanes: PLANE_DEFINITIONS,
-    artifactPlanes: ARTIFACT_PLANES,
+    artifactPlanes: Object.fromEntries(Object.entries(ARTIFACT_PLANES).map(([kind, plane]) => [format.kind(kind), plane])),
     architecturalPlanes: {
       Distribution: "packages and transports the same contracts without becoming a meaning authority",
       Host: "executes provider-neutral operational effects without becoming a meaning or recovery authority",

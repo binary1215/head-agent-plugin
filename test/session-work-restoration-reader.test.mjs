@@ -1,3 +1,4 @@
+import { relativeProjectArtifact } from "../scripts/lib/project-storage-format.mjs";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
@@ -5,7 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import { recordSessionWorkEvidence, readSessionWorkContext, readSessionWorkEvidenceOwner, normalizeSessionWorkEvidence } from "../scripts/lib/session-work-context.mjs";
 import { createSessionWorkReadContext, inspectSessionWorkReference } from "../scripts/lib/session-work-evidence-original.mjs";
-import { PROJECT_GRAPH_INDEX_PATH, refreshProjectGraphIndex } from "../scripts/lib/discovery-index.mjs";
+import { refreshProjectGraphIndex } from "../scripts/lib/discovery-index.mjs";
 import { fixture, exact, link, citation, snapshot, sha, encoded } from "./helpers/session-work-linkage-fixture.mjs";
 
 // Independent public-reader synthetic regressions. No legacy all-history
@@ -13,7 +14,7 @@ import { fixture, exact, link, citation, snapshot, sha, encoded } from "./helper
 const ids = value => value.records.map(record => record.evidenceId);
 const found = (value, saved) => value.records.find(record => record.evidenceId === saved.evidence.evidenceId);
 const sameFile = (a, b) => typeof a === "string" && path.resolve(a) === path.resolve(b);
-const indexFile = f => path.join(f.root, PROJECT_GRAPH_INDEX_PATH);
+const indexFile = f => path.join(f.root, relativeProjectArtifact(f.storage, "graph-discovery", "index.json"));
 function navigation(f) {
   const index = JSON.parse(fs.readFileSync(indexFile(f)));
   assert.equal(index.sessionWorkNavigation?.version, 1);
@@ -684,7 +685,7 @@ for (const repaired of ["invalid-original", "unowned-originals"]) test(`B unknow
   const f = fixture(t);
   for (let i = 0; i < 9; i++) saveAt(f, { summary: "Known older result " + i }, i);
   const latest = saveAt(f, { summary: "Repaired latest original", pending: ["REPAIRED X"] }, 100);
-  const ownerFile = path.join(f.root, ".head/sessions/by-id", f.session.sessionId, "current.json");
+  const ownerFile = path.join(f.root, relativeProjectArtifact(f.storage, "sessions", "by-id"), f.session.sessionId, "current.json");
   const repairedFile = repaired === "invalid-original" ? latest.file : ownerFile, originalBytes = fs.readFileSync(repairedFile);
   if (repaired === "invalid-original") fs.writeFileSync(repairedFile, "{}");
   else { const state = JSON.parse(originalBytes); state.projectId = "head-" + "0".repeat(20); fs.writeFileSync(repairedFile, JSON.stringify(state)); }
@@ -739,7 +740,7 @@ test("B incoming proof later failing body promotion removes its historical state
 
 test("B selected owner drift still discards mixed work context instead of adopting hint authority", t => {
   const f = fixture(t), selected = f.save({ summary: "Work before owner drift", pending: ["X"] });
-  const ownerFile = path.join(f.root, ".head/sessions/by-id", f.session.sessionId, "current.json"), read = fs.readFileSync;
+  const ownerFile = path.join(f.root, relativeProjectArtifact(f.storage, "sessions", "by-id"), f.session.sessionId, "current.json"), read = fs.readFileSync;
   let changed = false;
   fs.readFileSync = (file, ...args) => {
     const bytes = read(file, ...args);

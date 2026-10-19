@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { formatForVerifiedOwner } from "./project-storage-format.mjs";
 
 export const PROCESS_SUPERVISOR_PROTOCOL_VERSION = "0.1.0";
 export const PROCESS_SUPERVISOR_MANIFEST_VERSION = "0.3.0";
@@ -37,10 +38,10 @@ function canonicalValue(value) {
 
 const canonicalJson = (value) => JSON.stringify(canonicalValue(value));
 
-function targetFor(platform = process.platform, arch = process.arch) {
+function targetFor(platform = process.platform, arch = process.arch, legacy = false) {
   const target = TARGETS[`${platform}-${arch}`];
   if (!target) fail(`Unsupported process-supervisor target: ${platform}-${arch}.`, "PROCESS_SUPERVISOR_TARGET_UNSUPPORTED");
-  return target;
+  return legacy ? target : { ...target, executable: target.executable.replace("head-agent-", "lode-agent-") };
 }
 
 function isWithin(parent, child) {
@@ -96,7 +97,7 @@ function operationalAuthority() {
 function manifestPayload({ target, binary }) {
   return {
     schemaVersion: 2,
-    kind: "HeadAgentProcessSupervisorManifest",
+    kind: "LodeAgentProcessSupervisorManifest",
     manifestVersion: PROCESS_SUPERVISOR_MANIFEST_VERSION,
     supervisorProtocolVersion: PROCESS_SUPERVISOR_PROTOCOL_VERSION,
     target,
@@ -144,9 +145,9 @@ export function verifyProcessSupervisorManifest(manifest, { platform = process.p
   assertFields(manifest.capabilities.processSupervision, ["oneShotProtocolVersion", "jobProtocolVersion", "detachedJobAvailability", "interactiveProtocolVersion", "interactiveTransport"], "Process supervision declaration");
   assertFields(manifest.capabilities.fileEffects, ["transport", "transportProtocolVersion", "imageProtocolVersion", "operations", "availability"], "File effect declaration");
   assertFields(manifest.authority, ["kind", "instructionAuthority", "promotionAuthority", "recoveryAuthority", "grantsExecutionAuthorization", "grantsWriteAuthorization", "mutatesCanon"], "Process supervisor authority");
-  const target = targetFor(platform, arch);
+  const target = targetFor(platform, arch, manifest.kind === "HeadAgentProcessSupervisorManifest");
   const expectedTarget = { platform: target.platform, arch: target.arch, directory: target.directory };
-  if (manifest.schemaVersion !== 2 || manifest.kind !== "HeadAgentProcessSupervisorManifest"
+  if (manifest.schemaVersion !== 2 || !["HeadAgentProcessSupervisorManifest", "LodeAgentProcessSupervisorManifest"].includes(manifest.kind)
     || manifest.manifestVersion !== PROCESS_SUPERVISOR_MANIFEST_VERSION
     || manifest.supervisorProtocolVersion !== PROCESS_SUPERVISOR_PROTOCOL_VERSION
     || canonicalJson(manifest.target) !== canonicalJson(expectedTarget)
@@ -518,14 +519,15 @@ export function spawnBoundedRuntimeOneShot(options = {}) {
   if (!new Set(["claude", "codex", "opencode"]).has(runtime)) {
     fail("Bounded runtime control requires an explicit supported runtime.", "RUNTIME_ONE_SHOT_CONTROL_RUNTIME_REQUIRED");
   }
+  const controlPrefix = formatForVerifiedOwner(options.storage).dialect === "lode" ? "lode-agent-runtime-control" : "head-agent-runtime-control";
   const supervised = spawnSupervisedProcess(options);
   const controlToken = crypto.randomBytes(32).toString("base64url");
-  const controlTokenHash = controlDigest(`head-agent-runtime-control\n${runtime}\n${controlToken}`);
+  const controlTokenHash = controlDigest(`${controlPrefix}\n${runtime}\n${controlToken}`);
   let action = null;
   let finalized = null;
 
   const authenticate = (provided) => {
-    const observed = controlDigest(`head-agent-runtime-control\n${runtime}\n${String(provided || "")}`);
+    const observed = controlDigest(`${controlPrefix}\n${runtime}\n${String(provided || "")}`);
     const left = Buffer.from(controlTokenHash, "hex");
     const right = Buffer.from(observed, "hex");
     if (left.length !== right.length || !crypto.timingSafeEqual(left, right)) {

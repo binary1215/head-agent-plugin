@@ -3,10 +3,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { stageDistributionRelease, verifyDistributionRelease } from "./distribution-lifecycle.mjs";
 import { verifyNativeBundleOverlay } from "./native-artifact-delivery.mjs";
+import { ARTIFACT_COMPOSITION, artifactCompositionForIdentity } from "./lode-artifact-composition.mjs";
 
 const CODEX_MARKETPLACE_PROTOCOL = "0.1.0";
-const DEFAULT_MARKETPLACE_NAME = "head-agent-plugin";
-const DEFAULT_MARKETPLACE_DISPLAY_NAME = "HEAD Agent Plugin";
+const DEFAULT_MARKETPLACE_NAME = ARTIFACT_COMPOSITION.marketplaceName;
+const DEFAULT_MARKETPLACE_DISPLAY_NAME = "Lode Agent Plugin";
 const MARKETPLACE_GIT_ATTRIBUTES = "* -text\n";
 const LEGACY_BYTE_PRESERVATION_MIGRATION = Object.freeze({
   pluginVersion: "0.3.0-alpha.56",
@@ -118,10 +119,22 @@ function sourceCommit(value) {
   return value;
 }
 
+function marketplaceComposition(name) {
+  for (const identity of ["lode", "head"]) {
+    const composition = artifactCompositionForIdentity(identity);
+    if (name === composition.marketplaceName) return composition;
+  }
+  fail("HEAD_CODEX_MARKETPLACE_NAME_INVALID", "Marketplace identity must match one exact supported artifact composition.");
+}
+
+function generatedMarker(composition) {
+  return `.${composition.identity}-agent-marketplace-generated.json`;
+}
+
 function markerIdentity({ marketplaceName: name, pluginName, pluginVersion, releaseId, repository, commit }) {
   return {
     protocolVersion: CODEX_MARKETPLACE_PROTOCOL,
-    kind: "HeadAgentCodexMarketplaceSnapshot",
+    kind: marketplaceComposition(name).identity === "lode" ? "LodeAgentCodexMarketplaceSnapshot" : "HeadAgentCodexMarketplaceSnapshot",
     marketplaceName: name,
     pluginName,
     pluginVersion,
@@ -164,6 +177,7 @@ export function buildCodexMarketplaceSnapshot({
   const source = path.resolve(sourceRoot);
   const output = path.resolve(outputRoot);
   marketplaceName(name);
+  const composition = marketplaceComposition(name);
   sourceRepository(repository);
   sourceCommit(commit);
   if (typeof displayName !== "string" || !displayName.trim() || displayName.length > 80) {
@@ -177,23 +191,23 @@ export function buildCodexMarketplaceSnapshot({
   fs.mkdirSync(path.dirname(output), { recursive: true });
   const temporary = fs.mkdtempSync(`${output}.stage-`);
   try {
-    const pluginRoot = path.join(temporary, "plugins", pluginManifest.name);
-    const distribution = stageDistributionRelease({ sourceRoot: source, destinationRoot: pluginRoot, nativeOverlayRoot });
+    const pluginRoot = path.join(temporary, "plugins", composition.pluginName);
+    const distribution = stageDistributionRelease({ sourceRoot: source, destinationRoot: pluginRoot, nativeOverlayRoot, artifactIdentity: composition.identity });
     fs.writeFileSync(path.join(temporary, ".gitattributes"), MARKETPLACE_GIT_ATTRIBUTES, { flag: "wx" });
     writeJson(path.join(temporary, ".agents", "plugins", "marketplace.json"), marketplaceDocument({
       name,
       displayName: displayName.trim(),
-      pluginName: pluginManifest.name,
+      pluginName: composition.pluginName,
     }));
     const identity = markerIdentity({
       marketplaceName: name,
-      pluginName: pluginManifest.name,
+      pluginName: composition.pluginName,
       pluginVersion: pluginManifest.version,
       releaseId: distribution.releaseId,
       repository,
       commit,
     });
-    writeJson(path.join(temporary, ".head-agent-marketplace-generated.json"), snapshotMarker(identity));
+    writeJson(path.join(temporary, generatedMarker(composition)), snapshotMarker(identity));
     verifyCodexMarketplaceSnapshot({ root: temporary, requireNativeBundle: Boolean(nativeOverlayRoot) });
     fs.renameSync(temporary, output);
     return verifyCodexMarketplaceSnapshot({ root: output, requireNativeBundle: Boolean(nativeOverlayRoot) });
@@ -220,12 +234,15 @@ export function verifyCodexMarketplaceSnapshot({
   }
   const marketplaceRoot = path.resolve(root);
   const rootEntries = fs.readdirSync(marketplaceRoot).sort();
+  const markers = ["lode", "head"].map((identity) => generatedMarker(artifactCompositionForIdentity(identity))).filter((file) => rootEntries.includes(file));
+  if (markers.length !== 1) fail("HEAD_CODEX_MARKETPLACE_ROOT_CONTENT", "Marketplace must contain one exact generation marker.");
+  const markerFile = markers[0];
   const hasGitAttributes = rootEntries.includes(".gitattributes");
   const legacyBytePreservationCandidate = allowLegacyBytePreservation && !hasGitAttributes;
   const expectedRootEntries = [
     ".agents",
     ...(legacyBytePreservationCandidate ? [] : [".gitattributes"]),
-    ".head-agent-marketplace-generated.json",
+    markerFile,
     "plugins",
   ].sort();
   if (rootEntries.length !== expectedRootEntries.length
@@ -242,6 +259,8 @@ export function verifyCodexMarketplaceSnapshot({
   );
   assertExactKeys(marketplace, ["name", "interface", "plugins"], "Marketplace catalog", "HEAD_CODEX_MARKETPLACE_CATALOG_INVALID");
   marketplaceName(marketplace.name);
+  const composition = marketplaceComposition(marketplace.name);
+  if (markerFile !== generatedMarker(composition)) fail("HEAD_CODEX_MARKETPLACE_MARKER_MISMATCH", "Marketplace marker and catalog identities disagree.");
   assertExactKeys(marketplace.interface, ["displayName"], "Marketplace interface", "HEAD_CODEX_MARKETPLACE_CATALOG_INVALID");
   if (typeof marketplace.interface.displayName !== "string" || !marketplace.interface.displayName.trim()) {
     fail("HEAD_CODEX_MARKETPLACE_CATALOG_INVALID", "Marketplace display name is missing.");
@@ -274,11 +293,11 @@ export function verifyCodexMarketplaceSnapshot({
     if (!allowLegacyInterfaceForOwnership || error.code !== "HEAD_CODEX_MARKETPLACE_DEFAULT_PROMPTS_INVALID") throw error;
     pluginInterface = "legacy_nonconforming_ownership_only";
   }
-  if (manifest.name !== entry.name || manifest.version !== pkg.version) {
+  if (manifest.name !== entry.name || manifest.name !== composition.pluginName || pkg.name !== composition.packageName || manifest.version !== pkg.version) {
     fail("HEAD_CODEX_MARKETPLACE_PLUGIN_MISMATCH", "Marketplace entry, plugin manifest, and package metadata do not match.");
   }
   const distribution = verifyDistributionRelease({ releaseRoot: pluginRoot });
-  if (distribution.name !== manifest.name || distribution.version !== manifest.version) {
+  if (distribution.name !== manifest.name || distribution.version !== manifest.version || distribution.packageName !== pkg.name) {
     fail("HEAD_CODEX_MARKETPLACE_DISTRIBUTION_MISMATCH", "Marketplace plugin does not match its verified distribution manifest.");
   }
   const hasNativeBundle = distribution.files.some((file) => file.path.startsWith("dist/"));
@@ -288,7 +307,7 @@ export function verifyCodexMarketplaceSnapshot({
   }
 
   const marker = readJson(
-    path.join(marketplaceRoot, ".head-agent-marketplace-generated.json"),
+    path.join(marketplaceRoot, markerFile),
     "HEAD_CODEX_MARKETPLACE_MARKER_INVALID",
   );
   assertExactKeys(marker, [
@@ -325,7 +344,7 @@ export function verifyCodexMarketplaceSnapshot({
   const expectedFiles = [
     ".agents/plugins/marketplace.json",
     ...(hasGitAttributes ? [".gitattributes"] : []),
-    ".head-agent-marketplace-generated.json",
+    markerFile,
     ...distribution.files.map((file) => `plugins/${manifest.name}/${file.path}`),
     `plugins/${manifest.name}/distribution-manifest.json`,
   ].sort((left, right) => left.localeCompare(right, "en"));

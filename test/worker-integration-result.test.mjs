@@ -1,3 +1,4 @@
+import { relativeProjectArtifact } from "../scripts/lib/project-storage-format.mjs";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
@@ -21,8 +22,8 @@ const headReport = { outcome: " HEAD verified the combined synthetic result ", e
   unknowns: ["Real provider and native file effects are not exercised by this fixture"] };
 const input = f => ({ root: f.root, integrationId: f.integrationId });
 const reportInput = (f, extra = {}) => ({ ...input(f), basisDigest: f.readBasis().basisDigest, ...headReport, ...extra });
-const receiptFile = f => path.join(f.root, ".head/runtime/worker-integrations", `${f.integrationId}--result-application.json`);
-const verificationFile = (f, id) => path.join(f.root, ".head/runtime/worker-integrations", `${f.integrationId}--${id}.json`);
+const receiptFile = f => path.join(f.root, relativeProjectArtifact(f.storage, "runtime", "worker-integrations"), `${f.integrationId}--result-application.json`);
+const verificationFile = (f, id) => path.join(f.root, relativeProjectArtifact(f.storage, "runtime", "worker-integrations"), `${f.integrationId}--${id}.json`);
 function p2(f) { return { session: fs.readFileSync(f.sessionFile, "utf8"), run: fs.readFileSync(f.runFile, "utf8") }; }
 function files(root) {
   const result = {};
@@ -68,8 +69,8 @@ test("one whole packet retains two members and waits for explicit Fresh HEAD rev
   assert.equal(published.application.freshHeadReviewRequired, true);
   assert.equal(inspectProject(f.root).state.lastReviewDecisionId, null);
   assert.equal(inspectProject(f.root).state.pendingReview.runId, f.run.runId);
-  assert.equal(fs.readdirSync(path.join(f.root, ".head/lineage/result-packets")).length, 1);
-  assert.equal(fs.existsSync(path.join(f.root, ".head/lineage/review-decisions")), false);
+  assert.equal(fs.readdirSync(path.join(f.root, relativeProjectArtifact(f.storage, "lineage", "result-packets"))).length, 1);
+  assert.equal(fs.existsSync(path.join(f.root, relativeProjectArtifact(f.storage, "lineage", "review-decisions"))), false);
   const frozen = files(f.root);
   assert.equal(readWorkerIntegrationResult(input(f)).status, "published");
   assert.equal((await publishWorkerIntegrationResult({ ...input(f), verificationId: prepared.verification.verificationId })).status, "already-published");
@@ -142,7 +143,7 @@ test("publication-receipt crash recovers the exact pending packet despite later 
   const recovered = await publishWorkerIntegrationResult(f.publication, { readApplication: () => { throw new Error("must not reapply or gate a frozen transition"); } });
   assert.equal(recovered.resultPacket.resultPacketId, f.verification.wholeResultPacket.resultPacketId);
   assert.deepEqual(p2(f), currentP2);
-  assert.equal(fs.readdirSync(path.join(f.root, ".head/lineage/result-packets")).length, 1);
+  assert.equal(fs.readdirSync(path.join(f.root, relativeProjectArtifact(f.storage, "lineage", "result-packets"))).length, 1);
 });
 
 test("missing receipt never lets delayed A finish later B even when it reuses the same contract", async t => {
@@ -221,7 +222,7 @@ for (const boundary of ["run", "artifact", "session"]) {
     }
     finally { fs.renameSync = rename; fs.linkSync = link; }
     assert.equal(injected, true);
-    const packetFile = path.join(f.root, ".head/lineage/result-packets", `${f.verification.wholeResultPacket.resultPacketId}.json`);
+    const packetFile = path.join(f.root, relativeProjectArtifact(f.storage, "lineage", "result-packets"), `${f.verification.wholeResultPacket.resultPacketId}.json`);
     assert.equal(JSON.parse(fs.readFileSync(f.runFile)).resultPacketId, f.verification.wholeResultPacket.resultPacketId);
     assert.equal(fs.existsSync(packetFile), boundary !== "run", "the frozen Run precedes the exact artifact publication");
     assert.equal(inspectProject(f.root).state.pendingReview?.runId ?? null, boundary === "session" ? f.run.runId : null);
@@ -236,7 +237,7 @@ for (const boundary of ["run", "artifact", "session"]) {
     assert.equal(inspectProject(f.root).state.pendingReview.runId, f.run.runId);
     assert.equal(inspectProject(f.root).state.lastReviewDecisionId, null);
     assert.equal(fs.readFileSync(path.join(f.root, "b.txt"), "utf8"), "new observation after exact finish was frozen");
-    assert.equal(fs.readdirSync(path.join(f.root, ".head/lineage/result-packets")).length, 1);
+    assert.equal(fs.readdirSync(path.join(f.root, relativeProjectArtifact(f.storage, "lineage", "result-packets"))).length, 1);
     const completed = files(f.root);
     assert.equal((await publishWorkerIntegrationResult(f.publication)).status, "already-published");
     assert.deepEqual(files(f.root), completed, "completed retry cannot apply or publish twice");
@@ -360,7 +361,7 @@ test("settled partial effects publish one honest failed whole result with exact 
   assert.equal(inspectProject(f.root).state.lastReviewDecisionId, null);
   assert.equal(fs.readFileSync(path.join(f.root, "a.txt"), "utf8"), "applied A");
   assert.equal(fs.readFileSync(path.join(f.root, "b.txt"), "utf8"), "original b.txt\n");
-  assert.equal(fs.readdirSync(path.join(f.root, ".head/lineage/result-packets")).length, 1);
+  assert.equal(fs.readdirSync(path.join(f.root, relativeProjectArtifact(f.storage, "lineage", "result-packets"))).length, 1);
 });
 
 function assertWholeAttemptHistory(packet, application) {
@@ -382,7 +383,7 @@ function assertWholeAttemptHistory(packet, application) {
 test("settled-incomplete whole result retains original failed receipts across linked no-write retries", async t => {
   const f = await partialFixture(t);
   const prior = f.partial.effectResults[1];
-  const originalFile = path.join(f.root, ".head/runtime/worker-integrations", `${f.integrationId}.effect-1.receipt.json`);
+  const originalFile = path.join(f.root, relativeProjectArtifact(f.storage, "runtime", "worker-integrations"), `${f.integrationId}.effect-1.receipt.json`);
   const originalBytes = fs.readFileSync(originalFile);
   const before = p2(f);
   const checkpoint = inspectProject(f.root).state.latestCheckpoint;
@@ -442,7 +443,7 @@ test("complete whole result retains an original unknown receipt and its exact re
   const original = await applyWorkerPatchIntegration({ ...input(f), basisDigest: f.readBasis().basisDigest }, host);
   const originalReceipt = original.effectResults[0].receipt;
   assert.equal(originalReceipt.status, "unknown");
-  const originalFile = path.join(f.root, ".head/runtime/worker-integrations", `${f.integrationId}.effect-0.receipt.json`);
+  const originalFile = path.join(f.root, relativeProjectArtifact(f.storage, "runtime", "worker-integrations"), `${f.integrationId}.effect-0.receipt.json`);
   const originalBytes = fs.readFileSync(originalFile);
   await assert.rejects(prepareWorkerIntegrationResult(reportInput(f)), { code: "WORKER_INTEGRATION_EFFECTS_INCOMPLETE" });
   const reconciled = await reconcileWorkerPatchIntegration(input(f), host);
@@ -503,7 +504,7 @@ test("unknown owner and a forged settlement cannot manufacture a settled whole r
     basisDigest: f.readBasis().basisDigest, reason: "Forged settlement despite unquiescent owner",
     instructionAuthority: false, promotionAuthority: false, recoveryAuthority: false, reviewDecisionCreated: false, mutatesCanon: false };
   const recordHash = integrationDigest(integrationJson(payload));
-  fs.writeFileSync(path.join(f.root, ".head/runtime/worker-integrations", `${f.integrationId}.settled-incomplete.json`),
+  fs.writeFileSync(path.join(f.root, relativeProjectArtifact(f.storage, "runtime", "worker-integrations"), `${f.integrationId}.settled-incomplete.json`),
     JSON.stringify({ ...payload, recordHash, recordId: `worker-effect-${recordHash.slice(0, 24)}` }));
   await assert.rejects(prepareWorkerIntegrationResult(f.failedReport()), { code: "WORKER_INTEGRATION_APPLICATION_CONFLICT" });
   assert.deepEqual(p2(f), before);
@@ -534,7 +535,7 @@ test("settled incomplete finish recovers only its frozen packet after publicatio
   assert.equal(recovered.verification.effectDisposition, "settled-incomplete");
   assert.equal(f.calls.length, calls);
   assert.deepEqual(p2(f), before);
-  assert.equal(fs.readdirSync(path.join(f.root, ".head/lineage/result-packets")).length, 1);
+  assert.equal(fs.readdirSync(path.join(f.root, relativeProjectArtifact(f.storage, "lineage", "result-packets"))).length, 1);
 });
 
 test("settled failure reporting still refuses an unobservable impact target", async t => {

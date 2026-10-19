@@ -2,7 +2,7 @@
 
 Status: implemented provider-neutral observation vertical under protocol `0.1.0`.
 
-HEAD records product Git ref state and host-supplied deployment results without treating either source as permission to deploy, a product decision, or recovery direction.
+Lode records product Git ref state and host-supplied deployment results without treating either source as permission to deploy, a product decision, or recovery direction.
 
 ## Flow and authority
 
@@ -60,7 +60,7 @@ head release-status <project>
 
 ## MCP
 
-- `head_release_observe`
-- `head_release_status`
+- `lode_release_observe`
+- `lode_release_status`
 
-`head_release_observe` requires `confirm_host_observation: true`. The confirmation prevents accidental model-authored ingestion; it is not deployment approval and does not add authority to the observed result.
+`lode_release_observe` requires `confirm_host_observation: true`. The confirmation prevents accidental model-authored ingestion; it is not deployment approval and does not add authority to the observed result.

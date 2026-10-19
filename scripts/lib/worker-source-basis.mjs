@@ -1,3 +1,4 @@
+import { formatForVerifiedOwner, familyFormatForOriginal } from "./project-storage-format.mjs";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -5,20 +6,21 @@ import path from "node:path";
 const digest = (bytes) => crypto.createHash("sha256").update(bytes).digest("hex");
 const fail = (message, code = "INVALID_WORKER_SOURCE_BASIS") => { throw Object.assign(new Error(message), { code }); };
 
-export function workerSourcePathParts(value) {
+export function workerSourcePathParts(value, storage = undefined) {
   if (typeof value !== "string" || !value || value.includes("\\") || value.includes(":")) fail("Worker source path must be repository relative.");
   const parts = value.split("/");
   if (parts.some((part) => !part || part === "." || part === ".." || /[\u0000-\u001f]/u.test(part)
-    || /[. ]$/u.test(part) || [".head", ".git"].includes(part.toLowerCase())) || path.isAbsolute(value)) {
+    || /[. ]$/u.test(part) || [".head", ".git"].includes(part.toLowerCase())) || path.isAbsolute(value)
+    || formatForVerifiedOwner(storage).dialect === "lode" && (process.platform === "win32" ? parts[0]?.toLowerCase() : parts[0]) === ".lode") {
     fail("Worker source path escapes the selected source boundary.");
   }
   return parts;
 }
 
-function readSource(root, relative, maxBytes) {
+function readSource(root, relative, maxBytes, storage) {
   const canonicalRoot = fs.realpathSync(root);
   let file = canonicalRoot;
-  for (const part of workerSourcePathParts(relative)) {
+  for (const part of workerSourcePathParts(relative, storage)) {
     file = path.join(file, part);
     if (fs.lstatSync(file).isSymbolicLink()) fail("Worker source cannot traverse a symbolic link or junction.");
   }
@@ -49,25 +51,25 @@ function readSource(root, relative, maxBytes) {
 
 // A selected byte basis is evidence, not an OS sandbox or an atomic repository
 // snapshot. Dirty and untracked files are included exactly when HEAD selects them.
-export function captureWorkerSourceBasis({ root, paths = [], maxBytes }) {
+export function captureWorkerSourceBasis({ root, paths = [], maxBytes, storage }) {
   requireByteBound(maxBytes);
   if (!Array.isArray(paths) || paths.length > 256 || new Set(paths).size !== paths.length) fail("Worker source selection is invalid.");
   let remaining = maxBytes;
   return [...paths].sort().map((relative) => {
-    const bytes = readSource(root, relative, remaining);
+    const bytes = readSource(root, relative, remaining, storage);
     remaining -= bytes.length;
     return { path: relative, digest: digest(bytes), bytes: bytes.length, contentBase64: bytes.toString("base64") };
   });
 }
 
-export function verifyWorkerSourceBasis(basis, maxBytes) {
+export function verifyWorkerSourceBasis(basis, maxBytes, storage = undefined) {
   requireByteBound(maxBytes);
   if (!Array.isArray(basis) || basis.length > 256) fail("Worker source basis is invalid.");
   let total = 0;
   for (let index = 0; index < basis.length; index += 1) {
     const item = basis[index];
     if (!item || Object.keys(item).sort().join(",") !== "bytes,contentBase64,digest,path") fail("Worker source entry fields are invalid.");
-    workerSourcePathParts(item.path);
+    workerSourcePathParts(item.path, storage);
     if (index && basis[index - 1].path >= item.path) fail("Worker source paths must be unique and ordered.");
     if (typeof item.contentBase64 !== "string") fail("Worker source bytes are missing.");
     const bytes = Buffer.from(item.contentBase64, "base64");
@@ -82,10 +84,10 @@ function requireByteBound(value) {
   if (!Number.isSafeInteger(value) || value < 0) fail("Worker source requires an explicit finite byte bound.");
 }
 
-export function requireCurrentWorkerSourceBasis({ root, basis, maxBytes }) {
-  verifyWorkerSourceBasis(basis, maxBytes);
+export function requireCurrentWorkerSourceBasis({ root, basis, maxBytes, storage }) {
+  verifyWorkerSourceBasis(basis, maxBytes, storage);
   for (const source of basis) {
-    const bytes = readSource(root, source.path, maxBytes);
+    const bytes = readSource(root, source.path, maxBytes, storage);
     if (bytes.length !== source.bytes || digest(bytes) !== source.digest) {
       fail(`Selected worker source changed: ${source.path}`, "WORKER_SOURCE_BASIS_DRIFT");
     }

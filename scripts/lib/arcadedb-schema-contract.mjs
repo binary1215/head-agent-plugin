@@ -1,4 +1,6 @@
-// Only the semantic keys used by HEAD, not a general database migration engine.
+import { formatForVerifiedOwner } from "./project-storage-format.mjs";
+
+// Only the owned semantic keys, not a general database migration engine.
 export const ARCADEDB_REQUIRED_KEYS = Object.freeze(Object.fromEntries(Object.entries({
   HeadAgentGraphSnapshot: ["projectId", "graphSnapshotId"],
   HeadAgentGraphSnapshotChunk: ["projectId", "graphSnapshotId", "chunkIndex"],
@@ -11,14 +13,33 @@ export const ARCADEDB_REQUIRED_KEYS = Object.freeze(Object.fromEntries(Object.en
   HeadAgentGraphSyncCheckpoint: ["projectId", "syncId", "batchId"],
 }).map(([name, keys]) => [name, Object.freeze(keys)])));
 
+export function arcadeDbRequiredKeysFor(owner) {
+  const format = formatForVerifiedOwner(owner);
+  return Object.freeze(Object.fromEntries(Object.entries(ARCADEDB_REQUIRED_KEYS)
+    .map(([name, keys]) => [format.kind(name), keys])));
+}
+
+const keysByName = Object.freeze({
+  ...ARCADEDB_REQUIRED_KEYS,
+  LodeAgentGraphSnapshot: ARCADEDB_REQUIRED_KEYS.HeadAgentGraphSnapshot,
+  LodeAgentGraphSnapshotChunk: ARCADEDB_REQUIRED_KEYS.HeadAgentGraphSnapshotChunk,
+  LodeAgentGraphPointer: ARCADEDB_REQUIRED_KEYS.HeadAgentGraphPointer,
+  LodeAgentGraphNode: ARCADEDB_REQUIRED_KEYS.HeadAgentGraphNode,
+  LodeAgentGraphEdge: ARCADEDB_REQUIRED_KEYS.HeadAgentGraphEdge,
+  LodeAgentGraphTopology: ARCADEDB_REQUIRED_KEYS.HeadAgentGraphTopology,
+  LodeAgentGraphTopologyChunk: ARCADEDB_REQUIRED_KEYS.HeadAgentGraphTopologyChunk,
+  LodeAgentGraphSyncManifest: ARCADEDB_REQUIRED_KEYS.HeadAgentGraphSyncManifest,
+  LodeAgentGraphSyncCheckpoint: ARCADEDB_REQUIRED_KEYS.HeadAgentGraphSyncCheckpoint,
+});
+
 export function requiredIndexDdl(name) {
-  const keys = ARCADEDB_REQUIRED_KEYS[name];
+  const keys = keysByName[name];
   if (!keys) throw new Error("Unknown HEAD reserved type");
   return `CREATE INDEX IF NOT EXISTS ON ${name} (${keys.join(", ")}) UNIQUE`;
 }
 
 export function inspectRequiredIndex(record) {
-  const keys = ARCADEDB_REQUIRED_KEYS[record.name];
+  const keys = keysByName[record.name];
   if (!keys) throw new Error("Unknown HEAD reserved type");
   if (!Array.isArray(record.indexes)) return { status: "unverifiable", reason: "index-metadata-unavailable" };
   let matching = false;

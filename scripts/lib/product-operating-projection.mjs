@@ -1,7 +1,8 @@
+import { formatForVerifiedOwner, familyFormatForOriginal, relativeProjectArtifact } from "./project-storage-format.mjs";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { SCHEMA_VERSION } from "./head-core.mjs";
+import { SCHEMA_VERSION } from "./lode-core.mjs";
 import { loadObservationArtifacts } from "./observation-store.mjs";
 
 // Read/projection responsibility shared by World, Temporal and the mutation facade.
@@ -83,26 +84,27 @@ function verifyIdentity(document, prefix, idField, hashField, label) {
   return document;
 }
 
-function commonValid(document, kind, projectId, epistemicClass, authority) {
+function commonValid(document, kind, projectId, epistemicClass, authority, storage) {
+  const format = familyFormatForOriginal("head-agent-core-product-operating-loop", document, storage);
   return document.schemaVersion === SCHEMA_VERSION && document.kind === kind
-    && document.protocol?.name === "head-agent-core-product-operating-loop" && (supportedProtocolVersion(document.protocol?.version) || (kind === "ProductHypothesis" && document.protocol?.version === PRODUCT_HYPOTHESIS_VERSION))
+    && Boolean(format) && (supportedProtocolVersion(document.protocol?.version) || (kind === "ProductHypothesis" && document.protocol?.version === PRODUCT_HYPOTHESIS_VERSION))
     && (!projectId || document.projectId === projectId) && document.epistemicClass === epistemicClass
     && document.authority === authority && document.instructionAuthority === false && document.promotionAuthority === false;
 }
 
-export function verifyProductSignal(document, projectId = "") {
+export function verifyProductSignal(document, projectId = "", storage = undefined) {
   verifyIdentity(document, "product-signal", "signalId", "signalHash", "ProductSignal");
-  if (!commonValid(document, "ProductSignal", projectId, "observed-fact", "non-authoritative-observation")
+  if (!commonValid(document, "ProductSignal", projectId, "observed-fact", "non-authoritative-observation", storage)
     || typeof document.statement !== "string" || !document.statement || typeof document.observedAt !== "string" || Number.isNaN(Date.parse(document.observedAt))) fail("ProductSignal fields are invalid.", "INVALID_PRODUCT_SIGNAL");
   sortedIds(document.evidenceIds, "ProductSignal evidenceIds");
   return document;
 }
 
-export function verifyProductHypothesis(document, projectId = "") {
+export function verifyProductHypothesis(document, projectId = "", storage = undefined) {
   verifyIdentity(document, "product-hypothesis", "hypothesisId", "hypothesisHash", "ProductHypothesis");
   const signalIds = sortedIds(document.signalIds || [], "ProductHypothesis signalIds");
   const observationIds = sortedIds(document.observationIds || [], "ProductHypothesis observationIds");
-  if (!commonValid(document, "ProductHypothesis", projectId, "hypothesis", "non-authoritative-hypothesis")
+  if (!commonValid(document, "ProductHypothesis", projectId, "hypothesis", "non-authoritative-hypothesis", storage)
     || typeof document.statement !== "string" || !document.statement || !signalIds.length && !observationIds.length
     || observationIds.some((id) => !/^(?:observation|derived-observation)-[a-f0-9]{24}$/.test(id))) fail("ProductHypothesis fields are invalid.", "INVALID_PRODUCT_HYPOTHESIS");
   if (!OBSERVATION_REFERENCE_PROTOCOL_VERSIONS.has(document.protocol.version) && document.observationIds != null) fail("Legacy ProductHypothesis may not gain Observation references.", "INVALID_PRODUCT_HYPOTHESIS");
@@ -118,17 +120,17 @@ function verifyFeatureResolution(resolution) {
   return resolution;
 }
 
-export function verifyProductFeatureCandidate(document, projectId = "") {
+export function verifyProductFeatureCandidate(document, projectId = "", storage = undefined) {
   verifyIdentity(document, "product-feature-candidate", "featureCandidateId", "featureCandidateHash", "ProductFeatureCandidate");
-  if (!commonValid(document, "ProductFeatureCandidate", projectId, "inferred-meaning", "candidate-not-product-canon")
+  if (!commonValid(document, "ProductFeatureCandidate", projectId, "inferred-meaning", "candidate-not-product-canon", storage)
     || !/^[a-f0-9]{64}$/.test(document.initiativeCandidateSeed || "") || !document.feature?.key || !document.feature?.name) fail("ProductFeatureCandidate fields are invalid.", "INVALID_PRODUCT_FEATURE_CANDIDATE");
   sortedIds(document.feature.capabilityKeys, "Feature candidate capabilityKeys");
   return document;
 }
 
-export function verifyProductInitiativeCandidate(document, projectId = "") {
+export function verifyProductInitiativeCandidate(document, projectId = "", storage = undefined) {
   verifyIdentity(document, "product-initiative-candidate", "initiativeCandidateId", "initiativeCandidateHash", "ProductInitiativeCandidate");
-  if (!commonValid(document, "ProductInitiativeCandidate", projectId, "inferred-meaning", "candidate-not-approved-decision")
+  if (!commonValid(document, "ProductInitiativeCandidate", projectId, "inferred-meaning", "candidate-not-approved-decision", storage)
     || !document.title || !Array.isArray(document.hypothesisIds)
     || (!document.hypothesisIds.length && !(typeof document.reasoning === "string" && document.reasoning))) fail("ProductInitiativeCandidate fields are invalid.", "INVALID_PRODUCT_INITIATIVE_CANDIDATE");
   sortedIds(document.hypothesisIds, "Initiative hypothesisIds");
@@ -136,9 +138,9 @@ export function verifyProductInitiativeCandidate(document, projectId = "") {
   return document;
 }
 
-export function verifyProductInitiativeReviewDecision(document, projectId = "") {
+export function verifyProductInitiativeReviewDecision(document, projectId = "", storage = undefined) {
   verifyIdentity(document, "product-initiative-review", "reviewDecisionId", "reviewDecisionHash", "Product Initiative ReviewDecision");
-  if (document.schemaVersion !== SCHEMA_VERSION || document.kind !== "ReviewDecision" || document.protocol?.name !== "head-agent-core-product-initiative-review"
+  if (document.schemaVersion !== SCHEMA_VERSION || document.kind !== "ReviewDecision" || !familyFormatForOriginal("head-agent-core-product-initiative-review", document, storage)
     || !supportedProtocolVersion(document.protocol?.version) || (!projectId || document.projectId === projectId) === false
     || document.decisionScope !== "product-initiative" || !["accept", "reject"].includes(document.disposition) || !document.rationale
     || document.authority !== "explicit-user-product-initiative-review" || document.instructionAuthority !== true
@@ -151,32 +153,32 @@ export function verifyProductInitiativeReviewDecision(document, projectId = "") 
     } else {
       verifyFeatureResolution(document.featureResolution);
       if (document.featureResolution.kind === "candidate") {
-        if (!document.featureCandidate || verifyProductFeatureCandidate(document.featureCandidate, projectId).featureCandidateId !== document.featureResolution.featureCandidateId) fail("Product Initiative ReviewDecision Feature candidate binding is invalid.", "INVALID_PRODUCT_INITIATIVE_REVIEW");
+        if (!document.featureCandidate || verifyProductFeatureCandidate(document.featureCandidate, projectId, familyFormatForOriginal("head-agent-core-product-initiative-review", document, storage)).featureCandidateId !== document.featureResolution.featureCandidateId) fail("Product Initiative ReviewDecision Feature candidate binding is invalid.", "INVALID_PRODUCT_INITIATIVE_REVIEW");
       } else if (document.featureCandidate !== null) fail("Product Initiative ReviewDecision embeds an unrelated Feature candidate.", "INVALID_PRODUCT_INITIATIVE_REVIEW");
     }
   }
   return document;
 }
 
-export function verifyReviewedProductInitiative(document, projectId = "") {
+export function verifyReviewedProductInitiative(document, projectId = "", storage = undefined) {
   verifyIdentity(document, "reviewed-product-initiative", "initiativeId", "initiativeHash", "ReviewedProductInitiative");
-  if (!commonValid(document, "ReviewedProductInitiative", projectId, "approved-decision", "reviewed-product-initiative-not-product-canon")
+  if (!commonValid(document, "ReviewedProductInitiative", projectId, "approved-decision", "reviewed-product-initiative-not-product-canon", storage)
     || !document.initiativeCandidateId || !document.reviewDecisionId || !document.title || !Array.isArray(document.hypothesisIds)) fail("ReviewedProductInitiative fields are invalid.", "INVALID_REVIEWED_PRODUCT_INITIATIVE");
   verifyFeatureResolution(document.featureResolution);
   return document;
 }
 
-export function verifyOutcomeObservation(document, projectId = "") {
+export function verifyOutcomeObservation(document, projectId = "", storage = undefined) {
   verifyIdentity(document, "outcome-observation", "outcomeObservationId", "outcomeObservationHash", "OutcomeObservation");
-  if (!commonValid(document, "OutcomeObservation", projectId, document.epistemicClass, "non-authoritative-outcome-evidence")
+  if (!commonValid(document, "OutcomeObservation", projectId, document.epistemicClass, "non-authoritative-outcome-evidence", storage)
     || !["observed-fact", "derived-projection"].includes(document.epistemicClass) || !document.statement
     || !document.changeSetId || !document.resultPacketId || !document.executionReviewDecisionId) fail("OutcomeObservation fields are invalid.", "INVALID_OUTCOME_OBSERVATION");
   sortedIds(document.evidenceIds, "OutcomeObservation evidenceIds");
   return document;
 }
 
-function readArtifacts(projectRoot, relative, limit = LIMITS.maxArtifacts) {
-  const directory = safeDirectory(projectRoot, relative);
+function readArtifacts(projectRoot, relative, limit = LIMITS.maxArtifacts, storage = null) {
+  const directory = safeDirectory(projectRoot, relativeProjectArtifact(storage, ...relative.split("/").slice(1)));
   if (!fs.existsSync(directory)) return [];
   const files = fs.readdirSync(directory, { withFileTypes: true }).filter((entry) => entry.isFile() && entry.name.endsWith(".json")).map((entry) => path.join(directory, entry.name)).sort();
   if (files.length > limit) fail("Product operating artifact count exceeds its bound.", "PRODUCT_OPERATING_LIMIT");
@@ -188,16 +190,21 @@ function readArtifacts(projectRoot, relative, limit = LIMITS.maxArtifacts) {
   });
 }
 
-export function verifyProductOperatingProjectionInput(projection) {
+export function verifyProductOperatingProjectionInput(projection, storage = undefined) {
   if (!projection || projection.kind !== "ProductOperatingProjectionInput"
-    || projection.protocol?.name !== "head-agent-core-product-operating-projection"
+    || !familyFormatForOriginal("head-agent-core-product-operating-projection", projection, storage)
     || !supportedProtocolVersion(projection.protocol?.version)
     || typeof projection.projectId !== "string" || !projection.projectId
     || projection.authority !== "derived-product-graph-input-not-product-or-execution-canon"
     || projection.instructionAuthority !== false || projection.promotionAuthority !== false) {
     fail("Product operating projection input is invalid.", "INVALID_PRODUCT_OPERATING_PROJECTION");
   }
-  for (const field of Object.keys(DIRECTORIES)) if (!Array.isArray(projection[field])) fail(`Product operating projection ${field} is invalid.`, "INVALID_PRODUCT_OPERATING_PROJECTION");
+  const format = familyFormatForOriginal("head-agent-core-product-operating-projection", projection, storage);
+  for (const field of Object.keys(DIRECTORIES)) {
+    if (!Array.isArray(projection[field])) fail(`Product operating projection ${field} is invalid.`, "INVALID_PRODUCT_OPERATING_PROJECTION");
+    const family = field === "initiativeReviews" ? "head-agent-core-product-initiative-review" : "head-agent-core-product-operating-loop";
+    if (projection[field].some(record => !familyFormatForOriginal(family, record, format))) fail(`Product operating projection ${field} is invalid.`, "INVALID_PRODUCT_OPERATING_PROJECTION");
+  }
   const payload = { ...projection }; delete payload.projectionInputId; delete payload.projectionInputHash;
   const hash = productOperatingDigest(productOperatingCanonicalJson(payload));
   if (projection.projectionInputHash !== hash || projection.projectionInputId !== `product-operating-projection-${hash.slice(0, 24)}`) {
@@ -206,21 +213,22 @@ export function verifyProductOperatingProjectionInput(projection) {
   return projection;
 }
 
-export function loadProductOperatingProjection({ projectRoot, projectId } = {}) {
-  const arrays = Object.fromEntries(Object.entries(DIRECTORIES).map(([key, relative]) => [key, readArtifacts(projectRoot, relative)]));
+export function loadProductOperatingProjection({ projectRoot, projectId, storage = null } = {}) {
+  const format = formatForVerifiedOwner(storage);
+  const arrays = Object.fromEntries(Object.entries(DIRECTORIES).map(([key, relative]) => [key, readArtifacts(projectRoot, relative, LIMITS.maxArtifacts, storage)]));
   const validators = {
     signals: verifyProductSignal, hypotheses: verifyProductHypothesis, initiativeCandidates: verifyProductInitiativeCandidate,
     initiativeReviews: verifyProductInitiativeReviewDecision, reviewedInitiatives: verifyReviewedProductInitiative,
     featureCandidates: verifyProductFeatureCandidate, outcomeObservations: verifyOutcomeObservation,
   };
-  for (const [key, values] of Object.entries(arrays)) for (const value of values) validators[key](value, projectId);
+  for (const [key, values] of Object.entries(arrays)) for (const value of values) validators[key](value, projectId, format);
   for (const review of arrays.initiativeReviews) {
     if (review.featureCandidate && !arrays.featureCandidates.some((item) => item.featureCandidateId === review.featureCandidate.featureCandidateId)) arrays.featureCandidates.push(review.featureCandidate);
     if (review.disposition !== "accept" || arrays.reviewedInitiatives.some((item) => item.reviewDecisionId === review.reviewDecisionId)) continue;
     const candidate = arrays.initiativeCandidates.find((item) => item.initiativeCandidateId === review.initiativeCandidateId);
     const resolution = review.featureResolution ?? candidate?.featureResolution;
     // Old decisions without a frozen selection remain readable and unresolved.
-    if (candidate && resolution) arrays.reviewedInitiatives.push(buildReviewedInitiative(candidate, { ...review, featureResolution: resolution }));
+    if (candidate && resolution) arrays.reviewedInitiatives.push(buildReviewedInitiative(candidate, { ...review, featureResolution: resolution }, format));
   }
   const by = (values, field) => new Map(values.map((value) => [value[field], value]));
   const signals = by(arrays.signals, "signalId");
@@ -232,11 +240,11 @@ export function loadProductOperatingProjection({ projectRoot, projectId } = {}) 
   const referencedObservationIds = new Set(arrays.hypotheses.flatMap((hypothesis) => hypothesis.observationIds || []));
   const observationIds = new Set();
   if (referencedObservationIds.size) {
-    const observationArtifacts = loadObservationArtifacts({ projectRoot, projectId });
+    const observationArtifacts = loadObservationArtifacts({ projectRoot, projectId, storage });
     for (const item of observationArtifacts.observations) observationIds.add(item.observationId);
     for (const item of observationArtifacts.derivedObservations) observationIds.add(item.derivedObservationId);
   }
-  const changes = new Map(readArtifacts(projectRoot, ".head/change-sets/records").map((value) => [value.changeSetId, value]));
+  const changes = new Map(readArtifacts(projectRoot, ".head/change-sets/records", LIMITS.maxArtifacts, storage).map((value) => [value.changeSetId, value]));
   for (const hypothesis of arrays.hypotheses) if (hypothesis.signalIds.some((id) => !signals.has(id))) fail("ProductHypothesis references an unknown ProductSignal.", "UNKNOWN_PRODUCT_SIGNAL");
   for (const hypothesis of arrays.hypotheses) if ((hypothesis.observationIds || []).some((id) => !observationIds.has(id))) fail("ProductHypothesis references an unknown Observation.", "UNKNOWN_OBSERVATION");
   for (const initiative of arrays.initiativeCandidates) {
@@ -283,12 +291,12 @@ export function loadProductOperatingProjection({ projectRoot, projectId } = {}) 
   const idFields = { signals: "signalId", hypotheses: "hypothesisId", initiativeCandidates: "initiativeCandidateId", initiativeReviews: "reviewDecisionId", reviewedInitiatives: "initiativeId", featureCandidates: "featureCandidateId", outcomeObservations: "outcomeObservationId" };
   const payload = {
     schemaVersion: SCHEMA_VERSION, kind: "ProductOperatingProjectionInput",
-    protocol: { name: "head-agent-core-product-operating-projection", version: PRODUCT_OPERATING_LOOP_VERSION },
+    protocol: { name: format.protocol("head-agent-core-product-operating-projection"), version: PRODUCT_OPERATING_LOOP_VERSION },
     projectId, ...Object.fromEntries(Object.entries(arrays).map(([key, values]) => [key, values.sort((a, b) => a[idFields[key]].localeCompare(b[idFields[key]]))])),
     authority: "derived-product-graph-input-not-product-or-execution-canon", instructionAuthority: false, promotionAuthority: false,
   };
   const projectionInputHash = productOperatingDigest(productOperatingCanonicalJson(payload));
-  return verifyProductOperatingProjectionInput({ ...payload, projectionInputId: `product-operating-projection-${projectionInputHash.slice(0, 24)}`, projectionInputHash });
+  return verifyProductOperatingProjectionInput({ ...payload, projectionInputId: `product-operating-projection-${projectionInputHash.slice(0, 24)}`, projectionInputHash }, format);
 }
 
 export function initiativeSeed(candidate) {
@@ -298,13 +306,15 @@ export function initiativeSeed(candidate) {
 }
 
 export function verifyReviewDecisionCandidateLineage(reviewDecision, candidate) {
+  const format = familyFormatForOriginal("head-agent-core-product-initiative-review", reviewDecision);
+  if (!format || !familyFormatForOriginal("head-agent-core-product-operating-loop", candidate, format)) fail("Product Initiative ReviewDecision candidate binding is stale or invalid.", "INVALID_PRODUCT_INITIATIVE_REVIEW_LINEAGE");
   if (reviewDecision.protocol.version !== PRODUCT_OPERATING_LOOP_VERSION) return;
   if (reviewDecision.initiativeCandidateHash !== candidate.initiativeCandidateHash) fail("Product Initiative ReviewDecision candidate binding is stale or invalid.", "INVALID_PRODUCT_INITIATIVE_REVIEW_LINEAGE");
   if (reviewDecision.disposition === "accept" && candidate.featureResolution != null && productOperatingCanonicalJson(reviewDecision.featureResolution) !== productOperatingCanonicalJson(candidate.featureResolution)) fail("Product Initiative ReviewDecision replaces the candidate's frozen Feature resolution.", "INVALID_PRODUCT_INITIATIVE_REVIEW_LINEAGE");
   if (reviewDecision.featureCandidate && reviewDecision.featureCandidate.initiativeCandidateSeed !== initiativeSeed(candidate)) fail("Product Initiative ReviewDecision Feature candidate seed is invalid.", "INVALID_PRODUCT_INITIATIVE_REVIEW_LINEAGE");
 }
 
-export function buildReviewedInitiative(candidate, reviewDecision) {
-  const approved = { schemaVersion: SCHEMA_VERSION, kind: "ReviewedProductInitiative", protocol: { name: "head-agent-core-product-operating-loop", version: PRODUCT_OPERATING_LOOP_VERSION }, projectId: candidate.projectId, initiativeCandidateId: candidate.initiativeCandidateId, reviewDecisionId: reviewDecision.reviewDecisionId, title: candidate.title, description: candidate.description, reasoning: candidate.reasoning || "", hypothesisIds: candidate.hypothesisIds, featureResolution: reviewDecision.featureResolution, epistemicClass: "approved-decision", authority: "reviewed-product-initiative-not-product-canon", instructionAuthority: false, promotionAuthority: false };
-  return verifyReviewedProductInitiative(artifact(approved, "reviewed-product-initiative", "initiativeId", "initiativeHash"), candidate.projectId);
+export function buildReviewedInitiative(candidate, reviewDecision, storage = null) {
+  const approved = { schemaVersion: SCHEMA_VERSION, kind: "ReviewedProductInitiative", protocol: { name: formatForVerifiedOwner(storage).protocol("head-agent-core-product-operating-loop"), version: PRODUCT_OPERATING_LOOP_VERSION }, projectId: candidate.projectId, initiativeCandidateId: candidate.initiativeCandidateId, reviewDecisionId: reviewDecision.reviewDecisionId, title: candidate.title, description: candidate.description, reasoning: candidate.reasoning || "", hypothesisIds: candidate.hypothesisIds, featureResolution: reviewDecision.featureResolution, epistemicClass: "approved-decision", authority: "reviewed-product-initiative-not-product-canon", instructionAuthority: false, promotionAuthority: false };
+  return verifyReviewedProductInitiative(artifact(approved, "reviewed-product-initiative", "initiativeId", "initiativeHash"), candidate.projectId, formatForVerifiedOwner(storage));
 }

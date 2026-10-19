@@ -13,7 +13,7 @@ CI는 통합 계약 제품군과 네이티브 빌드 매트릭스가 통과한 �
 유지되며, Claude 전용 카탈로그와 캐시 경로 세부 정보는 `.head/`, Product Canon,
 Session/Run 계보 또는 런타임 권한 부여에 들어가지 않습니다.
 
-생성된 브랜치에는 정확히 다음 항목이 포함됩니다.
+생성된 기존 주소용 호환 배포판에는 정확히 다음 항목이 포함됩니다.
 
 ```text
 .claude-plugin/marketplace.json
@@ -60,12 +60,12 @@ Claude Code는 설치된 플러그인을 버전이 지정된 캐시에 복사하
 요구 사항: Claude Code와 최신 Node.js LTS 릴리스.
 
 ```powershell
-claude plugin marketplace add binary1215/head-agent-plugin@claude-marketplace
+claude plugin marketplace add binary1215/lode@claude-marketplace
 claude plugin install head-agent-core@head-agent-plugin
 ```
 
 설치 후 새 Claude Code 세션을 시작하세요. 일반 사용은 번들
-`head-agent-onboarding` Skill과 typed `head_core` MCP 작업을 통해 시작합니다.
+`head-agent-core` Skill과 typed `head_core` MCP 작업을 통해 시작합니다.
 설치만으로 `.head/`를 생성하거나, 프로젝트를 수정하거나, GraphDB에 연결하거나,
 공급자/모델을 선택하거나, Product Canon을 승인하거나, ReviewDecision을 생성하지
 않습니다.
@@ -87,7 +87,7 @@ claude plugin uninstall head-agent-core@head-agent-plugin
 claude plugin marketplace remove head-agent-plugin
 ```
 
-플러그인을 제거해도 프로젝트 소유 상태나 HEAD가 관리하는 프로젝트 상태는 삭제되지
+플러그인을 제거해도 프로젝트 소유 상태나 Lode가 관리하는 프로젝트 상태는 삭제되지
 않습니다. 프로젝트 `.head/` 제거는 별도의 명시적 사용자 작업으로 남습니다.
 
 ## 게시 소유권
@@ -118,3 +118,17 @@ claude plugin validate C:\temporary\head-agent-claude-marketplace
 
 이 저장소는 공식 Anthropic 마켓플레이스가 아닙니다. Git으로 호스팅되는 타사
 Claude Code 마켓플레이스이며 [MIT License](../../LICENSE)에 따라 배포됩니다.
+
+## 정식 배포와 기존 설치 호환 구성
+
+정식 소스 배포판은 플러그인 `lode-agent-core`, 서버 `lode_core`, 도구 `lode_*`와
+Skill `lode-agent-core`, `lode-agent-onboarding`, `lode-conversation`을 노출합니다.
+위 기존 원격 주소 예시는 생성된 호환 배포판의 플러그인
+`head-agent-core@head-agent-plugin`, 서버 `head_core`, 도구 `head_*`, Skill
+`head-agent-core`, `head-agent-onboarding`, `head-conversation`을 설명합니다. 둘은 같은
+Lode 구현과 검증을 사용하며, 각 배포판은 자기 이름 한 벌만 노출합니다. 소스 패키징은
+실제 게시·설치나 실행 중 Host 동작의 검증이 아닙니다.
+
+새 초기화는 `.lode/`를 사용합니다. 기존 `.head/` Project는 root·식별자·원문·선택
+Session과 운영 소유권을 유지하며, 수동 변환이나 두 번째 정본 저장소가 필요하지 않습니다.
+

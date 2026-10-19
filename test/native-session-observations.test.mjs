@@ -7,6 +7,7 @@ import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
 import { initializeProject, inspectProject } from "../scripts/lib/head-core.mjs";
+import { formatForVerifiedOwner } from "../scripts/lib/project-storage-format.mjs";
 import { createHeadSession, withSessionRoute } from "../scripts/lib/session-routing.mjs";
 import { createSessionHostAdapter } from "../scripts/lib/session-host-adapter.mjs";
 import { createNativeSessionHostBridge } from "../scripts/lib/session-native-host.mjs";
@@ -23,9 +24,11 @@ function fixture(t) {
   const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "head-native-observation-")));
   const root = path.join(base, "project"), operational = path.join(base, "operational"); fs.mkdirSync(root);
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const storage = inspectProject(root).storage;
+  const layout = formatForVerifiedOwner(storage);
   t.after(() => fs.rmSync(base, { recursive: true, force: true }));
   const environment = { HEAD_AGENT_OPERATIONAL_STATE_ROOT: operational };
-  return { base, root, operational, environment, store: createNativeObservationStore({ environment }) };
+  return { base, root, storage, layout, operational, environment, store: createNativeObservationStore({ environment }) };
 }
 const event = (root, name, more = {}) => ({ hook_event_name: name, cwd: root, session_id: caller.nativeSessionId, ...more });
 const observed = (root, id, name = "UserPromptSubmit") => normalizeNativeHook({ runtime: "codex", event: event(root, name, { turn_id: id }) }).observation;
@@ -270,10 +273,11 @@ test("ordinary startup serializer remains byte-identical; observer failure/unini
   const fresh = path.join(f.base, "untouched"); fs.mkdirSync(fresh);
   assert.deepEqual(await runSessionHostHook({ runtime: "codex", event: event(fresh, "SessionStart", { source: "startup" }), environment: f.environment }), {});
   assert.equal(fs.existsSync(path.join(fresh, ".head")), false);
+  assert.equal(fs.existsSync(path.join(fresh, ".lode")), false);
 });
 
 test("entry still performs final child basis check after optional source callback", t => {
-  const f = fixture(t), current = path.join(f.root, ".head", "sessions", "current.json");
+  const f = fixture(t), current = path.join(f.root, f.layout.directory, "sessions", "current.json");
   const res = enterConversationRecovery({ root: f.root, readRelatedNativeContext: () => {
     const state = JSON.parse(fs.readFileSync(current, "utf8")); state.purpose = "LATER CANCELLATION";
     fs.writeFileSync(current, JSON.stringify(state)); return { sources: [{ wrong: "old result" }] };

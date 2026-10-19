@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { familyFormatForOriginal, formatForVerifiedOwner, relativeProjectArtifact } from "./project-storage-format.mjs";
 
 export const FEATURE_MAPPING_VERSION = "0.2.0";
 export const FEATURE_MAPPING_STATE_RELATIVE_PATH = ".head/feature-mappings/current.json";
@@ -94,7 +95,7 @@ function verifyEvidence(evidence) {
   return evidence;
 }
 
-function verifyCandidate(candidate, evidenceIds) {
+function verifyCandidate(candidate, evidenceIds, storage) {
   verifyIdentity(candidate, {
     idField: "candidateId",
     hashField: "candidateHash",
@@ -104,7 +105,7 @@ function verifyCandidate(candidate, evidenceIds) {
   if (candidate.kind !== "FeatureMappingCandidate" || candidate.schemaVersion !== 1
     || !["IMPLEMENTS", "VERIFIED_BY"].includes(candidate.relationshipType)
     || candidate.authorityClass !== "candidate" || candidate.instructionAuthority !== false
-    || candidate.promotionAuthority !== false || candidate.producer !== "head-agent-core-feature-mapping-proposal-normalizer"
+    || candidate.promotionAuthority !== false || candidate.producer !== formatForVerifiedOwner(storage).protocol("head-agent-core-feature-mapping-proposal-normalizer")
     || candidate.producerVersion !== FEATURE_MAPPING_VERSION
     || !Number.isFinite(candidate.confidence) || candidate.confidence < 0 || candidate.confidence > 1
     || typeof candidate.explanation !== "string" || !candidate.explanation || candidate.explanation.length > 2000
@@ -128,7 +129,7 @@ function verifyCandidate(candidate, evidenceIds) {
   return candidate;
 }
 
-export function verifyFeatureMappingCandidateSet(document, projectId = "") {
+export function verifyFeatureMappingCandidateSet(document, projectId = "", storage = undefined) {
   verifyIdentity(document, {
     idField: "candidateSetId",
     hashField: "candidateSetHash",
@@ -136,7 +137,7 @@ export function verifyFeatureMappingCandidateSet(document, projectId = "") {
     label: "Feature mapping candidate set",
   });
   if (document.schemaVersion !== 1 || document.kind !== "FeatureMappingCandidateSet"
-    || document.protocol?.name !== "head-agent-core-feature-mapping-candidates"
+    || !familyFormatForOriginal("head-agent-core-feature-mapping-candidates", document, storage)
     || document.protocol?.version !== FEATURE_MAPPING_VERSION
     || (projectId && document.projectId !== projectId)
     || !/^world-model-[a-f0-9]{24}$/.test(document.worldModelId || "")
@@ -162,7 +163,7 @@ export function verifyFeatureMappingCandidateSet(document, projectId = "") {
   }
   const candidateIds = new Set();
   for (const candidate of document.candidates) {
-    verifyCandidate(candidate, evidenceIds);
+    verifyCandidate(candidate, evidenceIds, familyFormatForOriginal("head-agent-core-feature-mapping-candidates", document, storage));
     if (candidateIds.has(candidate.candidateId)) fail("Duplicate Feature mapping candidate.", "DUPLICATE_FEATURE_MAPPING_CANDIDATE");
     candidateIds.add(candidate.candidateId);
   }
@@ -182,7 +183,7 @@ export function verifyFeatureMappingCandidateSet(document, projectId = "") {
   return document;
 }
 
-export function verifyFeatureMappingReviewDecision(document, candidateSet, projectId = "") {
+export function verifyFeatureMappingReviewDecision(document, candidateSet, projectId = "", storage = undefined) {
   verifyIdentity(document, {
     idField: "reviewDecisionId",
     hashField: "reviewDecisionHash",
@@ -190,7 +191,7 @@ export function verifyFeatureMappingReviewDecision(document, candidateSet, proje
     label: "Feature mapping ReviewDecision",
   });
   if (document.schemaVersion !== 1 || document.kind !== "ReviewDecision"
-    || document.protocol?.name !== "head-agent-core-feature-mapping-review"
+    || !familyFormatForOriginal("head-agent-core-feature-mapping-review", document, storage ?? familyFormatForOriginal("head-agent-core-feature-mapping-candidates", candidateSet))
     || document.protocol?.version !== FEATURE_MAPPING_VERSION
     || document.decisionScope !== "feature-implementation-mapping"
     || (projectId && document.projectId !== projectId)
@@ -242,8 +243,8 @@ function safeDirectory(projectRoot, relative) {
   return directory;
 }
 
-function readArtifacts(projectRoot, relative, label, limit) {
-  const directory = safeDirectory(projectRoot, relative);
+function readArtifacts(projectRoot, relative, label, limit, storage) {
+  const directory = safeDirectory(projectRoot, relativeProjectArtifact(storage, ...relative.split("/").slice(1)));
   if (!fs.existsSync(directory)) return { items: [], bytes: 0 };
   const files = fs.readdirSync(directory, { withFileTypes: true })
     .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
@@ -262,16 +263,16 @@ function readArtifacts(projectRoot, relative, label, limit) {
   return { items, bytes };
 }
 
-export function verifyFeatureMappingProjectionInput(projection) {
+export function verifyFeatureMappingProjectionInput(projection, storage = undefined) {
   if (!projection || projection.kind !== "FeatureMappingProjectionInput"
-    || projection.protocol?.name !== "head-agent-core-feature-mapping-projection"
+    || !familyFormatForOriginal("head-agent-core-feature-mapping-projection", projection, storage)
     || projection.protocol?.version !== FEATURE_MAPPING_VERSION
     || !Array.isArray(projection.candidateSets) || !Array.isArray(projection.reviewDecisions)) {
     fail("Feature mapping projection input is invalid.", "INVALID_FEATURE_MAPPING_PROJECTION");
   }
   const candidateById = new Map();
   for (const candidateSet of projection.candidateSets) {
-    verifyFeatureMappingCandidateSet(candidateSet, projection.projectId);
+    verifyFeatureMappingCandidateSet(candidateSet, projection.projectId, familyFormatForOriginal("head-agent-core-feature-mapping-projection", projection, storage));
     if (candidateById.has(candidateSet.candidateSetId)) fail("Duplicate Feature mapping candidate set.", "DUPLICATE_FEATURE_MAPPING_CANDIDATE_SET");
     candidateById.set(candidateSet.candidateSetId, candidateSet);
   }
@@ -279,7 +280,7 @@ export function verifyFeatureMappingProjectionInput(projection) {
   for (const review of projection.reviewDecisions) {
     const candidateSet = candidateById.get(review.candidateSetId);
     if (!candidateSet) fail("Feature mapping review references an unknown candidate set.", "UNKNOWN_FEATURE_MAPPING_CANDIDATE_SET");
-    verifyFeatureMappingReviewDecision(review, candidateSet, projection.projectId);
+    verifyFeatureMappingReviewDecision(review, candidateSet, projection.projectId, familyFormatForOriginal("head-agent-core-feature-mapping-projection", projection, storage));
     if (reviewIds.has(review.reviewDecisionId)) fail("Duplicate Feature mapping ReviewDecision.", "DUPLICATE_FEATURE_MAPPING_REVIEW");
     reviewIds.add(review.reviewDecisionId);
   }
@@ -297,14 +298,15 @@ export function loadFeatureMappingProjection({
   projectRoot,
   projectId,
   currentProductModelId,
+  storage,
   additionalCandidateSets = [],
   additionalReviewDecisions = [],
 } = {}) {
-  const candidateFiles = readArtifacts(projectRoot, FEATURE_MAPPING_CANDIDATE_DIRECTORY, "Feature mapping candidate set", LIMITS.maxCandidateSets);
-  const reviewFiles = readArtifacts(projectRoot, FEATURE_MAPPING_REVIEW_DIRECTORY, "Feature mapping ReviewDecision", LIMITS.maxReviewDecisions);
+  const candidateFiles = readArtifacts(projectRoot, FEATURE_MAPPING_CANDIDATE_DIRECTORY, "Feature mapping candidate set", LIMITS.maxCandidateSets, storage);
+  const reviewFiles = readArtifacts(projectRoot, FEATURE_MAPPING_REVIEW_DIRECTORY, "Feature mapping ReviewDecision", LIMITS.maxReviewDecisions, storage);
   const candidates = new Map();
   for (const candidateSet of [...candidateFiles.items, ...additionalCandidateSets]) {
-    verifyFeatureMappingCandidateSet(candidateSet, projectId);
+    verifyFeatureMappingCandidateSet(candidateSet, projectId, storage);
     const existing = candidates.get(candidateSet.candidateSetId);
     if (existing && featureMappingCanonicalJson(existing) !== featureMappingCanonicalJson(candidateSet)) {
       fail("Feature mapping candidate-set identity collision.", "FEATURE_MAPPING_IMMUTABLE_COLLISION");
@@ -315,7 +317,7 @@ export function loadFeatureMappingProjection({
   for (const review of [...reviewFiles.items, ...additionalReviewDecisions]) {
     const candidateSet = candidates.get(review.candidateSetId);
     if (!candidateSet) fail("Feature mapping review references an unknown candidate set.", "UNKNOWN_FEATURE_MAPPING_CANDIDATE_SET");
-    verifyFeatureMappingReviewDecision(review, candidateSet, projectId);
+    verifyFeatureMappingReviewDecision(review, candidateSet, projectId, storage);
     const existing = reviews.get(review.reviewDecisionId);
     if (existing && featureMappingCanonicalJson(existing) !== featureMappingCanonicalJson(review)) {
       fail("Feature mapping ReviewDecision identity collision.", "FEATURE_MAPPING_IMMUTABLE_COLLISION");
@@ -325,7 +327,7 @@ export function loadFeatureMappingProjection({
   const payload = {
     schemaVersion: 1,
     kind: "FeatureMappingProjectionInput",
-    protocol: { name: "head-agent-core-feature-mapping-projection", version: FEATURE_MAPPING_VERSION },
+    protocol: { name: formatForVerifiedOwner(storage).protocol("head-agent-core-feature-mapping-projection"), version: FEATURE_MAPPING_VERSION },
     projectId,
     currentProductModelId,
     candidateSets: [...candidates.values()].sort((left, right) => left.candidateSetId.localeCompare(right.candidateSetId)),
@@ -339,5 +341,5 @@ export function loadFeatureMappingProjection({
     ...payload,
     projectionInputId: `feature-mapping-projection-${hash.slice(0, 24)}`,
     projectionInputHash: hash,
-  });
+  }, storage);
 }

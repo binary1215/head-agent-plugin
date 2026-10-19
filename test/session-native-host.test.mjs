@@ -3,7 +3,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { initializeProject, inspectProject } from "../scripts/lib/head-core.mjs";
+import { syncBuiltinESMExports } from "node:module";
+import { fileURLToPath } from "node:url";
+import { initializeProject, inspectProject } from "../scripts/lib/lode-core.mjs";
 import { createHeadSession, createSessionCallContext } from "../scripts/lib/session-routing.mjs";
 import { createSessionHostAdapter } from "../scripts/lib/session-host-adapter.mjs";
 import { createNativeSessionHostBridge } from "../scripts/lib/session-native-host.mjs";
@@ -11,16 +13,25 @@ import { createSessionHostRequestRegistry, SESSION_HOST_REQUEST_HELPER } from ".
 import { sessionCallRequiresBinding } from "../scripts/lib/session-routing.mjs";
 import { dispatch, catalogTools } from "../scripts/mcp-server.mjs";
 
+// head_* request inputs below deliberately exercise compatibility dispatch;
+// generated catalog and Hook assertions use the canonical Lode vocabulary.
 const pluginRoot = path.resolve(import.meta.dirname, "..");
 function fixture(t, initialize = true) {
   const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "head-native-session-")));
   const root = path.join(base, "project"), operational = path.join(base, "host"); fs.mkdirSync(root);
-  if (initialize) initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  let storage = null;
+  if (initialize) {
+    initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+    storage = inspectProject(root).storage;
+    assert.equal(storage.directory, ".lode");
+    assert.equal(fs.existsSync(path.resolve(root, ".lode/project.json")), true);
+    assert.equal(fs.existsSync(path.resolve(root, ".head/project.json")), false);
+  }
   t.after(() => fs.rmSync(base, { recursive: true, force: true }));
   const environment = { HEAD_AGENT_OPERATIONAL_STATE_ROOT: operational };
   const bridge = () => createNativeSessionHostBridge({ runtime: "codex", environment });
   const host = (nativeSessionId) => createSessionHostAdapter({ runtime: "codex", nativeSessionId, environment });
-  return { root, operational, environment, bridge, host };
+  return { root, storage, operational, environment, bridge, host };
 }
 function snapshot(root) {
   if (!fs.existsSync(root)) return [];
@@ -41,7 +52,7 @@ const claudeRequest = (root,name,args={},id="tool-local",routed=false) => {
 const hookRequest = (wire,nativeSessionId="native-claude-root",agentId="") => ({
   id:"native-hook",method:"tools/call",params:{name:SESSION_HOST_REQUEST_HELPER,arguments:{
     native_session_id:nativeSessionId,native_agent_id:agentId,tool_use_id:wire.params._meta["claudecode/toolUseId"],
-    outer_tool_name:"mcp__head_core__"+wire.params.name,original_arguments:JSON.stringify(wire.params.arguments),
+    outer_tool_name:"mcp__lode_core__"+wire.params.name,original_arguments:JSON.stringify(wire.params.arguments),
   }},
 });
 async function claudeCall(bridge,wire,nativeSessionId="native-claude-root",agentId="") {
@@ -50,7 +61,7 @@ async function claudeCall(bridge,wire,nativeSessionId="native-claude-root",agent
 }
 
 test("init/resume selects; later automatic entry preserves Session without read writes", async t => {
-  const { root, operational, bridge, host } = fixture(t), native = bridge();
+  const { root, storage, operational, bridge, host } = fixture(t), native = bridge();
   const target = createHeadSession({root,purpose:"Selected investigation"}).sessionId;
   const selected = await invoke(native, request(root,"head_project_initialize_or_resume",{session_id:target,profile:"core"}));
   assert.equal(selected.result.structuredContent.project.sessionId,target);
@@ -65,7 +76,7 @@ test("init/resume selects; later automatic entry preserves Session without read 
 });
 
 test("R1 one-off read, foreign-session record, checkpoint, integration and create-only are not selection", async t => {
-  const { root, operational, bridge, host } = fixture(t), native = bridge();
+  const { root, storage, operational, bridge, host } = fixture(t), native = bridge();
   const a = createHeadSession({root,purpose:"A"}).sessionId, b = createHeadSession({root,purpose:"B"}).sessionId;
   await invoke(native,request(root,"head_project_initialize_or_resume",{session_id:a}));
   const before = snapshot(operational);
@@ -81,7 +92,7 @@ test("R1 one-off read, foreign-session record, checkpoint, integration and creat
 });
 
 test("same process concurrent callers, router and explicit sharing/separation remain request-local", async t => {
-  const { root, bridge, host } = fixture(t), native = bridge();
+  const { root, storage, bridge, host } = fixture(t), native = bridge();
   const a=createHeadSession({root,purpose:"A"}).sessionId,b=createHeadSession({root,purpose:"B"}).sessionId;
   const results=await Promise.all([
     invoke(native,request(root,"head_project_initialize_or_resume",{session_id:a},"native-A",true)),
@@ -98,7 +109,7 @@ test("same process concurrent callers, router and explicit sharing/separation re
 });
 
 test("new caller default is unchanged; reads create no Host linkage; first init retains default", async t => {
-  const { root, operational, bridge, host }=fixture(t),native=bridge();
+  const { root, storage, operational, bridge, host }=fixture(t),native=bridge();
   const defaultId=inspectProject(root).state.sessionId;
   assert.equal((await invoke(native,request(root,"head_conversation_enter"))).result.structuredContent.workContext.sessionId,defaultId);
   assert.equal(fs.existsSync(operational),false);
@@ -107,14 +118,14 @@ test("new caller default is unchanged; reads create no Host linkage; first init 
 });
 
 test("new Project initializer registers only its successfully returned identity", async t => {
-  const { root, bridge, host }=fixture(t,false),native=bridge();
+  const { root, storage, bridge, host }=fixture(t,false),native=bridge();
   const result=await invoke(native,request(root,"head_project_initialize_or_resume",{runtimes:["codex"]}));
   assert.equal(result.result.structuredContent.projectAction,"initialized");
   assert.equal(host("native-A").read({root}).sessionId,result.result.structuredContent.project.sessionId);
 });
 
 test("missing/malformed native metadata never uses last caller; legacy and embedding remain separate", async t => {
-  const { root, operational, bridge }=fixture(t),native=bridge();
+  const { root, storage, operational, bridge }=fixture(t),native=bridge();
   const a=createHeadSession({root,purpose:"A"}).sessionId,b=createHeadSession({root,purpose:"B"}).sessionId;
   await invoke(native,request(root,"head_project_initialize_or_resume",{session_id:a}));
   const before=snapshot(operational);
@@ -132,7 +143,7 @@ test("missing/malformed native metadata never uses last caller; legacy and embed
 });
 
 test("tool argument metadata does not supply or override wire caller; invalid preflight leaves binding intact", async t => {
-  const { root, operational, bridge }=fixture(t),native=bridge();
+  const { root, storage, operational, bridge }=fixture(t),native=bridge();
   const a=createHeadSession({root,purpose:"A"}).sessionId;
   await invoke(native,request(root,"head_project_initialize_or_resume",{session_id:a}));
   const before=snapshot(operational);
@@ -143,7 +154,7 @@ test("tool argument metadata does not supply or override wire caller; invalid pr
 });
 
 test("known lost/pending/deleted binding scopes only dependent work, not valid explicit reads", async t => {
-  const { root, operational, bridge, host }=fixture(t),native=bridge();
+  const { root, storage, operational, bridge, host }=fixture(t),native=bridge();
   const a=createHeadSession({root,purpose:"A"}).sessionId;
   await invoke(native,request(root,"head_project_initialize_or_resume",{session_id:a}));
   const owner=host("native-A");owner.lose({root,expectedRevision:owner.read({root}).revision});
@@ -155,7 +166,7 @@ test("known lost/pending/deleted binding scopes only dependent work, not valid e
 });
 
 test("P5 settlement handles reverse completion and proven pre-effect failure without overwriting newer choice", t => {
-  const { root, host }=fixture(t),owner=host("native-A");
+  const { root, storage, host }=fixture(t),owner=host("native-A");
   const a=createHeadSession({root,purpose:"A"}).sessionId,b=createHeadSession({root,purpose:"B"}).sessionId;
   owner.select({root,sessionId:"",expectedRevision:0});
   let first=owner.prepareSelection({root,sessionId:a}),second=owner.prepareSelection({root,sessionId:b});
@@ -174,7 +185,7 @@ test("P5 settlement handles reverse completion and proven pre-effect failure wit
 });
 
 test("uncertain/cancel outcome is not inferred successful; restart and exact settlement retry are bounded", t => {
-  const { root,host }=fixture(t),owner=host("native-A"),a=createHeadSession({root,purpose:"A"}).sessionId;
+  const { root, storage,host }=fixture(t),owner=host("native-A"),a=createHeadSession({root,purpose:"A"}).sessionId;
   const prepared=owner.prepareSelection({root,sessionId:a});
   const result=owner.settleSelection({ticket:prepared.ticket,outcome:"uncertain"});
   assert.equal(owner.settleSelection({ticket:prepared.ticket,outcome:"uncertain"}),result);
@@ -184,7 +195,7 @@ test("uncertain/cancel outcome is not inferred successful; restart and exact set
 
 test("pending preparation or final storage failure preserves original Core success and never reruns it", async t => {
   for(const failingPublication of [1,2]) {
-    const {root,bridge,host}=fixture(t),native=bridge();
+    const {root,storage,bridge,host}=fixture(t),native=bridge();
     const a=createHeadSession({root,purpose:"A"}).sessionId,b=createHeadSession({root,purpose:"B"}).sessionId;
     await invoke(native,request(root,"head_project_initialize_or_resume",{session_id:a}));
     const rename=fs.renameSync;let publications=0;
@@ -205,7 +216,7 @@ test("pending preparation or final storage failure preserves original Core succe
 });
 
 test("proven failure before a first selection preserves verified default rather than a loss gate", t => {
-  const {root,host}=fixture(t),owner=host("first-selection"),defaultId=inspectProject(root).state.sessionId;
+  const {root,storage,host}=fixture(t),owner=host("first-selection"),defaultId=inspectProject(root).state.sessionId;
   const other=createHeadSession({root,purpose:"Not selected"}).sessionId;
   const pending=owner.prepareSelection({root,sessionId:other});
   owner.settleSelection({ticket:pending.ticket,outcome:"not-started"});
@@ -214,7 +225,7 @@ test("proven failure before a first selection preserves verified default rather 
 });
 
 test("A failure followed by B failure restores the actual prior choice, not an uncertain predecessor", t => {
-  const {root,host}=fixture(t),owner=host("failed-intents"),defaultId=inspectProject(root).state.sessionId;
+  const {root,storage,host}=fixture(t),owner=host("failed-intents"),defaultId=inspectProject(root).state.sessionId;
   owner.select({root,sessionId:"",expectedRevision:0});
   const a=createHeadSession({root,purpose:"A"}).sessionId,b=createHeadSession({root,purpose:"B"}).sessionId;
   const first=owner.prepareSelection({root,sessionId:a}),second=owner.prepareSelection({root,sessionId:b});
@@ -225,7 +236,7 @@ test("A failure followed by B failure restores the actual prior choice, not an u
 });
 
 test("transport composition is opt-in by actual initialize clientInfo; arguments cannot activate native mode", async t => {
-  const {root,environment}=fixture(t),bridge=createNativeSessionHostBridge({environment});
+  const {root,storage,environment}=fixture(t),bridge=createNativeSessionHostBridge({environment});
   await invoke(bridge,{id:1,method:"initialize",params:{clientInfo:{name:"other-client",version:"0.0.0"}}});
   assert.equal(bridge.describe().runtime,null);
   await invoke(bridge,request(root,"head_conversation_enter",{},"synthetic-native-id"));
@@ -235,7 +246,7 @@ test("transport composition is opt-in by actual initialize clientInfo; arguments
 });
 
 test("success of a worker/checkpoint/result operation cannot become an unrelated selection declaration", async t => {
-  const {root,operational,bridge}=fixture(t),native=bridge();
+  const {root,storage,operational,bridge}=fixture(t),native=bridge();
   const a=createHeadSession({root,purpose:"A"}).sessionId,b=createHeadSession({root,purpose:"B"}).sessionId;
   await invoke(native,request(root,"head_project_initialize_or_resume",{session_id:a}));
   const before=snapshot(operational);
@@ -249,7 +260,7 @@ test("success of a worker/checkpoint/result operation cannot become an unrelated
 });
 
 test("three owned proven failures can restore exact initial default, but no uncertain ancestor is guessed", t => {
-  const {root,host}=fixture(t),owner=host("three-failures"),defaultId=inspectProject(root).state.sessionId;
+  const {root,storage,host}=fixture(t),owner=host("three-failures"),defaultId=inspectProject(root).state.sessionId;
   const ids=["A","B","C"].map(purpose=>createHeadSession({root,purpose}).sessionId);
   const tickets=ids.map(sessionId=>owner.prepareSelection({root,sessionId}).ticket);
   for(const ticket of tickets)owner.settleSelection({ticket,outcome:"not-started"});
@@ -261,7 +272,7 @@ test("three owned proven failures can restore exact initial default, but no unce
 });
 
 test("C1-F1 failed first P5 mkdir is process-known loss, not absent default; explicit repair needs no new tool", async t => {
-  const {root,operational,bridge}=fixture(t),native=bridge(),target=createHeadSession({root,purpose:"First actual selection"}).sessionId;
+  const {root,storage,operational,bridge}=fixture(t),native=bridge(),target=createHeadSession({root,purpose:"First actual selection"}).sessionId;
   const mkdir=fs.mkdirSync;let injected=0,handlerCalls=0;
   fs.mkdirSync=(dir,...args)=>{if(path.resolve(String(dir)).startsWith(path.resolve(operational))&&injected++===0)throw Object.assign(new Error("First P5 mkdir failed"),{code:"EIO"});return mkdir(dir,...args);};
   let selected;try{selected=await native.dispatch(request(root,"head_project_initialize_or_resume",{session_id:target}),
@@ -281,12 +292,12 @@ test("C1-F1 failed first P5 mkdir is process-known loss, not absent default; exp
 
 test("C1-F2 pure runtime/readiness refusal preserves absent/default and prior bound choice", async t => {
   for(const bound of [false,true]) for(const scenario of ["invalid-runtime","different-runtime","readiness"]){
-    const {root,operational,bridge,host}=fixture(t),native=bridge();
+    const {root,storage,operational,bridge,host}=fixture(t),native=bridge();
     const prior=bound?createHeadSession({root,purpose:"Prior"}).sessionId:inspectProject(root).state.sessionId;
     const target=createHeadSession({root,purpose:"Rejected selection"}).sessionId;
     if(bound)await invoke(native,request(root,"head_project_initialize_or_resume",{session_id:prior}));
     const before=snapshot(operational);
-    const file=path.join(root,".head/generated/head-instructions.md"),bytes=fs.readFileSync(file);
+    const file=path.join(root,storage.directory,"generated/lode-instructions.md"),bytes=fs.readFileSync(file);
     const args={session_id:target};
     if(scenario==="invalid-runtime")args.runtimes=["definitely-invalid-runtime"];
     if(scenario==="different-runtime")args.runtimes=["claude"];
@@ -302,7 +313,7 @@ test("C1-F2 pure runtime/readiness refusal preserves absent/default and prior bo
 });
 
 test("selection basis observed before execution cannot overwrite a newer concurrent choice", async t => {
-  const {root,bridge,host}=fixture(t),native=bridge();
+  const {root,storage,bridge,host}=fixture(t),native=bridge();
   const a=createHeadSession({root,purpose:"A"}).sessionId,b=createHeadSession({root,purpose:"B"}).sessionId;
   await invoke(native,request(root,"head_project_initialize_or_resume",{session_id:a}));
   const result=await native.dispatch(request(root,"head_project_initialize_or_resume"),async(wire,routing)=>{
@@ -318,7 +329,7 @@ test("selection basis observed before execution cannot overwrite a newer concurr
 });
 
 test("new-Project initializer completion cannot replace a later retained caller selection", async t => {
-  const {root,bridge,host}=fixture(t,false),native=bridge();let newer;
+  const {root,storage,bridge,host}=fixture(t,false),native=bridge();let newer;
   const result=await native.dispatch(request(root,"head_project_initialize_or_resume",{runtimes:["codex"]}),async(wire,routing)=>{
     const original=await dispatch(wire,routing);
     newer=createHeadSession({root,purpose:"Newer choice before first acknowledgement"}).sessionId;
@@ -331,7 +342,7 @@ test("new-Project initializer completion cannot replace a later retained caller 
 });
 
 test("Claude exact native Hook correlation routes root/child and outer routers without Canon caller identity", async t => {
-  const {root,operational,environment}=fixture(t),native=createNativeSessionHostBridge({runtime:"claude",environment});
+  const {root,storage,operational,environment}=fixture(t),native=createNativeSessionHostBridge({runtime:"claude",environment});
   const a=createHeadSession({root,purpose:"Root"}).sessionId,b=createHeadSession({root,purpose:"Child"}).sessionId;
   await Promise.all([
     claudeCall(native,claudeRequest(root,"head_project_initialize_or_resume",{session_id:a},"root-init")),
@@ -344,12 +355,12 @@ test("Claude exact native Hook correlation routes root/child and outer routers w
   assert.equal(rootResult.result.structuredContent.sessionId,a);
   assert.equal(rootResult.result.structuredContent.records[0].content.unknowns[0],"Root evidence");
   assert.equal(native.requestStatus().pending,0);
-  assert.equal(JSON.stringify(snapshot(path.join(root,".head"))).includes("native-claude-root"),false);
+  assert.equal(JSON.stringify(snapshot(path.join(root,storage.directory))).includes("native-claude-root"),false);
   assert.equal(JSON.stringify(snapshot(operational)).includes("native-claude-root"),false);
 });
 
 test("cold Claude missing preparation cannot silently select default; explicit and independent calls remain usable", async t => {
-  const {root,environment}=fixture(t),native=createNativeSessionHostBridge({environment});
+  const {root,storage,environment}=fixture(t),native=createNativeSessionHostBridge({environment});
   await invoke(native,{id:1,method:"initialize",params:{clientInfo:{name:"claude-code",version:"2.1.289"}}});
   const target=createHeadSession({root,purpose:"Explicit"}).sessionId;
   assert.equal((await invoke(native,claudeRequest(root,"head_conversation_enter"))).result.structuredContent.status,"session_selection_unresolved");
@@ -358,7 +369,7 @@ test("cold Claude missing preparation cannot silently select default; explicit a
 });
 
 test("unavailable Claude linkage is not a new-Project initialization gate or a claimed automatic binding", async t => {
-  const {root,environment}=fixture(t,false),native=createNativeSessionHostBridge({runtime:"claude",environment});
+  const {root,storage,environment}=fixture(t,false),native=createNativeSessionHostBridge({runtime:"claude",environment});
   const result=await invoke(native,claudeRequest(root,"head_project_initialize_or_resume",{runtimes:["codex"]}));
   assert.equal(result.result.structuredContent.projectAction,"initialized");
   assert.equal(result.result._meta.headSessionBinding.retained,false);
@@ -366,7 +377,7 @@ test("unavailable Claude linkage is not a new-Project initialization gate or a c
 });
 
 test("model direct helper/router/nested fake metadata and unexpanded templates cannot mint claims", async t => {
-  const {root,environment}=fixture(t),native=createNativeSessionHostBridge({runtime:"claude",environment});
+  const {root,storage,environment}=fixture(t),native=createNativeSessionHostBridge({runtime:"claude",environment});
   const wire=claudeRequest(root,"head_conversation_enter"),helper=hookRequest(wire);
   helper.params._meta={"claudecode/toolUseId":"model-helper"};
   assert.equal((await invoke(native,helper)).result.isError,true);
@@ -380,7 +391,7 @@ test("model direct helper/router/nested fake metadata and unexpanded templates c
 });
 
 test("Claude verifies raw outer args before unwrap; failed correlation does not invalidate explicit Core routing", async t => {
-  const {root,environment}=fixture(t),native=createNativeSessionHostBridge({runtime:"claude",environment});
+  const {root,storage,environment}=fixture(t),native=createNativeSessionHostBridge({runtime:"claude",environment});
   const target=createHeadSession({root,purpose:"Selected"}).sessionId;
   await claudeCall(native,claudeRequest(root,"head_project_initialize_or_resume",{session_id:target},"select"));
   const wire=claudeRequest(root,"head_session_work_read",{},"tamper",true);
@@ -391,12 +402,12 @@ test("Claude verifies raw outer args before unwrap; failed correlation does not 
 });
 
 test("independent router helper is immediate no-op with zero registry, Session/P5 or graph reads", async t => {
-  const {root,operational,environment}=fixture(t),native=createNativeSessionHostBridge({runtime:"claude",environment});
+  const {root,storage,operational,environment}=fixture(t),native=createNativeSessionHostBridge({runtime:"claude",environment});
   const wire=claudeRequest(root,"head_project_direction_read",{},"independent",true);
   const read=fs.readFileSync;let forbidden=0;
   fs.readFileSync=(file,...args)=>{
     const value=String(file).replaceAll("\\","/");
-    if(value.startsWith(operational.replaceAll("\\","/"))||value.includes("/.head/sessions/")||value.includes("/.head/world/")){forbidden++;throw new Error("Unexpected optional routing read");}
+    if(value.startsWith(operational.replaceAll("\\","/"))||value.includes(`/${storage.directory}/sessions/`)||value.includes(`/${storage.directory}/world/`)){forbidden++;throw new Error("Unexpected optional routing read");}
     return read(file,...args);
   };
   try{
@@ -428,16 +439,16 @@ test("registry exact/active/divergent/expiry/capacity/dispose is bounded P5, nev
 test("Claude matcher uses the same Session contract, matches own local/plugin servers, excludes helper and others", () => {
   const hooks=JSON.parse(fs.readFileSync(path.join(pluginRoot,"hooks/claude.json"),"utf8"));
   for(const tool of catalogTools){
-    const expected=sessionCallRequiresBinding(tool.name)||["head_tools_call","head_tools_read"].includes(tool.name);
-    assert.equal(new RegExp(hooks.hooks.PreToolUse[0].matcher).test("mcp__head_core__"+tool.name),expected,tool.name);
-    assert.equal(new RegExp(hooks.hooks.PreToolUse[1].matcher).test("mcp__plugin_head-agent-core_head_core__"+tool.name),expected,tool.name);
+    const expected=sessionCallRequiresBinding(tool.name)||["lode_tools_call","lode_tools_read"].includes(tool.name);
+    assert.equal(new RegExp(hooks.hooks.PreToolUse[0].matcher).test("mcp__lode_core__"+tool.name),expected,tool.name);
+    assert.equal(new RegExp(hooks.hooks.PreToolUse[1].matcher).test("mcp__plugin_lode-agent-core_lode_core__"+tool.name),expected,tool.name);
     assert.equal(hooks.hooks.PreToolUse.some(h=>new RegExp(h.matcher).test("mcp__other__"+tool.name)),false);
   }
   assert.equal(/permissionDecision|updatedInput/.test(JSON.stringify(hooks)),false);
 });
 
 test("Claude observed native marker cannot degrade to legacy/default when the next metadata is missing", async t => {
-  const {root,environment,operational}=fixture(t),native=createNativeSessionHostBridge({environment});
+  const {root,storage,environment,operational}=fixture(t),native=createNativeSessionHostBridge({environment});
   await invoke(native,{id:1,method:"initialize",params:{clientInfo:{name:"claude-code",version:"synthetic"},protocolVersion:"2024-11-05",capabilities:{}}});
   const before=snapshot(root);
   assert.equal((await invoke(native,claudeRequest(root,"head_conversation_enter"))).result.structuredContent.status,"session_selection_unresolved");
@@ -447,4 +458,81 @@ test("Claude observed native marker cannot degrade to legacy/default when the ne
   assert.equal((await invoke(native,request(root,"head_conversation_enter",{session_id:sid},null))).result.structuredContent.workContext.sessionId,sid);
   assert.equal((await invoke(native,request(root,"head_project_direction_read",{},null))).result.content[0].text,"null");
   assert.deepEqual(snapshot(root),before);assert.equal(fs.existsSync(operational),false);
+});
+
+test("canonical routers deny both private-helper aliases before native correlation or any project and P5 access", async t => {
+  const { root, operational, environment } = fixture(t, false), base = path.dirname(root);
+  const rawSnapshot = () => {
+    const entries = [];
+    const walk = file => {
+      const stat = fs.lstatSync(file), type = stat.isDirectory() ? "directory" : stat.isSymbolicLink() ? "link" : "file";
+      entries.push({ path: file, type, mode: stat.mode, mtimeMs: stat.mtimeMs,
+        ...(type === "file" ? { bytes: fs.readFileSync(file).toString("base64") } : {}) });
+      if (type === "directory") for (const name of fs.readdirSync(file).sort()) walk(path.join(file, name));
+    };
+    walk(base); return entries;
+  };
+  const before = rawSnapshot(), registryCalls = { prepare: 0, claim: 0, describe: 0 };
+  const registry = Object.fromEntries(Object.keys(registryCalls).map(name => [name, () => {
+    registryCalls[name] += 1; assert.fail(`Private router target reached registry ${name}`);
+  }]));
+  registry.dispose = () => {};
+  const native = createNativeSessionHostBridge({ runtime: "claude", environment, requestRegistry: registry });
+  let handlerCalls = 0, metadataReads = 0;
+  const nativeBridge = { dispatch: (wire, handler) => native.dispatch(wire, (original, routing) => {
+    handlerCalls += 1; return handler(original, routing);
+  }) };
+  const originals = [], fsAttempts = [];
+  const inside = value => {
+    const file = value instanceof URL ? fileURLToPath(value) : Buffer.isBuffer(value) ? value.toString() : value;
+    if (typeof file !== "string") return false;
+    const relative = path.relative(base, path.resolve(file));
+    return relative === "" || relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+  };
+  const destinations = new Set(["rename", "copyFile", "cp", "link", "symlink"]);
+  const guard = (object, name) => {
+    const original = object[name]; if (typeof original !== "function") return;
+    originals.push([object, name, original]);
+    object[name] = (...args) => {
+      if (inside(args[0]) || destinations.has(name.replace(/Sync$/, "")) && inside(args[1])) {
+        fsAttempts.push({ method: name, source: String(args[0]), destination: destinations.has(name.replace(/Sync$/, "")) ? String(args[1]) : null });
+        assert.fail(`Private router target attempted scoped filesystem ${name}`);
+      }
+      return original.apply(object, args);
+    };
+  };
+  for (const name of ["readFile", "readdir", "stat", "lstat", "realpath", "access", "readlink", "writeFile", "appendFile", "mkdir", "rename", "unlink", "rm", "rmdir", "truncate", "chmod", "utimes", "copyFile", "cp", "link", "symlink", "chown", "lchown", "lutimes", "mkdtemp", "open"]) {
+    guard(fs, name); guard(fs, `${name}Sync`); guard(fs.promises, name);
+  }
+  for (const name of ["existsSync", "createReadStream", "createWriteStream"]) guard(fs, name);
+  syncBuiltinESMExports();
+  try {
+    for (const router of ["lode_tools_read", "lode_tools_call"]) {
+      for (const helper of ["head_session_host_request_prepare", "lode_session_host_request_prepare"]) {
+        const wire = { jsonrpc: "2.0", id: `${router}--${helper}`, method: "tools/call", params: {
+          name: router, arguments: { name: helper, arguments: {
+            native_session_id: "synthetic-native-private-router", native_agent_id: "", tool_use_id: "synthetic-private-router-tool",
+            outer_tool_name: "mcp__lode_core__lode_conversation_enter", original_arguments: JSON.stringify({ project_root: root }),
+          } },
+        } };
+        Object.defineProperty(wire.params, "_meta", { enumerable: true, get() {
+          metadataReads += 1; return { "claudecode/toolUseId": "synthetic-private-router-tool" };
+        } });
+        const rawBefore = JSON.stringify(wire); metadataReads = 0;
+        const result = await dispatch(wire, { nativeSessionBridge: nativeBridge });
+        assert.deepEqual(result, { jsonrpc: "2.0", id: wire.id, result: {
+          content: [{ type: "text", text: "Native Host request correlation unavailable (NATIVE_HOOK_DIRECT_INGRESS_REQUIRED)." }], isError: true,
+        } });
+        assert.equal(Object.hasOwn(result, "error"), false, "No generic JSON-RPC -32000 fallback");
+        assert.equal(metadataReads, 0); assert.equal(handlerCalls, 0);
+        assert.deepEqual(registryCalls, { prepare: 0, claim: 0, describe: 0 });
+        assert.equal(JSON.stringify(wire), rawBefore, "Full outer request and exact nested arguments remain untouched");
+      }
+    }
+  } finally {
+    for (const [object, name, original] of originals.reverse()) object[name] = original;
+    syncBuiltinESMExports(); native.dispose();
+  }
+  assert.deepEqual(fsAttempts, []); assert.deepEqual(rawSnapshot(), before);
+  assert.equal(fs.existsSync(operational), false);
 });

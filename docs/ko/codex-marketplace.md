@@ -13,7 +13,8 @@
 스냅샷을 조립합니다. 이는 단지 배포 카탈로그 레이아웃을 충족하기 위해 권위 있는
 소스 레이아웃을 이동하거나 복제하는 일을 방지합니다.
 
-생성된 `codex-marketplace` 브랜치에는 정확히 다음 항목이 포함됩니다.
+생성된 `codex-marketplace` 브랜치의 기존 주소용 호환 배포판에는 정확히 다음 항목이
+포함됩니다.
 
 ```text
 .agents/plugins/marketplace.json
@@ -45,11 +46,11 @@ macOS 또는 Linux 소스 체크아웃은 직접 설치와 마켓플레이스 �
 ## 설치
 
 ```powershell
-codex plugin marketplace add binary1215/head-agent-plugin --ref codex-marketplace
+codex plugin marketplace add binary1215/lode --ref codex-marketplace
 codex plugin add head-agent-core@head-agent-plugin
 ```
 
-설치 후 새 Codex 작업을 시작하세요. 일반 사용은 번들 `head-agent-onboarding` Skill을
+설치 후 새 Codex 작업을 시작하세요. 일반 사용은 번들 `head-agent-core` Skill을
 통해 시작하며, 이 Skill은 typed `head_core` MCP 작업을 호출합니다. 설치만으로 `.head`를 생성하거나,
 Features를 추론·승인하거나, GraphDB에 연결하거나, 프로젝트 파일을 변경하지 않습니다.
 
@@ -81,7 +82,7 @@ Codex 플러그인 제거는 Codex 플러그인 캐시/구성에 영향을 줍�
 
 ## 생성 브랜치 소유권
 
-CI는 기존 `codex-marketplace` 브랜치의 현재 스냅샷 전체가 HEAD 마켓플레이스 검증을
+CI는 기존 `codex-marketplace` 브랜치의 현재 스냅샷 전체가 Lode 마켓플레이스 검증을
 통과하지 않으면 이를 교체하지 않습니다. 소유권이 확인되면 정확히 예상한 커밋에 대해
 `--force-with-lease`를 사용하여 교체합니다. 동시 변경 또는 소유되지 않은 브랜치 변경은
 덮어쓰지 않고 실패합니다. 생성된 브랜치는 플러그인 정체성, Product Canon,
@@ -105,3 +106,17 @@ CI는 빌더에 `--native-root`를, 검증기에 `--require-native`를 제공합
 플러그인 디렉터리 심사를 통과했다는 주장은 아닙니다. 공개 제출에는 게시자 신원,
 목록/지원/개인정보 보호 자료, 정책 증명 및 외부 검토가 필요합니다. 그와 같은 중대한
 게시자 조치는 사용자 소유로 남으며 CI가 수행하지 않습니다.
+
+## 정식 배포와 기존 설치 호환 구성
+
+정식 소스 배포판은 플러그인 `lode-agent-core`, 서버 `lode_core`, 도구 `lode_*`와
+Skill `lode-agent-core`, `lode-agent-onboarding`, `lode-conversation`을 노출합니다.
+위 기존 원격 주소 예시는 생성된 호환 배포판의 플러그인
+`head-agent-core@head-agent-plugin`, 서버 `head_core`, 도구 `head_*`, Skill
+`head-agent-core`, `head-agent-onboarding`, `head-conversation`을 설명합니다. 둘은 같은
+Lode 구현과 검증을 사용하며, 각 배포판은 자기 이름 한 벌만 노출합니다. 소스 패키징은
+실제 게시·설치나 실행 중 Host 동작의 검증이 아닙니다.
+
+새 초기화는 `.lode/`를 사용합니다. 기존 `.head/` Project는 root·식별자·원문·선택
+Session과 운영 소유권을 유지하며, 수동 변환이나 두 번째 정본 저장소가 필요하지 않습니다.
+

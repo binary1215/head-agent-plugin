@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { EventEmitter } from "node:events";
 import test from "node:test";
-import { initializeProject, inspectProject } from "../scripts/lib/head-core.mjs";
+import { initializeProject, inspectProject } from "../scripts/lib/lode-core.mjs";
 import { buildRuntimeVersionEvidence } from "../scripts/lib/runtime-machine-execution.mjs";
 import { buildRuntimeProtocolEvidence, buildRuntimeProjectBinding } from "../scripts/lib/runtime-protocol-evidence.mjs";
 import { buildRuntimeInvocationAuthorization, prepareRuntimeInvocationExecution } from "../scripts/lib/runtime-invocation-lifecycle.mjs";
@@ -24,7 +24,7 @@ import { createCodexFreshProposalTransport, createCodexFreshProposalFixtureCapab
 import { createCodexNativePrefixProposalTransport, createCodexNativePrefixProposalFixtureTransport } from "../scripts/lib/runtime-codex-app-server-transport.mjs";
 import { buildCodexProposalResultSchema } from "../scripts/lib/runtime-codex-proposal.mjs";
 const pluginRoot = path.resolve(import.meta.dirname, "..");
-const installedExecutable = process.env.HEAD_AGENT_PREFIX_CAPTURE_EXECUTABLE;
+const installedExecutable = process.env.LODE_AGENT_PREFIX_CAPTURE_EXECUTABLE || process.env.HEAD_AGENT_PREFIX_CAPTURE_EXECUTABLE;
 const hash = value => crypto.createHash("sha256").update(value).digest("hex");
 async function terminal(transport, childThreadId) {
   let event;
@@ -44,7 +44,7 @@ function schemaSpawn(_command, args) {
   return child;
 }
 async function fixture(t, scenario = "normal", options = {}) {
-  const parent = fs.realpathSync(process.env.HEAD_AGENT_TEST_TMP || os.tmpdir());
+  const parent = fs.realpathSync(process.env.LODE_AGENT_TEST_TMP || process.env.HEAD_AGENT_TEST_TMP || os.tmpdir());
   const container = fs.mkdtempSync(path.join(parent, "proposal-rpc-"));
   const [root, operational, bin, codexHome] = ["project", "operational", "bin", "codex-home"].map(name => {
     const value = path.join(container, name); fs.mkdirSync(value); return value;
@@ -68,6 +68,10 @@ async function fixture(t, scenario = "normal", options = {}) {
     fs.rmSync(container, { recursive: true, force: true });
   });
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const storage = inspectProject(root).storage;
+  assert.equal(storage.directory, ".lode");
+  assert.equal(fs.existsSync(path.resolve(root, ".lode/project.json")), true);
+  assert.equal(fs.existsSync(path.resolve(root, ".head/project.json")), false);
   fs.writeFileSync(path.join(root, "selected.txt"), "selected synthetic bytes\n");
   const synthetic = path.join(bin, process.platform === "win32" ? "codex.exe" : "codex");
   fs.writeFileSync(synthetic, "Synthetic discovery target; never executed\n");
@@ -76,7 +80,7 @@ async function fixture(t, scenario = "normal", options = {}) {
   const versionEvidence = await buildRuntimeVersionEvidence({ runtimes: ["codex"], environment, spawnImplementation: schemaSpawn });
   const protocolEvidence = await buildRuntimeProtocolEvidence({ runtimes: ["codex"], environment, versionEvidence, spawnImplementation: schemaSpawn });
   const inspected = inspectProject(root);
-  const projectBinding = buildRuntimeProjectBinding({ projectId: inspected.project.projectId, headSessionId: inspected.state.sessionId,
+  const projectBinding = buildRuntimeProjectBinding({ storage, projectId: inspected.project.projectId, headSessionId: inspected.state.sessionId,
     projectRoot: root, projectStatus: "ready", versionEvidence, protocolEvidence });
   const sourceBasis = captureWorkerSourceBasis({ root, paths: ["selected.txt"], maxBytes: 1024 * 1024 });
   const proposalBasis = captureWorkerWriteBasis({ root, paths: ["selected.txt"], maxBytes: 1024 * 1024 });
@@ -96,7 +100,7 @@ async function fixture(t, scenario = "normal", options = {}) {
   const resultSchema = buildCodexProposalResultSchema(authorization.scope.kind);
   const config = { root, authorization, workspaceBinding, policy, authorizationHash: authorization.authorizationHash,
     policyDigest: hash(JSON.stringify(policy)), inputDigest: authorization.executionInput.digest, executionRoot: workspaceBinding.executionRoot,
-    controlFile: path.join(operational, "control.jsonl"), supervisorSelection: resolveVerifiedProcessSupervisor({ pluginRoot: process.env.HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT || pluginRoot }),
+    controlFile: path.join(operational, "control.jsonl"), supervisorSelection: resolveVerifiedProcessSupervisor({ pluginRoot: (process.env.LODE_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT || process.env.HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT) || pluginRoot }),
     ...(options.nativePrefix ? { resultSchema } : {}),
     ...(options.actualExecutable ? { executablePath: policy.executablePath, executableDigest: policy.executableIdentity.contentDigest } : {}),
     providerEnvironment: { ...process.env, ...options.environment, CODEX_HOME: codexHome }, terminationGraceMs: 600,
@@ -129,7 +133,7 @@ async function fixture(t, scenario = "normal", options = {}) {
     await request("account/read", { refreshToken: false });
     await request("model/list", { limit: 100, includeHidden: false });
   };
-  return { root, config, policy, transport, journal, controller, request, launch, run, ready, startParams, turnParams, capability, authorization };
+  return { storage, root, config, policy, transport, journal, controller, request, launch, run, ready, startParams, turnParams, capability, authorization };
 }
 
 test("fresh constructor requires opaque fixture identity and rejects arbitrary launch recipes", async t => {
@@ -410,7 +414,7 @@ test("native prefix fixed flow owns one seed and one child with exact prefix and
 });
 
 test("native prefix actual constructor reaches fixed preflight recipe but is stopped before any process or account call", {
-  skip: !installedExecutable && "Set HEAD_AGENT_PREFIX_CAPTURE_EXECUTABLE for read-only installed binary capture"
+  skip: !installedExecutable && "Set LODE_AGENT_PREFIX_CAPTURE_EXECUTABLE (legacy HEAD_AGENT_PREFIX_CAPTURE_EXECUTABLE is also accepted) for read-only installed binary capture"
 }, async t => {
   let captured = null;
   const f = await fixture(t, "prefix-normal", { nativePrefix: true, actualExecutable: installedExecutable, journal: event => {

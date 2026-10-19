@@ -5,7 +5,8 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { runCommand } from "../scripts/head.mjs";
 import { dispatch } from "../scripts/mcp-server.mjs";
-import { initializeProject } from "../scripts/lib/head-core.mjs";
+import { initializeProject, inspectProject } from "../scripts/lib/head-core.mjs";
+import { formatForVerifiedOwner } from "../scripts/lib/project-storage-format.mjs";
 import { inspectOnboarding, reviewOnboarding, startOnboarding } from "../scripts/lib/onboarding.mjs";
 import { inspectConversationalOnboarding } from "../scripts/lib/onboarding-conversation.mjs";
 import { initializeOrResumeProject, inspectProjectExperience } from "../scripts/lib/project-bootstrap.mjs";
@@ -29,9 +30,9 @@ function bytes(root) {
   return result;
 }
 
-function authority(root) {
-  return Object.fromEntries(Object.entries(bytes(root)).filter(([name]) => name === ".head/project.json"
-    || name.startsWith(".head/sessions/") || name === ".head/context/product-model.json" || name.startsWith(".head/onboarding/")));
+function authority(root, layout) {
+  return Object.fromEntries(Object.entries(bytes(root)).filter(([name]) => name === `${layout.directory}/project.json`
+    || name.startsWith(`${layout.directory}/sessions/`) || name === `${layout.directory}/context/product-model.json` || name.startsWith(`${layout.directory}/onboarding/`)));
 }
 
 async function approvedFixture(t) {
@@ -41,6 +42,8 @@ async function approvedFixture(t) {
   fs.writeFileSync(path.join(root, "README.md"), "# Delivery service\n");
   fs.writeFileSync(path.join(root, "src/delivery.mjs"), "export function deliver(message) { return { delivered: message }; }\n");
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const storage = inspectProject(root).storage;
+  const layout = formatForVerifiedOwner(storage);
   const started = await startOnboarding({ root, mode: "new", brief: {
     schemaVersion: 1, name: "Delivery", summary: "Deliver one message.",
     capabilities: [{ key: "delivery", name: "Delivery", description: "Deliver a message." }],
@@ -48,7 +51,7 @@ async function approvedFixture(t) {
   const request = { root, candidateSetId: started.candidateSet.candidateSetId, disposition: "accept-all", rationale: "Approve the exact delivery concept." };
   const accepted = await reviewOnboarding(request);
   assert.equal(accepted.status, "onboarding_ready", JSON.stringify(accepted.projection));
-  return { root, request, accepted };
+  return { root, storage, layout, request, accepted };
 }
 
 async function statusParity(root) {
@@ -80,8 +83,8 @@ function proposal(root) {
 
 test("accepted and refreshed Worlds support mapping and exact Context without changing approval history", async (t) => {
   for (const changeSource of [false, true]) {
-    const { root, request, accepted } = await approvedFixture(t);
-    const protectedBytes = authority(root);
+    const { root, layout, request, accepted } = await approvedFixture(t);
+    const protectedBytes = authority(root, layout);
     if (changeSource) {
       fs.appendFileSync(path.join(root, "README.md"), "\nCurrent delivery documentation.\n");
       const stale = await statusParity(root);
@@ -113,7 +116,7 @@ test("accepted and refreshed Worlds support mapping and exact Context without ch
     assert.deepEqual(mappingWorld.temporalProvenanceGraph.revisionParentIds, current.snapshot.temporalProvenanceGraph.revisionParentIds);
     assert.deepEqual(mappingWorld.files, current.snapshot.files);
     assert.equal(mappingWorld.productModel.productModelHash, current.snapshot.productModel.productModelHash);
-    assert.deepEqual(authority(root), protectedBytes);
+    assert.deepEqual(authority(root, layout), protectedBytes);
     const reviewed = await reviewFeatureMapping({ root, candidateSetId: started.candidateSet.candidateSetId,
       disposition: "accept-all", rationale: "Approve the exact implementation relationship." });
     assert.equal(reviewed.status, "feature_mappings_reviewed");
@@ -128,7 +131,7 @@ test("accepted and refreshed Worlds support mapping and exact Context without ch
     assert.deepEqual(capsule.evidenceGaps, []);
     assert.equal(Object.hasOwn(capsule, "coverageAssessment"), false, "context selection does not grant semantic approval");
     assert.equal((await statusParity(root)).status, "product_ready");
-    assert.deepEqual(authority(root), protectedBytes);
+    assert.deepEqual(authority(root, layout), protectedBytes);
     assert.equal((await refreshWorldModel({ root })).status, "unchanged");
     const stable = bytes(root);
     assert.equal((await refreshWorldModel({ root })).status, "unchanged");
@@ -138,10 +141,10 @@ test("accepted and refreshed Worlds support mapping and exact Context without ch
 
 test("missing World guidance executes a rebuild and converges without reapproval", async (t) => {
   for (const missing of ["directory", "snapshot"]) {
-    const { root, request, accepted } = await approvedFixture(t);
-    const protectedBytes = authority(root);
-    if (missing === "directory") fs.rmSync(path.join(root, ".head/world-model"), { recursive: true, force: true });
-    else fs.unlinkSync(path.join(root, ".head/world-model/snapshots", `${accepted.worldModel.worldModelId}.json`));
+    const { root, layout, request, accepted } = await approvedFixture(t);
+    const protectedBytes = authority(root, layout);
+    if (missing === "directory") fs.rmSync(path.join(root, layout.directory, "world-model"), { recursive: true, force: true });
+    else fs.unlinkSync(path.join(root, layout.directory, "world-model/snapshots", `${accepted.worldModel.worldModelId}.json`));
     const beforeRead = bytes(root);
     const status = await statusParity(root);
     assert.equal(status.readiness.core.state, "ready");
@@ -155,14 +158,14 @@ test("missing World guidance executes a rebuild and converges without reapproval
     assert.equal((await statusParity(root)).status, "product_ready");
     assert.equal((await initializeOrResumeProject({ root, pluginRoot, profile: "product" })).status, "product_ready");
     assert.equal((await reviewOnboarding(request)).status, "onboarding_ready");
-    assert.deepEqual(authority(root), protectedBytes);
+    assert.deepEqual(authority(root, layout), protectedBytes);
     assert.equal((await refreshWorldModel({ root })).status, "unchanged");
     assert.equal((await statusParity(root)).status, "product_ready");
   }
 });
 
 test("mapping preserves real source drift and digest failures without preliminary indexing", async (t) => {
-  const { root } = await approvedFixture(t);
+  const { root, layout } = await approvedFixture(t);
   const input = proposal(root);
   const source = path.join(root, "src/delivery.mjs");
   const originalSource = fs.readFileSync(source);
@@ -174,7 +177,7 @@ test("mapping preserves real source drift and digest failures without preliminar
   before = bytes(root);
   await assert.rejects(() => startFeatureMapping({ root, semanticProposal: { ...input, sourceSnapshotId: `source-snapshot-${"0".repeat(24)}` } }), { code: "FEATURE_MAPPING_PROPOSAL_DRIFT" });
   assert.deepEqual(bytes(root), before);
-  const canonFile = path.join(root, ".head/context/product-model.json");
+  const canonFile = path.join(root, layout.directory, "context/product-model.json");
   const canonBytes = fs.readFileSync(canonFile);
   const changedCanon = JSON.parse(canonBytes);
   changedCanon.capabilities[0].description = "A different product contract.";
@@ -184,8 +187,8 @@ test("mapping preserves real source drift and digest failures without preliminar
   assert.equal((await statusParity(root)).readiness.product.state, "integrity_attention");
   assert.deepEqual(bytes(root), before);
   fs.writeFileSync(canonFile, canonBytes);
-  const pointer = JSON.parse(fs.readFileSync(path.join(root, ".head/world-model/current.json"), "utf8"));
-  const filename = path.join(root, ".head/world-model/snapshots", `${pointer.worldModelId}.json`);
+  const pointer = JSON.parse(fs.readFileSync(path.join(root, layout.directory, "world-model/current.json"), "utf8"));
+  const filename = path.join(root, layout.directory, "world-model/snapshots", `${pointer.worldModelId}.json`);
   const world = JSON.parse(fs.readFileSync(filename, "utf8"));
   world.worldModelHash = "0".repeat(64);
   fs.writeFileSync(filename, JSON.stringify(world));
@@ -197,34 +200,34 @@ test("mapping preserves real source drift and digest failures without preliminar
 });
 
 test("explicit mapping setup without a pinned proposal refreshes stale evidence in one operation", async (t) => {
-  const { root } = await approvedFixture(t);
+  const { root, layout } = await approvedFixture(t);
   const previous = inspectWorldModel({ root }).snapshot.temporalProvenanceGraph;
   const previousRevision = previous.nodes.find((node) => node.kind === "FileRevision" && node.path === "src/delivery.mjs");
-  const protectedBytes = authority(root);
+  const protectedBytes = authority(root, layout);
   fs.appendFileSync(path.join(root, "src/delivery.mjs"), "\nexport const deliveryFormat = 'message';\n");
   const setup = await startFeatureMapping({ root });
   assert.equal(setup.status, "awaiting_feature_mapping_evidence");
   assert.equal(setup.candidateSet.candidates.length, 0);
   assert.ok(setup.candidateSet.unknowns.length > 0);
-  assert.equal(fs.existsSync(path.join(root, ".head/feature-mappings/review-decisions")), false, "setup does not manufacture a mapping decision");
+  assert.equal(fs.existsSync(path.join(root, layout.directory, "feature-mappings/review-decisions")), false, "setup does not manufacture a mapping decision");
   const current = inspectWorldModel({ root });
   assert.equal(current.status, "current");
   assert.ok(current.snapshot.temporalProvenanceGraph.parentSourceSnapshotIds.includes(previous.sourceSnapshotId));
   assert.ok(Object.values(current.snapshot.temporalProvenanceGraph.revisionParentIds).flat().includes(previousRevision.nodeId));
-  assert.deepEqual(authority(root), protectedBytes);
+  assert.deepEqual(authority(root, layout), protectedBytes);
   const started = await startFeatureMapping({ root, semanticProposal: proposal(root) });
   assert.equal(started.status, "awaiting_feature_mapping_review");
-  assert.deepEqual(authority(root), protectedBytes);
+  assert.deepEqual(authority(root, layout), protectedBytes);
 });
 
 test("explicit stale mapping rejection unblocks a fresh reviewed proposal and Context without revoking prior review", async (t) => {
   for (const refreshFirst of [true, false]) {
-    const { root } = await approvedFixture(t);
-    const protectedBytes = authority(root);
+    const { root, layout } = await approvedFixture(t);
+    const protectedBytes = authority(root, layout);
     const first = await startFeatureMapping({ root, semanticProposal: proposal(root) });
     const prior = await reviewFeatureMapping({ root, candidateSetId: first.candidateSet.candidateSetId,
       disposition: "accept-all", rationale: "Approve the first exact implementation relationship." });
-    const priorFile = path.join(root, ".head/feature-mappings/review-decisions", `${prior.reviewDecision.reviewDecisionId}.json`);
+    const priorFile = path.join(root, layout.directory, "feature-mappings/review-decisions", `${prior.reviewDecision.reviewDecisionId}.json`);
     const priorBytes = fs.readFileSync(priorFile);
     const nextInput = proposal(root);
     nextInput.candidates[0].explanation += " A separate proposed evidence review.";
@@ -262,7 +265,7 @@ test("explicit stale mapping rejection unblocks a fresh reviewed proposal and Co
     assert.deepEqual(bytes(root), before, "read-only guidance and unconfirmed rejection cannot write");
     let rejected;
     if (refreshFirst) {
-      const inputFile = path.join(root, ".head/feature-mappings/reject-input.json");
+      const inputFile = path.join(root, layout.directory, "feature-mappings/reject-input.json");
       fs.writeFileSync(inputFile, JSON.stringify(request));
       rejected = await runCommand(["feature-mapping-review", root, "--input", inputFile]);
       fs.unlinkSync(inputFile);
@@ -314,7 +317,7 @@ test("explicit stale mapping rejection unblocks a fresh reviewed proposal and Co
         { id: "delivery-source", kind: "repository-source", paths: ["src/delivery.mjs"], minimumItems: 1 }] }).capsule;
     assert.deepEqual(capsule.evidenceGaps, []);
     assert.equal(Object.hasOwn(capsule, "coverageAssessment"), false);
-    assert.deepEqual(authority(root), protectedBytes);
+    assert.deepEqual(authority(root, layout), protectedBytes);
     assert.deepEqual(fs.readFileSync(priorFile), priorBytes);
   }
 });

@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { familyFormatForOriginal, formatForVerifiedOwner, relativeProjectArtifact } from "./project-storage-format.mjs";
 
 export const REPOSITORY_SOURCE_SCOPE_VERSION = "0.1.0";
 export const REPOSITORY_SOURCE_SCOPE_RELATIVE_PATH = ".head/context/repository-source-scope.json";
@@ -54,11 +55,12 @@ function normalizeRoots(values, label) {
   return normalized.sort(compareText);
 }
 
-export function buildRepositorySourceScope({ includeRoots = [], excludeRoots = [] } = {}) {
+export function buildRepositorySourceScope({ includeRoots = [], excludeRoots = [], storage } = {}) {
+  const format = formatForVerifiedOwner(storage);
   const payload = {
     schemaVersion: 1,
     kind: "RepositorySourceScope",
-    protocol: { name: "head-agent-core-repository-source-scope", version: REPOSITORY_SOURCE_SCOPE_VERSION },
+    protocol: { name: format.protocol("head-agent-core-repository-source-scope"), version: REPOSITORY_SOURCE_SCOPE_VERSION },
     includeRoots: normalizeRoots(includeRoots, "includeRoots"),
     excludeRoots: normalizeRoots(excludeRoots, "excludeRoots"),
     authority: "user-selected-observation-boundary",
@@ -69,13 +71,14 @@ export function buildRepositorySourceScope({ includeRoots = [], excludeRoots = [
   return { ...payload, sourceScopeId: `repository-source-scope-${sourceScopeHash.slice(0, 24)}`, sourceScopeHash };
 }
 
-export function verifyRepositorySourceScope(document) {
+export function verifyRepositorySourceScope(document, { storage } = {}) {
   assertFields(document, [
     "schemaVersion", "kind", "protocol", "includeRoots", "excludeRoots", "authority",
     "instructionAuthority", "promotionAuthority", "sourceScopeId", "sourceScopeHash",
   ], "Repository source scope");
-  const rebuilt = buildRepositorySourceScope({ includeRoots: document.includeRoots, excludeRoots: document.excludeRoots });
-  if (canonicalJson(rebuilt) !== canonicalJson(document)) fail("Repository source scope digest verification failed.", "REPOSITORY_SOURCE_SCOPE_DIGEST_MISMATCH");
+  const format = familyFormatForOriginal("head-agent-core-repository-source-scope", document, storage);
+  const rebuilt = buildRepositorySourceScope({ includeRoots: document.includeRoots, excludeRoots: document.excludeRoots, storage: format });
+  if (!format || canonicalJson(rebuilt) !== canonicalJson(document)) fail("Repository source scope digest verification failed.", "REPOSITORY_SOURCE_SCOPE_DIGEST_MISMATCH");
   verifiedScopes.add(document);
   return document;
 }
@@ -89,21 +92,21 @@ export function pathWithinRepositorySourceScope(relativePath, sourceScope, { dir
   return directory && scope.includeRoots.some((root) => root.startsWith(`${relative}/`));
 }
 
-export function readRepositorySourceScope({ projectRoot } = {}) {
+export function readRepositorySourceScope({ projectRoot, storage } = {}) {
   if (typeof projectRoot !== "string" || !projectRoot.trim()) fail("projectRoot is required.", "INVALID_REPOSITORY_SOURCE_SCOPE");
-  const file = path.join(path.resolve(projectRoot), REPOSITORY_SOURCE_SCOPE_RELATIVE_PATH);
-  if (!fs.existsSync(file)) return { status: "default", file: null, sourceScope: buildRepositorySourceScope() };
+  const file = path.join(path.resolve(projectRoot), relativeProjectArtifact(storage, "context", "repository-source-scope.json"));
+  if (!fs.existsSync(file)) return { status: "default", file: null, sourceScope: buildRepositorySourceScope({ storage }) };
   let document;
   try { document = JSON.parse(fs.readFileSync(file, "utf8")); }
   catch (error) { fail(`Repository source scope is invalid JSON: ${error.message}`, "INVALID_REPOSITORY_SOURCE_SCOPE"); }
-  return { status: "configured", file, sourceScope: verifyRepositorySourceScope(document) };
+  return { status: "configured", file, sourceScope: verifyRepositorySourceScope(document, { storage }) };
 }
 
-export function writeRepositorySourceScope({ projectRoot, selection = {} } = {}) {
+export function writeRepositorySourceScope({ projectRoot, selection = {}, storage } = {}) {
   if (typeof projectRoot !== "string" || !projectRoot.trim()) fail("projectRoot is required.", "INVALID_REPOSITORY_SOURCE_SCOPE");
   assertFields(selection, ["includeRoots", "excludeRoots"], "Repository source scope selection");
-  const sourceScope = buildRepositorySourceScope(selection);
-  const file = path.join(path.resolve(projectRoot), REPOSITORY_SOURCE_SCOPE_RELATIVE_PATH);
+  const sourceScope = buildRepositorySourceScope({ ...selection, storage });
+  const file = path.join(path.resolve(projectRoot), relativeProjectArtifact(storage, "context", "repository-source-scope.json"));
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const temporary = path.join(path.dirname(file), `.${path.basename(file)}.${crypto.randomUUID()}.tmp`);
   try {

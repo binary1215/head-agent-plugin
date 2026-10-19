@@ -7,7 +7,7 @@
 같아야 하지는 않습니다. `SessionRestoreProjection` 0.2는 원본을 보존하고
 `currentExecution`을 별도로 제공합니다. 옛 위치·다음 결과는
 `consumerInstruction.historicalCheckpointContext`에 표시하며 현재 지시로 재발행하지
-않습니다. 현재 다음 행동은 HEAD가 판단하고 과거 승인은 새 효과 권한이 아닙니다.
+않습니다. 현재 다음 행동은 Lode가 판단하고 과거 승인은 새 효과 권한이 아닙니다.
 P4 투영 버전은 불변 P3 통합 프로토콜을 바꾸지 않습니다. 기존 0.1 통합 요청·영수증의
 검증 조건과 원본 바이트는 그대로 유지됩니다.
 진입은 읽기 전용이며 checkpoint 부재는 일반 작업 gate가 아닙니다. 기존 선택적
@@ -18,7 +18,7 @@ basis/sync는 의미를 새로 보존할 실제 필요에 사용하지, Run마�
 ## 저장과 실행 재시도 구분
 
 `run-start --contract <id> [--start-request <key>]`와 typed MCP
-`head_run_start`는 같은 Core 전환입니다. HEAD/Host가 내부 키를 한 번 정해 동일
+`lode_run_start`는 같은 Core 전환입니다. Lode/Host가 내부 키를 한 번 정해 동일
 요청 재시도에 유지합니다. 사용자 ID 입력이나 prepare 호출은 필요 없습니다.
 정체성은 기존 Run에 보존하며 새 global ledger는 없습니다. 같은 키/다른 입력은
 충돌, 같은 contract/다른 키는 새 요청입니다. 키 없는 정상 시작도 유지하지만
@@ -56,7 +56,7 @@ unavailable, 조사하지 않은 진단은 not assessed로 구분합니다. 준�
 World/DB 진단, 상태 쓰기를 하지 않습니다. 방향 부재는 `null`이며 손상·다른 Project의
 원본은 오류로 남습니다. CLI는 `session-restore`를 포함해 성공 formatter 전에 unresolved를
 처리합니다. init/resume·restore·Run·compaction의 기존 Session/효과 경계는 유지합니다.
-HEAD는 독립 작업을 계속하고 의존 작업에만 기존 검증된 explicit/Host 선택을 사용합니다.
+Lode는 독립 작업을 계속하고 의존 작업에만 기존 검증된 explicit/Host 선택을 사용합니다.
 새 selector·사용자 ID 양식·복구 호출 체인·승인 단계는 없습니다. MCP 미해결 응답은
 기존 JSON text와 structuredContent를 유지하고 정상 응답의 도구별 표현도 바꾸지 않습니다.
 fixture 검증은 실제 모델의 질문 감소나 설치 Host의 지속 연결을 실측한 증거가 아닙니다.
@@ -84,7 +84,7 @@ unknown과 원본 fallback이지 강제 refresh/upgrade gate가 아닙니다.
 혼합 traversal은 확장 전에 관련 node/edge를 걸러 원본 GraphSnapshot ID/hash와
 제외 범위를 유지합니다. adapter가 mask를 지원하지 않으면 embedded 조회로
 fallback하고 원격 쓰기를 하지 않습니다. Context도 전체 stale 때문에 코드 전체를
-버리지 않고 검증한 도메인을 포함합니다. 필요한 기존 refresh는 HEAD의 허용된
+버리지 않고 검증한 도메인을 포함합니다. 필요한 기존 refresh는 Lode의 허용된
 유지 작업이지 사용자 수동 절차·매 턴 전량 refresh 의무가 아닙니다.
 deterministic trace는 호출·저장·instruction·fallback을 확인하는 증거이지 실제
 모델 질문 횟수·체감 UX·시간·토큰·비용을 실측했다는 뜻은 아닙니다.

@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { buildClaudeMarketplaceSnapshot, verifyClaudeMarketplaceSnapshot } from "./lib/claude-marketplace.mjs";
+import { ARTIFACT_COMPOSITION, publicToolName } from "./lib/lode-artifact-composition.mjs";
 
 function option(name, fallback = null) {
   const index = process.argv.indexOf(name);
@@ -21,15 +22,23 @@ if (providedRoot) {
     requireNativeBundle: process.argv.includes("--require-native"),
   }), null, 2)}\n`);
 } else {
-  const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "head-agent-claude-marketplace-"));
+  const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "lode-agent-claude-marketplace-"));
   const snapshotRoot = path.join(temporaryRoot, "snapshot");
   try {
     const built = buildClaudeMarketplaceSnapshot({ sourceRoot: path.resolve("."), outputRoot: snapshotRoot });
     const verified = verifyClaudeMarketplaceSnapshot({ root: snapshotRoot });
     assert.deepEqual(verified, built);
+    const carrierRoot = path.join(temporaryRoot, "legacy-carrier");
+    const carrier = buildClaudeMarketplaceSnapshot({ sourceRoot: path.resolve("."), outputRoot: carrierRoot, name: "head-agent-plugin" });
+    assert.equal(carrier.marketplaceName, "head-agent-plugin");
+    assert.equal(carrier.pluginName, "head-agent-core");
+    const carrierPluginRoot = path.join(carrierRoot, "plugins", carrier.pluginName);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(carrierPluginRoot, "package.json"), "utf8")).name, "@local/head-agent-core-plugin");
+    assert.equal(JSON.parse(fs.readFileSync(path.join(carrierRoot, ".head-agent-claude-marketplace-generated.json"), "utf8")).kind, "HeadAgentClaudeMarketplaceSnapshot");
+    assert.equal(fs.existsSync(path.join(carrierRoot, ".lode-agent-claude-marketplace-generated.json")), false);
     const skillFiles = ["SKILL.md", "references/runtime-composition.md", "references/conversation-ux.md", "references/authority-and-roles.md"];
     for (const file of skillFiles) {
-      const relative = path.join("skills", "head-agent-core", file);
+      const relative = path.join("skills", ARTIFACT_COMPOSITION.skills.core, file);
       assert.deepEqual(fs.readFileSync(path.join(snapshotRoot, "plugins", built.pluginName, relative)),
         fs.readFileSync(path.resolve(relative)), `Generated Claude skill bytes differ: ${file}`);
     }
@@ -37,8 +46,8 @@ if (providedRoot) {
     assert.equal(fs.existsSync(path.join(snapshotRoot, "plugins", built.pluginName, "node_modules")), false);
     assert.equal(fs.existsSync(path.join(snapshotRoot, "plugins", built.pluginName, ".git")), false);
     assert.equal(fs.existsSync(path.join(snapshotRoot, "plugins", built.pluginName, "legacy")), false);
-    const runtimeManifest = JSON.parse(fs.readFileSync(path.join(snapshotRoot, "plugins", built.pluginName, ".head-source-distribution-manifest.json"), "utf8"));
-    const conversationSkill = "skills/head-conversation/SKILL.md";
+    const runtimeManifest = JSON.parse(fs.readFileSync(path.join(snapshotRoot, "plugins", built.pluginName, `.${ARTIFACT_COMPOSITION.identity}-source-distribution-manifest.json`), "utf8"));
+    const conversationSkill = `skills/${ARTIFACT_COMPOSITION.skills.conversation}/SKILL.md`;
     const conversationBytes = fs.readFileSync(path.resolve(conversationSkill));
     assert.deepEqual(fs.readFileSync(path.join(snapshotRoot, "plugins", built.pluginName, conversationSkill)), conversationBytes);
     const conversationEntry = runtimeManifest.files.find(file => file.path === conversationSkill);
@@ -52,8 +61,8 @@ if (providedRoot) {
     const startupHooks = JSON.parse(fs.readFileSync(path.join(snapshotRoot, "plugins", built.pluginName, "hooks", "claude.json"), "utf8"));
     assert.deepEqual(Object.keys(startupHooks.hooks), ["SessionStart", "UserPromptSubmit", "Stop", "SubagentStart", "SubagentStop", "SessionEnd", "PreToolUse"]);
     assert.match(startupHooks.hooks.SessionStart[0].hooks[0].command, /session-host-hook\.mjs/);
-    assert.deepEqual(startupHooks.hooks.PreToolUse.map(group => group.hooks[0].server), ["head_core", "plugin:head-agent-core:head_core"]);
-    assert.ok(startupHooks.hooks.PreToolUse.every(group => group.hooks[0].tool === "head_session_host_request_prepare"));
+    assert.deepEqual(startupHooks.hooks.PreToolUse.map(group => group.hooks[0].server), [ARTIFACT_COMPOSITION.serverName, `plugin:${ARTIFACT_COMPOSITION.pluginName}:${ARTIFACT_COMPOSITION.serverName}`]);
+    assert.ok(startupHooks.hooks.PreToolUse.every(group => group.hooks[0].tool === publicToolName("head_session_host_request_prepare")));
     assert.equal(/permissionDecision|updatedInput/.test(JSON.stringify(startupHooks)), false);
     assert.ok(runtimeManifest.files.some(file => file.path === "scripts/lib/session-host-request.mjs"));
     assert.ok(runtimeManifest.files.some((file) => file.path === "scripts/lib/session-host-adapter.mjs"));
@@ -78,7 +87,7 @@ if (providedRoot) {
     const mcpFile = path.join(snapshotRoot, "plugins", built.pluginName, ".mcp.json");
     const mcpBytes = fs.readFileSync(mcpFile);
     const mcp = JSON.parse(mcpBytes.toString("utf8"));
-    mcp.mcpServers.head_core.args[0] = "scripts/mcp-server.mjs";
+    mcp.mcpServers[ARTIFACT_COMPOSITION.serverName].args[0] = "scripts/mcp-server.mjs";
     fs.writeFileSync(mcpFile, `${JSON.stringify(mcp, null, 2)}\n`, "utf8");
     assert.throws(
       () => verifyClaudeMarketplaceSnapshot({ root: snapshotRoot }),
@@ -106,6 +115,7 @@ if (providedRoot) {
 
     process.stdout.write(`${JSON.stringify({
       status: "claude_marketplace_packaging_verified",
+      legacyCarrierIdentityVerified: true,
       marketplaceName: built.marketplaceName,
       pluginName: built.pluginName,
       pluginVersion: built.pluginVersion,
@@ -129,7 +139,7 @@ if (providedRoot) {
     const resolvedTemporaryRoot = path.resolve(temporaryRoot);
     const resolvedOsTemp = path.resolve(os.tmpdir());
     if (path.dirname(resolvedTemporaryRoot) === resolvedOsTemp
-      && path.basename(resolvedTemporaryRoot).startsWith("head-agent-claude-marketplace-")) {
+      && path.basename(resolvedTemporaryRoot).startsWith("lode-agent-claude-marketplace-")) {
       fs.rmSync(resolvedTemporaryRoot, { recursive: true, force: true });
     }
   }

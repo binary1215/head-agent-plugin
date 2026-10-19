@@ -7,9 +7,9 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const sourceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const scratchRoot = fs.mkdtempSync(path.join(os.tmpdir(), "head-agent-newcomer-"));
+const scratchRoot = fs.mkdtempSync(path.join(os.tmpdir(), "lode-agent-newcomer-"));
 const projectRoot = path.join(scratchRoot, "sample-project");
-const installRoot = path.join(scratchRoot, "user-data", "head-agent-core");
+const installRoot = path.join(scratchRoot, "user-data", "lode-agent-core");
 const binDirectory = path.join(scratchRoot, "user-home", ".local", "bin");
 const proposalFile = path.join(scratchRoot, "onboarding-proposal.json");
 const reviewFile = path.join(scratchRoot, "onboarding-review.json");
@@ -77,9 +77,9 @@ function commandArgument(value) {
 async function runGlobal(args, expectedExitCode = 0) {
   const machineArgs = args.includes("--json") ? args : [...args, "--json"];
   if (process.platform !== "win32") {
-    return parseResult(await spawnCaptured(path.join(binDirectory, "head-agent"), machineArgs, { cwd: scratchRoot }), expectedExitCode);
+    return parseResult(await spawnCaptured(path.join(binDirectory, "lode-agent"), machineArgs, { cwd: scratchRoot }), expectedExitCode);
   }
-  const command = path.join(binDirectory, "head-agent.cmd");
+  const command = path.join(binDirectory, "lode-agent.cmd");
   const commandLine = `""${command}" ${machineArgs.map(commandArgument).join(" ")}"`;
   return parseResult(await spawnCaptured(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", commandLine], {
     cwd: scratchRoot,
@@ -92,14 +92,14 @@ function assertReadmeContract() {
   const koreanReadme = fs.readFileSync(path.join(sourceRoot, "README.ko.md"), "utf8");
   const sharedRequired = [
     "--native auto",
-    "head-agent onboarding-status",
+    "lode-agent onboarding-status",
     '"disposition": "accept-all"',
-    "head-agent onboarding-review",
-    "head-agent world-status",
-    "head-agent context-prepare",
-    "head-agent context-preview",
-    "head-agent world-docs-build",
-    "head-agent resume",
+    "lode-agent onboarding-review",
+    "lode-agent world-status",
+    "lode-agent context-prepare",
+    "lode-agent context-preview",
+    "lode-agent world-docs-build",
+    "lode-agent resume",
     "--profile product",
     "core_ready",
     "readiness.product",
@@ -119,17 +119,17 @@ function assertReadmeContract() {
   for (const required of ["[한국어](README.ko.md)", "## Who it is for", "## Why use it"]) {
     assert(readme.includes(required), `README audience contract is missing: ${required}`);
   }
-  for (const required of ["## How to use it", "HEAD keeps that original task"]) {
+  for (const required of ["## How to use it", "Lode keeps that original task"]) {
     assert(readme.includes(required), `README task-first conversation contract is missing: ${required}`);
   }
   for (const required of ["[English](README.md)", "## 누구에게 필요한가", "## 왜 사용해야 하는가"]) {
     assert(koreanReadme.includes(required), `Korean README audience contract is missing: ${required}`);
   }
-  for (const required of ["## 일반 사용자는 어떻게 사용하나요?", "HEAD는 초기화, 상태 확인과 검증된 복구를 마친 뒤에도 이 원래 작업을 유지"]) {
+  for (const required of ["## 일반 사용자는 어떻게 사용하나요?", "Lode는 초기화, 상태 확인과 검증된 복구를 마친 뒤에도 이 원래 작업을 유지"]) {
     assert(koreanReadme.includes(required), `Korean README task-first conversation contract is missing: ${required}`);
   }
-  assert(readme.includes("binary1215/head-agent-plugin@claude-marketplace"), "README Claude marketplace install contract is missing.");
-  assert(koreanReadme.includes("binary1215/head-agent-plugin@claude-marketplace"), "Korean README Claude marketplace install contract is missing.");
+  assert(readme.includes("binary1215/lode@claude-marketplace"), "README Claude marketplace install contract is missing.");
+  assert(koreanReadme.includes("binary1215/lode@claude-marketplace"), "Korean README Claude marketplace install contract is missing.");
 }
 
 try {
@@ -179,14 +179,14 @@ try {
           productKind: "Capability",
           proposedEntity: { key: "capability:requests", name: "Request processing", description: "Accept current user requests." },
           evidence: [{ path: "src/request-service.mjs", line: 1 }],
-          explanation: "Fresh HEAD semantic proposal for the newcomer flow.",
+          explanation: "Fresh Lode semantic proposal for the newcomer flow.",
           confidence: 0.8,
         },
         {
           productKind: "Feature",
           proposedEntity: { key: "feature:accept-request", name: "Accept a request", description: "Accept one current user request.", featureGroupKeys: [], capabilityKeys: ["capability:requests"], governedBy: [] },
           evidence: [{ path: "src/request-service.mjs", line: 1 }],
-          explanation: "Fresh HEAD semantic proposal for the newcomer flow.",
+          explanation: "Fresh Lode semantic proposal for the newcomer flow.",
           confidence: 0.8,
         },
       ],
@@ -260,7 +260,7 @@ try {
   ]);
   assert.equal(uninstalled.status, "uninstalled");
   assert.equal(uninstalled.projectStatePreserved, true);
-  assert.equal(fs.existsSync(path.join(projectRoot, ".head", "project.json")), true);
+  assert.equal(fs.existsSync(path.join(projectRoot, ".lode", "project.json")), true);
   assert.equal(fs.existsSync(installRoot), false);
 
   process.stdout.write(`${JSON.stringify({

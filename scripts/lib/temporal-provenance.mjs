@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { familyFormatForOriginal, formatForVerifiedOwner } from "./project-storage-format.mjs";
 import { onboardingCandidateProducerReviewDecisionId, verifyOnboardingGraphProjectionInput } from "./onboarding-projection.mjs";
 import { verifyFeatureMappingProjectionInput } from "./feature-mapping-projection.mjs";
 import { verifyChangeSetProjectionInput } from "./change-set-projection.mjs";
@@ -273,13 +274,13 @@ function evidenceId(file) {
   return identity("evidence", { kind: "file-content", path: file.path, digest: file.digest });
 }
 
-function nodeMetadata({ evidenceIds = [], sourceSnapshotId = null, authorityClass = "derived", origin = "derived-source-scan", confidence, freshness = "current" } = {}) {
+function originalNodeMetadata({ evidenceIds = [], sourceSnapshotId = null, authorityClass = "derived", origin = "derived-source-scan", confidence, freshness = "current", producer = PRODUCER } = {}) {
   const metadata = {
     authorityClass,
     origin,
     evidenceIds: sortedUniqueStrings(evidenceIds, "evidenceIds"),
     freshness,
-    producer: PRODUCER,
+    producer,
     producerVersion: TEMPORAL_PROVENANCE_VERSION,
     instructionAuthority: false,
     promotionAuthority: false,
@@ -289,7 +290,7 @@ function nodeMetadata({ evidenceIds = [], sourceSnapshotId = null, authorityClas
   return metadata;
 }
 
-function edgeRecord({ type, from, to, sourceSnapshotId, evidenceIds = [], origin = "derived-source-scan", authorityClass = "derived", confidence, freshness = "current" }) {
+function originalEdgeRecord({ type, from, to, sourceSnapshotId, evidenceIds = [], origin = "derived-source-scan", authorityClass = "derived", confidence, freshness = "current", producer = PRODUCER }) {
   const payload = {
     type,
     from,
@@ -299,13 +300,21 @@ function edgeRecord({ type, from, to, sourceSnapshotId, evidenceIds = [], origin
     evidenceIds: sortedUniqueStrings(evidenceIds, "edge evidenceIds"),
     freshness,
     sourceSnapshotId,
-    producer: PRODUCER,
+    producer,
     producerVersion: TEMPORAL_PROVENANCE_VERSION,
     instructionAuthority: false,
     promotionAuthority: false,
   };
   if (confidence != null) payload.confidence = confidence;
   return { edgeId: identity("temporal-edge", payload), ...payload };
+}
+
+function temporalRecordFactories(storage) {
+  const producer = formatForVerifiedOwner(storage).protocol(PRODUCER);
+  return {
+    nodeMetadata: (input = {}) => originalNodeMetadata({ ...input, producer }),
+    edgeRecord: (input) => originalEdgeRecord({ ...input, producer }),
+  };
 }
 
 function parentIdsFor(revisionParentIds, logicalEntityId, prefix) {
@@ -545,7 +554,7 @@ function productPolicyProjectionDescriptor(projection) {
 
 function verifyProductPolicyProjectionInput(projection, projectId) {
   if (!projection || projection.kind !== "ProductPolicyGraphProjectionInput"
-    || projection.protocol?.name !== "head-agent-core-product-policy-graph-projection"
+    || !familyFormatForOriginal("head-agent-core-product-policy-graph-projection", projection)
     || projection.protocol.version !== "0.1.0" || projection.projectId !== projectId
     || !/^product-model-[a-f0-9]{24}$/.test(projection.currentProductModelId || "")
     || !Array.isArray(projection.candidates) || !Array.isArray(projection.reviewDecisions)
@@ -578,7 +587,8 @@ function verifyProductPolicyProjectionInput(projection, projectId) {
   return projection;
 }
 
-function appendOnboardingProjection({ projectId, sourceSnapshotId, projection, nodes, edges }) {
+function appendOnboardingProjection({ projectId, sourceSnapshotId, projection, nodes, edges, storage }) {
+  const { nodeMetadata, edgeRecord } = temporalRecordFactories(storage);
   const emptySummary = {
     onboardingCandidateSetCount: 0,
     onboardingCandidateCount: 0,
@@ -952,7 +962,8 @@ function appendOnboardingProjection({ projectId, sourceSnapshotId, projection, n
   };
 }
 
-function appendProductPolicyProjection({ projectId, sourceSnapshotId, projection, nodes, edges }) {
+function appendProductPolicyProjection({ projectId, sourceSnapshotId, projection, nodes, edges, storage }) {
+  const { nodeMetadata, edgeRecord } = temporalRecordFactories(storage);
   const empty = { productPolicyCandidateCount: 0, productPolicyEvidenceCount: 0, productPolicyReviewDecisionCount: 0, appliedProductPolicyDecisionCount: 0 };
   if (!projection) return empty;
   verifyProductPolicyProjectionInput(projection, projectId);
@@ -1100,9 +1111,10 @@ function reviewedRelationshipIdentityPayload({ review, candidate }) {
 }
 
 function appendFeatureMappingProjection({
-  projectId, sourceSnapshotId, projection, nodes, edges,
+  projectId, sourceSnapshotId, projection, nodes, edges, storage,
   continuityGenerationByLogicalEntityId = {}, continuityUnknownLogicalEntityIds = new Set(),
 }) {
+  const { nodeMetadata, edgeRecord } = temporalRecordFactories(storage);
   const emptySummary = {
     featureMappingCandidateSetCount: 0,
     featureMappingCandidateCount: 0,
@@ -1374,7 +1386,8 @@ function changeSetProjectionDescriptor(projection) {
   };
 }
 
-function appendChangeSetProjection({ projectId, sourceSnapshotId, projection, nodes, edges }) {
+function appendChangeSetProjection({ projectId, sourceSnapshotId, projection, nodes, edges, storage }) {
+  const { nodeMetadata, edgeRecord } = temporalRecordFactories(storage);
   const emptySummary = {
     changeSetCount: 0,
     changeRecordCount: 0,
@@ -1718,7 +1731,8 @@ function documentChangeProjectionDescriptor(projection) {
   };
 }
 
-function appendDocumentChangeProjection({ projectId, sourceSnapshotId, projection, nodes, edges }) {
+function appendDocumentChangeProjection({ projectId, sourceSnapshotId, projection, nodes, edges, storage }) {
+  const { nodeMetadata, edgeRecord } = temporalRecordFactories(storage);
   const empty = {
     documentChangeCandidateSetCount: 0,
     documentChangeCandidateCount: 0,
@@ -1904,7 +1918,8 @@ function observationProjectionDescriptor(projection) {
   };
 }
 
-function appendObservationProjection({ projectId, sourceSnapshotId, projection, nodes, edges }) {
+function appendObservationProjection({ projectId, sourceSnapshotId, projection, nodes, edges, storage }) {
+  const { nodeMetadata, edgeRecord } = temporalRecordFactories(storage);
   const empty = { observationTypeDescriptorCount: 0, observationCollectionReceiptCount: 0, observationRecordCount: 0, derivedObservationRecordCount: 0 };
   if (!projection) return empty;
   verifyObservationProjection(projection, projectId);
@@ -2013,7 +2028,8 @@ function appendObservationProjection({ projectId, sourceSnapshotId, projection, 
   };
 }
 
-function appendProductOperatingProjection({ projectId, productModelId, sourceSnapshotId, projection, nodes, edges }) {
+function appendProductOperatingProjection({ projectId, productModelId, sourceSnapshotId, projection, nodes, edges, storage }) {
+  const { nodeMetadata, edgeRecord } = temporalRecordFactories(storage);
   const empty = { productSignalCount: 0, productHypothesisCount: 0, productInitiativeCandidateCount: 0, productInitiativeReviewDecisionCount: 0, reviewedProductInitiativeCount: 0, productFeatureCandidateCount: 0, outcomeObservationCount: 0 };
   if (!projection) return empty;
   verifyProductOperatingProjectionInput(projection);
@@ -2099,7 +2115,8 @@ function releaseObservationProjectionDescriptor(projection) {
   };
 }
 
-function appendReleaseObservationProjection({ projectId, sourceSnapshotId, projection, nodes, edges }) {
+function appendReleaseObservationProjection({ projectId, sourceSnapshotId, projection, nodes, edges, storage }) {
+  const { nodeMetadata, edgeRecord } = temporalRecordFactories(storage);
   const empty = { branchStateObservationCount: 0, deploymentResultObservationCount: 0, releaseObservationCount: 0 };
   if (!projection) return empty;
   verifyReleaseObservationProjectionInput(projection);
@@ -2187,6 +2204,7 @@ function appendReleaseObservationProjection({ projectId, sourceSnapshotId, proje
 
 export function buildTemporalProvenanceGraph({
   projectId,
+  storage = null,
   files,
   productModel = null,
   productEvidenceId = "",
@@ -2202,9 +2220,11 @@ export function buildTemporalProvenanceGraph({
   revisionParentIds = {},
   logicalLineageState = {},
 } = {}) {
+  const format = formatForVerifiedOwner(storage);
+  const { nodeMetadata, edgeRecord } = temporalRecordFactories(storage);
   if (typeof projectId !== "string" || !projectId.trim()) fail("projectId is required.", "TEMPORAL_PROJECT_ID_REQUIRED");
   if (!Array.isArray(files)) fail("files must be an array.", "TEMPORAL_FILES_REQUIRED");
-  const selectedProductModel = productModel || normalizeProductModelDocument(emptyProductModelDocument());
+  const selectedProductModel = productModel || normalizeProductModelDocument(emptyProductModelDocument(), format);
   const selectedOnboardingProjection = onboardingProjection ? verifyOnboardingGraphProjectionInput(onboardingProjection) : null;
   const selectedProductPolicyProjection = productPolicyProjection ? verifyProductPolicyProjectionInput(productPolicyProjection, projectId) : null;
   const selectedFeatureMappingProjection = featureMappingProjection ? verifyFeatureMappingProjectionInput(featureMappingProjection) : null;
@@ -2569,6 +2589,7 @@ export function buildTemporalProvenanceGraph({
   }
 
   const onboardingSummary = appendOnboardingProjection({
+    storage,
     projectId,
     sourceSnapshotId,
     projection: selectedOnboardingProjection,
@@ -2576,6 +2597,7 @@ export function buildTemporalProvenanceGraph({
     edges,
   });
   const productPolicySummary = appendProductPolicyProjection({
+    storage,
     projectId,
     sourceSnapshotId,
     projection: selectedProductPolicyProjection,
@@ -2583,6 +2605,7 @@ export function buildTemporalProvenanceGraph({
     edges,
   });
   const featureMappingSummary = appendFeatureMappingProjection({
+    storage,
     projectId,
     sourceSnapshotId,
     projection: selectedFeatureMappingProjection,
@@ -2592,6 +2615,7 @@ export function buildTemporalProvenanceGraph({
     continuityUnknownLogicalEntityIds: new Set(lineageState.continuityUnknownLogicalEntityIds),
   });
   const changeSetSummary = appendChangeSetProjection({
+    storage,
     projectId,
     sourceSnapshotId,
     projection: selectedChangeSetProjection,
@@ -2599,6 +2623,7 @@ export function buildTemporalProvenanceGraph({
     edges,
   });
   const documentChangeSummary = appendDocumentChangeProjection({
+    storage,
     projectId,
     sourceSnapshotId,
     projection: selectedDocumentChangeProjection,
@@ -2606,6 +2631,7 @@ export function buildTemporalProvenanceGraph({
     edges,
   });
   const observationSummary = appendObservationProjection({
+    storage,
     projectId,
     sourceSnapshotId,
     projection: selectedObservationProjection,
@@ -2613,6 +2639,7 @@ export function buildTemporalProvenanceGraph({
     edges,
   });
   const productOperatingSummary = appendProductOperatingProjection({
+    storage,
     projectId,
     productModelId: selectedProductModel.productModelId,
     sourceSnapshotId,
@@ -2621,6 +2648,7 @@ export function buildTemporalProvenanceGraph({
     edges,
   });
   const releaseObservationSummary = appendReleaseObservationProjection({
+    storage,
     projectId,
     sourceSnapshotId,
     projection: selectedReleaseObservationProjection,
@@ -2662,7 +2690,7 @@ export function buildTemporalProvenanceGraph({
   };
   const payload = {
     kind: "GraphSnapshot",
-    protocol: { name: "head-agent-core-temporal-provenance", version: TEMPORAL_PROVENANCE_VERSION },
+    protocol: { name: format.protocol("head-agent-core-temporal-provenance"), version: TEMPORAL_PROVENANCE_VERSION },
     authority: "derived-evidence-only",
     authorityBoundary: artifactAuthorityBoundary("GraphSnapshot"),
     rebuildable: true,
@@ -2957,6 +2985,7 @@ function validEndpointKinds(type, fromKind, toKind) {
 }
 
 export function verifyTemporalProvenanceGraph(graph) {
+  const format = familyFormatForOriginal("head-agent-core-temporal-provenance", graph);
   const graphVersion = graph?.protocol?.version;
   const legacyV02 = graphVersion === "0.2.0";
   const legacyV03 = graphVersion === "0.3.0";
@@ -2971,7 +3000,7 @@ export function verifyTemporalProvenanceGraph(graph) {
   const legacyV12 = graphVersion === "0.12.0";
   const legacyV13 = graphVersion === "0.13.0";
   const legacyV14 = graphVersion === "0.14.0";
-  if (!graph || graph.kind !== "GraphSnapshot" || graph.protocol?.name !== "head-agent-core-temporal-provenance"
+  if (!graph || graph.kind !== "GraphSnapshot" || !format
     || !new Set(["0.2.0", "0.3.0", "0.4.0", "0.5.0", "0.6.0", "0.7.0", "0.8.0", "0.9.0", "0.10.0", "0.11.0", "0.12.0", "0.13.0", "0.14.0", TEMPORAL_PROVENANCE_VERSION]).has(graphVersion)) {
     fail("Temporal provenance GraphSnapshot is invalid.", "INVALID_TEMPORAL_PROVENANCE_GRAPH");
   }
@@ -3018,6 +3047,7 @@ export function verifyTemporalProvenanceGraph(graph) {
     if (!expectedNodeKinds.includes(node.kind) || typeof node.nodeId !== "string") fail("Temporal graph contains an unsupported node.", "UNSUPPORTED_TEMPORAL_NODE");
     if (nodes.has(node.nodeId)) fail(`Duplicate temporal node: ${node.nodeId}`, "DUPLICATE_TEMPORAL_NODE");
     requireMetadata(node, `Node ${node.nodeId}`, { sourceSnapshotRequired: node.kind !== "SourceSnapshot" });
+    if (format.dialect === "lode" && node.producer !== format.protocol(PRODUCER)) fail(`Node ${node.nodeId} has a different producer family.`, "INVALID_TEMPORAL_PROVENANCE_GRAPH");
     if (node.kind !== "SourceSnapshot" && node.sourceSnapshotId !== graph.sourceSnapshotId) fail(`Node ${node.nodeId} is scoped to a different SourceSnapshot.`, "TEMPORAL_SCOPE_MISMATCH");
     for (const field of ["parentRevisionIds", "parentSnapshotIds", "fileRevisionIds", "symbolRevisionIds", "testRevisionIds", "productRevisionIds"]) {
       if (node[field] && canonicalJson(node[field]) !== canonicalJson([...new Set(node[field])].sort())) fail(`Node ${node.nodeId} has a non-normalized ${field}.`, "INVALID_TEMPORAL_PARENT_SET");
@@ -3088,7 +3118,7 @@ export function verifyTemporalProvenanceGraph(graph) {
     if (revisions.length !== logicals.length) fail(`${kind} logical and Revision counts differ.`, "PRODUCT_REVISION_SET_MISMATCH");
     if (kind !== "Policy" || reconstructedProductDocument.schemaVersion === 2) reconstructedProductDocument[definition.collection] = revisions.map((node) => node.semantic);
   }
-  const reconstructedProductModel = normalizeProductModelDocument(reconstructedProductDocument);
+  const reconstructedProductModel = normalizeProductModelDocument(reconstructedProductDocument, format);
   if (reconstructedProductModel.productModelId !== graph.productModelId || reconstructedProductModel.productModelHash !== graph.productModelHash) {
     fail("Product model identity does not match product Revision semantics.", "PRODUCT_MODEL_IDENTITY_MISMATCH");
   }
@@ -3129,6 +3159,7 @@ export function verifyTemporalProvenanceGraph(graph) {
     if (!expectedRelationTypes.includes(edge.type)) fail(`Unsupported temporal relation: ${edge.type}`, "UNSUPPORTED_TEMPORAL_RELATION");
     if (edgeIds.has(edge.edgeId)) fail(`Duplicate temporal edge: ${edge.edgeId} (${edge.type} ${edge.from} -> ${edge.to})`, "DUPLICATE_TEMPORAL_EDGE");
     requireMetadata(edge, `Edge ${edge.edgeId}`);
+    if (format.dialect === "lode" && edge.producer !== format.protocol(PRODUCER)) fail(`Edge ${edge.edgeId} has a different producer family.`, "INVALID_TEMPORAL_PROVENANCE_GRAPH");
     if (edge.sourceSnapshotId !== graph.sourceSnapshotId) fail(`Edge ${edge.edgeId} is scoped to a different SourceSnapshot.`, "TEMPORAL_SCOPE_MISMATCH");
     const from = nodes.get(edge.from);
     const to = nodes.get(edge.to);
@@ -4077,6 +4108,7 @@ export function queryTemporalProvenanceGraph(graph, {
   eligibility = null,
 } = {}) {
   verifyTemporalProvenanceGraph(graph);
+  const format = familyFormatForOriginal("head-agent-core-temporal-provenance", graph);
   const originalNodeIds = eligibility ? new Set(graph.nodes.map(node => node.nodeId)) : null;
   const originalEdgeIds = eligibility ? new Set(graph.edges.map(edge => edge.edgeId)) : null;
   if (eligibility && (eligibility.graphSnapshotId !== graph.graphSnapshotId || eligibility.graphSnapshotHash !== graph.graphSnapshotHash
@@ -4148,7 +4180,7 @@ export function queryTemporalProvenanceGraph(graph, {
   if (exactAnchorMode && matching.length > safeMaxNodes) fail("Temporal exact anchors exceed maxNodes.", "TEMPORAL_EXACT_ANCHOR_LIMIT");
   const anchors = matching.slice(0, safeMaxNodes);
   const selected = new Set(anchors.map((node) => node.nodeId));
-  const inclusionReasons = new Map(anchors.map((node) => [node.nodeId, exactAnchorMode ? "exact-head-anchor" : "lexical-discovery-match"]));
+  const inclusionReasons = new Map(anchors.map((node) => [node.nodeId, exactAnchorMode ? format.value("exact-head-anchor") : "lexical-discovery-match"]));
   let frontier = new Set(selected);
   const selectedEdges = [];
   const selectedEdgeIds = new Set();
@@ -4205,7 +4237,7 @@ export function queryTemporalProvenanceGraph(graph, {
   const boundaryLimit = 100;
   const boundedBoundaryItems = boundaryItems.slice(0, boundaryLimit).map(({ key, ...item }) => item);
   const traversalQuery = {
-    anchorMode: exactAnchorMode ? "exact-head-proposed" : "lexical-discovery",
+    anchorMode: exactAnchorMode ? format.value("exact-head-proposed") : "lexical-discovery",
     normalizedQuery,
     anchorIds: anchors.map((node) => node.nodeId),
     expectedGraphSnapshotId: exactAnchorMode ? graph.graphSnapshotId : null,
@@ -4224,7 +4256,7 @@ export function queryTemporalProvenanceGraph(graph, {
   const queryHash = digest(canonicalJson(traversalQuery));
   const resultPayload = {
     kind: "TemporalTraversalResult",
-    protocol: { name: "head-agent-core-temporal-traversal", version: TEMPORAL_TRAVERSAL_VERSION },
+    protocol: { name: format.protocol("head-agent-core-temporal-traversal"), version: TEMPORAL_TRAVERSAL_VERSION },
     graphSnapshotId: graph.graphSnapshotId,
     graphSnapshotHash: graph.graphSnapshotHash,
     sourceSnapshotId: graph.sourceSnapshotId,

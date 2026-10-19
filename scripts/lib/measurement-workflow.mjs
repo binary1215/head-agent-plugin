@@ -1,3 +1,4 @@
+import { formatForVerifiedOwner } from "./project-storage-format.mjs";
 import {
   createObservationTypeDescriptor,
   observationDigest,
@@ -39,7 +40,7 @@ function timestamp(value, label) {
 
 function metricTypeKey(metricKey) { return `${METRIC_PREFIX}${stableKey(metricKey, "Metric key", 128)}`; }
 
-function metricDescriptor({ metricKey, unit, direction, typeVersion = "1" }) {
+function metricDescriptor({ metricKey, unit, direction, typeVersion = "1" }, storage) {
   const normalizedUnit = stableKey(unit, "Metric unit", 64);
   const normalizedDirection = requiredText(direction, "Metric direction", 16).toLowerCase();
   if (!DIRECTIONS.has(normalizedDirection)) fail("Metric direction must be increase, decrease, or maintain.", "INVALID_MEASUREMENT_INPUT");
@@ -56,7 +57,7 @@ function metricDescriptor({ metricKey, unit, direction, typeVersion = "1" }) {
       ],
       additionalFields: false,
     },
-  });
+  }, storage);
 }
 
 function descriptorDefinition(descriptor) {
@@ -81,8 +82,8 @@ function descriptorDefinition(descriptor) {
   };
 }
 
-function findMetricDefinition(projectRoot, projectId, metricKey, typeVersion = "") {
-  const artifacts = loadObservationArtifacts({ projectRoot, projectId });
+function findMetricDefinition(projectRoot, projectId, metricKey, typeVersion = "", storage) {
+  const artifacts = loadObservationArtifacts({ projectRoot, projectId, storage });
   const typeKey = metricTypeKey(metricKey);
   const matches = artifacts.descriptors.filter((item) => item.typeKey === typeKey && (!typeVersion || item.typeVersion === typeVersion));
   if (!matches.length) fail(`Metric definition is missing: ${metricKey}`, "METRIC_DEFINITION_NOT_FOUND");
@@ -178,8 +179,8 @@ async function projectCommittedObservations(root) {
 
 export async function defineMetric({ root = ".", metricKey, unit, direction, typeVersion = "1" } = {}) {
   const inspected = assertObservationProjectReady(root);
-  const descriptor = metricDescriptor({ metricKey, unit, direction, typeVersion });
-  const existing = loadObservationArtifacts({ projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId })
+  const descriptor = metricDescriptor({ metricKey, unit, direction, typeVersion }, inspected.storage);
+  const existing = loadObservationArtifacts({ projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId, storage: inspected.storage })
     .descriptors.filter((item) => item.typeKey === descriptor.typeKey && item.typeVersion === descriptor.typeVersion);
   if (existing.some((item) => item.descriptorHash !== descriptor.descriptorHash)) {
     fail(`Metric ${metricKey} version ${typeVersion} already has a different definition. Use a new typeVersion.`, "METRIC_DEFINITION_CONFLICT");
@@ -197,19 +198,19 @@ export async function defineMetric({ root = ".", metricKey, unit, direction, typ
 export async function recordMetricObservation({
   root = ".", metricKey, typeVersion = "", subjectType, subjectKey, value, sampleSize = null,
   form = "snapshot", observedAt = null, start = null, end = null,
-  coverage = {}, adapterKey = "head.metric-host-input", adapterVersion = MEASUREMENT_WORKFLOW_VERSION,
+  coverage = {}, adapterKey, adapterVersion = MEASUREMENT_WORKFLOW_VERSION,
   sourceScopeDigest, sourceEventKeyDigest, sourceEvidenceDigest,
 } = {}) {
   const inspected = assertObservationProjectReady(root);
   if (!Number.isFinite(value)) fail("Metric value must be finite.", "INVALID_MEASUREMENT_INPUT");
   if (!new Set(["snapshot", "aggregate"]).has(form)) fail("Metric form must be snapshot or aggregate.", "INVALID_MEASUREMENT_INPUT");
   if (form === "aggregate" && (start == null || end == null)) fail("Aggregate metrics require start and end.", "INVALID_MEASUREMENT_INPUT");
-  const selected = findMetricDefinition(inspected.project.projectRoot, inspected.project.projectId, metricKey, typeVersion);
-  const normalizedAdapterKey = stableKey(adapterKey, "Metric adapter key", 192);
+  const selected = findMetricDefinition(inspected.project.projectRoot, inspected.project.projectId, metricKey, typeVersion, inspected.storage);
+  const normalizedAdapterKey = stableKey(adapterKey === undefined ? formatForVerifiedOwner(inspected.storage).value("head.metric-host-input") : adapterKey, "Metric adapter key", 192);
   const normalizedAdapterVersion = stableKey(adapterVersion, "Metric adapter version", 64);
   const normalizedSourceScopeDigest = requiredText(sourceScopeDigest, "Metric sourceScopeDigest", 64);
   const normalizedSourceEventKeyDigest = requiredText(sourceEventKeyDigest, "Metric sourceEventKeyDigest", 64);
-  const existingReplay = loadObservationArtifacts({ projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId }).observations.find((record) => (
+  const existingReplay = loadObservationArtifacts({ projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId, storage: inspected.storage }).observations.find((record) => (
     record.source.adapterKey === normalizedAdapterKey
     && record.source.adapterVersion === normalizedAdapterVersion
     && record.source.sourceScopeDigest === normalizedSourceScopeDigest
@@ -270,7 +271,7 @@ export async function compareMetricObservations({ root = ".", baselineObservatio
       { key: "relative_change", type: "bounded-number", required: false },
       { key: "unit", type: "enum", required: true, enum: [baseline.record.payload.unit] },
     ], additionalFields: false },
-  });
+  }, inspected.storage);
   const absoluteChange = current.record.payload.value - baseline.record.payload.value;
   const payload = {
     baseline_value: baseline.record.payload.value,
@@ -295,7 +296,7 @@ export async function compareMetricObservations({ root = ".", baselineObservatio
         end: current.record.temporalScope.end || current.record.temporalScope.observedAt,
       },
       inputObservationIds: exactInputs,
-      algorithm: { key: "head.metric-difference", version: MEASUREMENT_WORKFLOW_VERSION, digest: observationDigest("head.metric-difference/0.1.0") },
+      algorithm: { key: formatForVerifiedOwner(inspected.storage).value("head.metric-difference"), version: MEASUREMENT_WORKFLOW_VERSION, digest: observationDigest(formatForVerifiedOwner(inspected.storage).value("head.metric-difference/0.1.0")) },
       coverage: comparisonCoverageComplete ? {
         state: "complete", basis: "enumerated-bounded-query", queryDigest: observationDigest(exactInputs), examinedCount: 2, sourceReportedTotal: 2, omittedCount: 0, cursorStartDigest: null, cursorEndDigest: null,
       } : {
@@ -352,7 +353,7 @@ export async function assessMetricComparison({ root = ".", comparisonObservation
 
 export function inspectMeasurements({ root = "." } = {}) {
   const inspected = assertObservationProjectReady(root);
-  const artifacts = loadObservationArtifacts({ projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId });
+  const artifacts = loadObservationArtifacts({ projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId, storage: inspected.storage });
   const definitions = artifacts.descriptors.filter((item) => item.typeKey.startsWith(METRIC_PREFIX) && !item.typeKey.endsWith(".comparison")).map(descriptorDefinition);
   const observations = artifacts.observations.filter((item) => item.typeKey.startsWith(METRIC_PREFIX));
   const comparisons = artifacts.derivedObservations.filter((item) => item.typeKey.startsWith(METRIC_PREFIX) && item.typeKey.endsWith(".comparison"));
@@ -370,7 +371,7 @@ export function traceMeasurementLineage({ root = ".", anchorId = "", metricKey =
   const inspected = assertObservationProjectReady(root);
   if (anchorId && metricKey) fail("Select either an exact measurement anchor or a metric key, not both.", "INVALID_MEASUREMENT_TRACE_INPUT");
   let selectedAnchorId = String(anchorId || "").trim();
-  if (!selectedAnchorId && metricKey) selectedAnchorId = findMetricDefinition(inspected.project.projectRoot, inspected.project.projectId, metricKey, typeVersion).descriptor.descriptorId;
+  if (!selectedAnchorId && metricKey) selectedAnchorId = findMetricDefinition(inspected.project.projectRoot, inspected.project.projectId, metricKey, typeVersion, inspected.storage).descriptor.descriptorId;
   if (!selectedAnchorId) fail("Measurement lineage requires an exact anchorId or metricKey.", "MEASUREMENT_TRACE_ANCHOR_REQUIRED");
   const currentWorld = inspectWorldModel({ root: inspected.project.projectRoot });
   if (currentWorld.status !== "current") fail("Measurement lineage requires the current verified World Model.", "WORLD_MODEL_STALE");
@@ -392,7 +393,7 @@ export function traceMeasurementLineage({ root = ".", anchorId = "", metricKey =
   const graph = queryWorldTemporalGraph({ root: inspected.project.projectRoot, graphProjectionAdapter, ...queryParameters });
   return {
     kind: "MeasurementLineageProjection",
-    protocol: { name: "head-agent-core-measurement-lineage", version: MEASUREMENT_WORKFLOW_VERSION },
+    protocol: { name: formatForVerifiedOwner(inspected.storage).protocol("head-agent-core-measurement-lineage"), version: MEASUREMENT_WORKFLOW_VERSION },
     projectId: inspected.project.projectId,
     anchorId: selectedAnchorId,
     queryParameters,

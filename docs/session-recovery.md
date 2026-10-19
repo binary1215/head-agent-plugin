@@ -1,6 +1,6 @@
 # Session restore and reviewed-result integration
 
-This contract implements the provider-neutral outcomes of the original HEAD
+This contract implements the provider-neutral outcomes of the original Lode
 Session restore and worker-result integration flow without resuming a hidden
 provider conversation or embedding Herdr-specific process, pane, CLI, socket, or
 TUI behavior.
@@ -12,9 +12,9 @@ The original source numbering is preserved rather than repurposed:
 | Original Feature | Original outcome | This plugin's relationship |
 |---|---|---|
 | HF-007 | continue through context compaction | implemented by the separate provider-neutral compaction recovery contract |
-| HF-008 | restore a prior HEAD OpenCode Session | artifact-only restore reproduces the semantic consumer input; provider `ses_*` resume is intentionally not claimed |
+| HF-008 | restore a prior Lode OpenCode Session | artifact-only restore reproduces the semantic consumer input; provider `ses_*` resume is intentionally not claimed |
 | HF-009 | dispatch an independently ownable worker task | belongs to the separate bounded runtime/coordination vertical; this integration transaction is not dispatch |
-| HF-010 | integrate a completed worker branch | represented provider-neutrally by accepted ResultPacket review plus explicit HEAD-owned checkpoint integration |
+| HF-010 | integrate a completed worker branch | represented provider-neutrally by accepted ResultPacket review plus explicit Lode-owned checkpoint integration |
 
 This mapping distinguishes behavioral equivalence from ritual parity. It does not
 rename provider-loss continuity as HF-010 or claim that a checkpoint transaction
@@ -25,7 +25,7 @@ alone closes the original dispatch/wait lifecycle.
 | Artifact | Plane | Role |
 |---|---|---|
 | `WholePlanSnapshot`, `ExecutionContract`, `ContextCapsule`, `Run`, `SessionRunCheckpoint` | P2 | recoverable project execution lineage and exact next direction |
-| `ReviewDecision` | P1 | Fresh HEAD's explicit normative judgment |
+| `ReviewDecision` | P1 | Fresh Lode's explicit normative judgment |
 | `BoundedWorkerDispatch`, `ResultPacket` | P3 | worker ownership and result evidence; legacy integration request/receipt records remain readable |
 | `SessionRestoreProjection` | P4 | non-persisted, reproducible consumer view |
 | `ContinuationOutcome`, `BoundedWorkerWaitOutcome`, execution lease/process | P5 | optional live attachment and operational progress only |
@@ -42,17 +42,17 @@ allowed to author those fields.
 
 ## Independent Session routing and current common direction
 
-One canonical Project has independently routed logical HEAD Sessions.
+One canonical Project has independently routed logical Lode Sessions.
 `session_id` (MCP) or `--session` (CLI) selects the request's target without
-switching `.head/sessions/current.json`; additional records live under
-`.head/sessions/by-id/<session-id>/current.json`. Existing identities, review
+switching `.lode/sessions/current.json`; additional records live under
+`.lode/sessions/by-id/<session-id>/current.json`. Existing identities, review
 records, active and unknown work stay intact. Session-local purpose/progress
 updates do not overwrite another Session or common direction.
 
 Restore also returns `currentProjectDirection` from the current common P2 record.
 Its goal, constraints, decisions and cancelled actions remain distinct from
 historical checkpoint fields: a past deploy step cannot revoke a later shared
-cancellation. `head_project_direction_update` requires the exact read
+cancellation. `lode_project_direction_update` requires the exact read
 `expected_direction_id` and current user direction. Concurrent differences require
 reconciliation. Neither restore nor this direction record grants an execution
 authorization. An older valid record remains inspectable history, while a stale
@@ -74,7 +74,7 @@ checkpoint cannot drive current effect execution merely by being readable.
 The read-only project experience may run this exact verification to report
 `no-current-checkpoint`, `verified-current-checkpoint`, or
 `attention-required`. That readiness view does not return recovery direction,
-consume a continuation token, or attach a provider. HEAD reads the full restore
+consume a continuation token, or attach a provider. Lode reads the full restore
 projection only when a verified current checkpoint exists.
 
 Projection 0.2 preserves exact checkpoint meaning and exposes current execution
@@ -85,7 +85,7 @@ owner/reference contradictions and required current lineage loss remain scoped
 failures. Provider identities, transcript/summary, resume/stream remain outside
 this view. See [state separation](recovery-state-separation.md).
 
-`head_conversation_enter` composes this same read-only restore with bounded
+`lode_conversation_enter` composes this same read-only restore with bounded
 project-status facts when needed current entry context has not already been
 supplied. The Skill reuses sufficient verified context for the exact Project and
 selected logical Session, including current common direction and cancellations;
@@ -94,24 +94,24 @@ make the user request recovery, supply an identity or perform a second status
 round trip. Ordinary entry leaves detailed World inspection explicitly unchecked,
 not current, stale or absent; full status/doctor diagnosis remains available when
 needed, not as a compulsory follow-up. No current checkpoint means ordinary work
-continues; verification failure is assigned to HEAD and pauses only
+continues; verification failure is assigned to Lode and pauses only
 recovery-dependent work. Explicit `session-restore` remains available for
 diagnostics and adapter integration.
 
 If P3 ResultPacket evidence was deleted after checkpoint creation, restore still
 returns the exact P2 direction and marks the evidence `missing-evidence`; it does
-not manufacture a Fresh HEAD review context. The caller must recover or reproduce
+not manufacture a Fresh Lode review context. The caller must recover or reproduce
 the required evidence before review.
 
 ## Read-only checkpoint diagnosis
 
-`head_checkpoint_diagnose` is the common read-only P4 diagnosis used by project
+`lode_checkpoint_diagnose` is the common read-only P4 diagnosis used by project
 readiness and conversation entry when a current pointer exists, and exposed by
 typed MCP and the advanced CLI. It reports the
 current checkpoint pointer or its absence, artifact-only restore verification,
-mechanical checkpoint-sync availability, and one bounded next HEAD action. It
+mechanical checkpoint-sync availability, and one bounded next Lode action. It
 does not write a lock, cache, checkpoint, Session pointer, approval, or Canon.
-Reading it does not invoke another provider HEAD or model assessment.
+Reading it does not invoke another provider Lode or model assessment.
 
 For a current pointer, diagnosis performs the bounded sequence
 `basis B0 -> artifact restore -> basis B1`. A normal result requires equal basis
@@ -136,21 +136,21 @@ Optional ResultPacket loss does not invalidate self-contained P2 direction, but
 review-dependent work still needs that evidence. Required artifact loss or
 integrity failure is never downgraded to optional loss, staleness, or absence.
 Artifact recovery and sync availability are separate axes: a stable pointer drift
-may make the old checkpoint unrestorable while a fresh, HEAD-authored direction
+may make the old checkpoint unrestorable while a fresh, Lode-authored direction
 is mechanically publishable. Neither fact proves semantic freshness. Equality of
 IDs, hashes, or basis bytes cannot establish that the natural-language direction
-still represents the latest user intent; only the current provider HEAD assesses
+still represents the latest user intent; only the current provider Lode assesses
 that when checkpoint work is materially relevant.
 
 ## Freshness-gated checkpoint synchronization
 
-Normal provider HEAD operation uses a read-derive-sync sequence rather than
+Normal provider Lode operation uses a read-derive-sync sequence rather than
 blindly rewriting the Session checkpoint:
 
 ```text
-head_checkpoint_basis (read-only P4 comparison)
-  -> current provider HEAD derives direction from that exact basis
-  -> head_checkpoint_sync (locked P2 publish or exact reuse)
+lode_checkpoint_basis (read-only P4 comparison)
+  -> current provider Lode derives direction from that exact basis
+  -> lode_checkpoint_sync (locked P2 publish or exact reuse)
 ```
 
 The non-persisted basis binds the exact Project and Session, current checkpoint,
@@ -180,7 +180,7 @@ second ledger entry. Concurrent identical calls converge on `created` plus
 
 Core can prove identity, lineage, transition state, and byte equivalence. It
 cannot prove that a model actually reconsidered natural-language direction.
-Provider HEAD must derive direction *after* reading the returned basis; changing
+Provider Lode must derive direction *after* reading the returned basis; changing
 only `expectedRecoveryBasisId` on an older direction violates the caller
 contract. This does not create a user confirmation step.
 
@@ -193,10 +193,10 @@ accepted-result binding remains exclusive to `run-integrate-checkpoint`.
 
 Short Observe work, conversation entry, status reads, and absent Host hooks do
 not create a first checkpoint. A trusted Host may invoke this sequence at a
-natural context-loss, handoff, or durable-Run boundary. Provider HEAD may also
+natural context-loss, handoff, or durable-Run boundary. Provider Lode may also
 use it when an existing checkpoint should reflect a user objective/constraint
 change, verified stage completion, failure/wait transition, or whole-task
-completion. HEAD first decides whether durable recovery direction materially
+completion. Lode first decides whether durable recovery direction materially
 needs publication; this is never a mandatory per-turn call. No daemon, timer,
 extra per-turn model call, or provider-session identity is required.
 
@@ -215,32 +215,32 @@ The connected flow is:
 BoundedWorkerDispatch (P3)
   -> at-most-once lease / supervised provider / bounded wait (P5)
   -> ResultPacket (P3)
-  -> deterministic Fresh HEAD review projection
+  -> deterministic Fresh Lode review projection
   -> explicit accept ReviewDecision (P1)
-  -> explicit integration input owned by HEAD/user direction
+  -> explicit integration input owned by Lode/user direction
   -> SessionRunCheckpoint (P2)
 ```
 
-`worker-dispatch` binds one registered non-HEAD role to the exact current Run
+`worker-dispatch` binds one registered non-Lode role to the exact current Run
 `ExecutionAuthorization`. The same role may retry idempotently; a competing role
 conflicts, and the authorization can be consumed only once. `worker-wait` returns
 a non-persisted operational outcome. It cannot mutate the WholePlan, supply
 recovery direction, or create a ReviewDecision. `worker-apply` accepts only a
 completed actual-provider result with verified native supervision and creates
-only the ResultPacket plus Fresh HEAD review context. Explicit review and the
+only the ResultPacket plus Fresh Lode review context. Explicit review and the
 integration transaction below remain separate.
 
 Multiple existing dispatches may be viewed through the provider-neutral wave
 contract in [`bounded-worker-wave.md`](bounded-worker-wave.md). Wave seal is
 start-evidence aggregation, not result acceptance. Wave `completed` means all
 members succeeded operationally; each member still requires its own ResultPacket,
-Fresh HEAD ReviewDecision, and explicit HF-010 checkpoint integration.
+Fresh Lode ReviewDecision, and explicit HF-010 checkpoint integration.
 
 ## P2-first optional live continuation
 
 `session-continue` always calls artifact restore before consulting a provider or
 workspace host. A trusted host-injected adapter may then fresh-verify the exact
-current HEAD attachment. Its `ContinuationOutcome` is P5 and non-persisted. It
+current Lode attachment. Its `ContinuationOutcome` is P5 and non-persisted. It
 records either `attached` or a disclosed `fresh-logical-head` fallback, keeps the
 same checkpoint and restore projection, and never reads provider summary or
 transcript. Provider session identifiers are neither canonical nor persisted.
@@ -249,13 +249,13 @@ recovery.
 
 `run-integrate-checkpoint` requires the exact reviewed Run and ReviewDecision.
 Core re-verifies the Run, ResultPacket, WholePlan, ExecutionContract,
-ContextCapsule, Fresh HEAD review identity, current Session state, and `accept`
+ContextCapsule, Fresh Lode review identity, current Session state, and `accept`
 disposition before writing anything. `revise`, `expand`, `rollback`, and
 `escalate` stay on their normal next-plan or user-direction paths and cannot be
 mislabeled as result integration.
 
 One ReviewDecision binds to at most one recovery checkpoint. A locked publication
-stores the exact reviewed lineage and explicit HEAD-authored direction in that
+stores the exact reviewed lineage and explicit Lode-authored direction in that
 checkpoint. Identical retry reuses it; different direction conflicts.
 If publication stops between ledger and Session pointer, retry completes only
 that pointer update. A later checkpoint is never rolled back by retry.
@@ -268,7 +268,7 @@ If only a verified original request remains, read returns
 `legacy_integration_pending`; integration reports
 `RUN_RESULT_LEGACY_INTEGRATION_PENDING` without writing or automatically finishing
 it. Its original input is P3 reference evidence, not restored P2 direction.
-HEAD inspects actual state and current common direction before manually carrying
+Lode inspects actual state and current common direction before manually carrying
 forward still-applicable work. No additional user approval or global ordinary-work
 block is introduced; malformed originals fail only the affected read/integration.
 ResultPacket remains reference evidence; its later absence cannot change the
@@ -279,10 +279,10 @@ checkpoint publication remain distinct meanings, not duplicate approval ceremoni
 
 Worker mutations support explicit useful managed execution when interruption
 recovery, ownership or effect tracking needs it. Use CLI `managed`, or discover
-the typed tool and call `head_tools_call` with `execution_mode: "managed"`.
+the typed tool and call `lode_tools_call` with `execution_mode: "managed"`.
 The retained `managed-maintenance` CLI/server remains a compatible entry.
 Routing preserves every original authorization, lease, lineage and effect check;
-HEAD chooses it without a new user unlock. Ordinary read/status/wait and exact
+Lode chooses it without a new user unlock. Ordinary read/status/wait and exact
 owned cancellation remain available. Recovery alone, worker count, file edits
 and ordinary Host failures do not force managed execution.
 
@@ -306,8 +306,8 @@ head run-integrate-checkpoint <project> --input <integration.json>
 head run-integration-read <project> --review <review-decision-id>
 ```
 
-Typed MCP exposes `head_checkpoint_basis`, `head_checkpoint_diagnose`,
-`head_checkpoint_sync`, continuation,
+Typed MCP exposes `lode_checkpoint_basis`, `lode_checkpoint_diagnose`,
+`lode_checkpoint_sync`, continuation,
 dispatch/status/wait/apply, restore, and explicit integration. Basis, restore,
 diagnosis, status, and wait are read-only. Checkpoint sync is idempotent and revalidates its
 exact basis under the common mutation lock. Continuation may refresh

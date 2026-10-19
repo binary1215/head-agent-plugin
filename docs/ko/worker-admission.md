@@ -116,7 +116,7 @@ Admission event와 projection에는 instruction, review, promotion, Product
 Canon, completion 또는 recovery 권위가 없습니다. Wave의 `started`는 계속
 내구성 있는 authorization consumption 또는 terminal runtime result를
 뜻하며 queue나 reservation 상태를 뜻하지 않습니다. 결과 흐름은
-`ResultPacket -> Fresh HEAD -> 명시적 ReviewDecision -> 명시적 P2 checkpoint
+`ResultPacket -> Fresh Lode -> 명시적 ReviewDecision -> 명시적 P2 checkpoint
 통합`으로 유지됩니다.
 
 이 단계에는 의도적으로 public CLI/MCP 표면을 추가하지 않습니다.

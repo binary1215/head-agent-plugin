@@ -2,6 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { publicToolName } from "./lib/lode-artifact-composition.mjs";
 import { createSessionHostAdapter } from "./lib/session-host-adapter.mjs";
 import { fitSelectedBodyGroups, workBodyTuples } from "./lib/session-work-body-organization.mjs";
 
@@ -57,12 +58,12 @@ function startupProjection(entry, root, runtime = "claude") {
       || work && !["work_context_available", "work_context_not_recorded"].includes(work.status);
     if (compactExpansion) {
       const route = "(project_root:" + rootSource + ", ...route)";
-      context.expansion = (context.requiredSourceExpansion ? "When needed: head_conversation_enter" + route : "")
-        + (omittedWork ? (context.requiredSourceExpansion ? "; " : "") + "Omitted work: head_session_work_read" + route : "");
+      context.expansion = (context.requiredSourceExpansion ? "When needed: " + publicToolName("head_conversation_enter") + route : "")
+        + (omittedWork ? (context.requiredSourceExpansion ? "; " : "") + "Omitted work: " + publicToolName("head_session_work_read") + route : "");
     } else {
-      context.expansion = "When needed, head_conversation_enter with project_root:" + rootSource
+      context.expansion = "When needed, " + publicToolName("head_conversation_enter") + " with project_root:" + rootSource
         + " and the exact route above reads originals (workContext.sessionPurpose, common direction, checkpoint).";
-      if (omittedWork) context.expansion += " Omitted work: head_session_work_read with the same root/route.";
+      if (omittedWork) context.expansion += " Omitted work: " + publicToolName("head_session_work_read") + " with the same root/route.";
     }
     return JSON.stringify(context);
   };
@@ -184,7 +185,7 @@ export function sessionStartContext({ runtime, event, environment = process.env 
   if (!["codex", "claude"].includes(runtime) || event?.hook_event_name !== "SessionStart"
     || !["startup", "resume", "clear", "compact", "fork"].includes(event.source)
     || typeof event.cwd !== "string" || typeof event.session_id !== "string") return {};
-  if (!fs.existsSync(path.join(event.cwd, ".head", "project.json"))) return {};
+  if (![".head", ".lode"].some(directory => fs.existsSync(path.join(event.cwd, directory, "project.json")))) return {};
   // Codex's per-tool parent ID is ambiguous. Never use an unexpected agent hint
   // to select/write the parent; stock tool hooks are intentionally not wired.
   if (runtime === "codex" && event.agent_id) return {};

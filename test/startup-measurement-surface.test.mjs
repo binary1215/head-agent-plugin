@@ -1,3 +1,4 @@
+import { relativeProjectArtifact } from "../scripts/lib/project-storage-format.mjs";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -5,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
-import { initializeProject } from "../scripts/lib/head-core.mjs";
+import { initializeProject, inspectProject } from "../scripts/lib/head-core.mjs";
 import { defineMetric, recordMetricObservation } from "../scripts/lib/measurement-workflow.mjs";
 import { readObservation } from "../scripts/lib/observation-store.mjs";
 import { buildWorldModel } from "../scripts/lib/world-model.mjs";
@@ -25,7 +26,8 @@ function fixture(t) {
   const parent = process.env.HEAD_AGENT_TEST_TMP || os.tmpdir(); fs.mkdirSync(parent, { recursive: true });
   const root = fs.realpathSync(fs.mkdtempSync(path.join(parent, "head-startup-measurement-surface-")));
   if (process.env.HEAD_AGENT_KEEP_TEST_TMP !== "1") t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  initializeProject({ root, pluginRoot, runtimes: ["codex", "claude"] }); return root;
+  initializeProject({ root, pluginRoot, runtimes: ["codex", "claude"] });
+  return { root, storage: inspectProject(root).storage };
 }
 function snapshot(root) {
   if (!fs.existsSync(root)) return [];
@@ -34,8 +36,8 @@ function snapshot(root) {
     return [path.relative(root, file), sha(fs.readFileSync(file)), stat.mtimeMs, stat.mode];
   }).sort(([a], [b]) => a.localeCompare(b));
 }
-function authority(root) {
-  return [".head/project.json", ".head/context/product-model.json", ".head/sessions/current.json"].map(file => {
+function authority(root, storage) {
+  return [["project.json"], ["context", "product-model.json"], ["sessions", "current.json"]].map(parts => relativeProjectArtifact(storage, ...parts)).map(file => {
     const bytes = fs.readFileSync(path.join(root, file)); return [file, sha(bytes)];
   });
 }
@@ -57,7 +59,7 @@ async function call(root, name, args, routed = false) {
 }
 
 for (const operation of ["define", "observe", "compare"]) test(`committed metric ${operation} survives CLI and MCP direct/router presentation under derived failure`, async t => {
-  const root = fixture(t); let input, id;
+  const { root, storage } = fixture(t); let input, id;
   if (operation !== "define") await defineMetric({ root, ...definition });
   else await buildWorldModel({ root, persist: true });
   if (operation === "define") { input = definition; id = result => result.descriptor.descriptorId; }
@@ -68,17 +70,17 @@ for (const operation of ["define", "observe", "compare"]) test(`committed metric
     input = { baselineObservationId: baseline.observation.observationId, currentObservationId: current.observation.observationId };
     id = result => result.comparison.derivedObservationId;
   }
-  const pointer = path.join(root, ".head/world-model/current.json"), broken = "{synthetic-broken-derived-pointer";
+  const pointer = path.join(root, relativeProjectArtifact(storage, "world-model", "current.json")), broken = "{synthetic-broken-derived-pointer";
   fs.writeFileSync(pointer, broken);
   const requestFile = path.join(root, "synthetic-input.json"); fs.writeFileSync(requestFile, JSON.stringify(input));
-  const beforeAuthority = authority(root);
+  const beforeAuthority = authority(root, storage);
   const command = `metric-${operation}`, tool = `head_metric_${operation}`;
   const cli = await runCommand([command, root, "--input", requestFile]);
   assert.equal(cli.status, "recorded"); assert.equal(cli.worldModel.status, "deferred");
   assert.equal(cli.worldModel.reasonCode, "INVALID_WORLD_MODEL_STORE_DOCUMENT");
   assert.equal(cli.ordinaryWorkBlocked, false);
   assert.deepEqual(JSON.parse(formatCliResult(command, cli)), cli);
-  const originals = snapshot(path.join(root, ".head/observations"));
+  const originals = snapshot(path.join(root, relativeProjectArtifact(storage, "observations")));
   assert.ok(originals.length > 0, "The durable original store must actually be inspected");
   for (const routed of [false, true]) {
     const result = await call(root, tool, typed(input), routed);
@@ -93,12 +95,12 @@ for (const operation of ["define", "observe", "compare"]) test(`committed metric
       assert.deepEqual(readObservation({ root, observationId: id(result) }).observation, result.comparison);
     }
   }
-  assert.deepEqual(snapshot(path.join(root, ".head/observations")), originals);
-  assert.deepEqual(authority(root), beforeAuthority); assert.equal(fs.readFileSync(pointer, "utf8"), broken);
+  assert.deepEqual(snapshot(path.join(root, relativeProjectArtifact(storage, "observations"))), originals);
+  assert.deepEqual(authority(root, storage), beforeAuthority); assert.equal(fs.readFileSync(pointer, "utf8"), broken);
 });
 
 test("healthy metric consumer retains the original two-ID World response and JSON presentation", async t => {
-  const root = fixture(t), file = path.join(root, "synthetic-input.json"); fs.writeFileSync(file, JSON.stringify(definition));
+  const { root, storage } = fixture(t), file = path.join(root, "synthetic-input.json"); fs.writeFileSync(file, JSON.stringify(definition));
   const cli = await runCommand(["metric-define", root, "--input", file]);
   const result = await call(root, "head_metric_define", typed(definition));
   assert.deepEqual(Object.keys(cli.worldModel).sort(), ["graphSnapshotId", "worldModelId"]);
@@ -108,7 +110,7 @@ test("healthy metric consumer retains the original two-ID World response and JSO
 });
 
 test("actual hook command retains no-checkpoint purpose and unavailable direction; only optional caller P5 is written", t => {
-  const root = fixture(t), operational = `${root}-host`;
+  const { root, storage } = fixture(t), operational = `${root}-host`;
   if (process.env.HEAD_AGENT_KEEP_TEST_TMP !== "1") t.after(() => fs.rmSync(operational, { recursive: true, force: true }));
   const selected = createHeadSession({ root, purpose: "Explain this synthetic issue only; no external effects" });
   // An absent synthetic registry prevents consulting the user's actual Claude registry.
@@ -116,7 +118,7 @@ test("actual hook command retains no-checkpoint purpose and unavailable directio
   const host = createSessionHostAdapter({ runtime: "claude", nativeSessionId: "synthetic-hook-caller", environment });
   assert.equal(host.select({ root, sessionId: selected.sessionId, expectedRevision: 0 }).retained, true);
   updateProjectDirection({ root, input: { goal: "Read locally", cancelledActions: ["deploy"] } });
-  fs.unlinkSync(path.join(root, ".head/project-direction/current.json"));
+  fs.unlinkSync(path.join(root, relativeProjectArtifact(storage, "project-direction", "current.json")));
   const before = snapshot(root), beforeOperational = snapshot(operational);
   const event = { hook_event_name: "SessionStart", source: "compact", session_id: "synthetic-hook-caller", cwd: root,
     prompt: "synthetic-private-prompt", last_assistant_message: "synthetic-private-response",
@@ -135,7 +137,7 @@ test("actual hook command retains no-checkpoint purpose and unavailable directio
   assert.equal(context.persisted, false); assert.equal(context.ordinaryWorkBlocked, false);
   assert.equal(context.sessionRecovery, null); assert.equal(hook.hookSpecificOutput.permissionDecision, undefined);
   assert.deepEqual(snapshot(root), before);
-  const project = JSON.parse(fs.readFileSync(path.join(root, ".head/project.json"), "utf8"));
+  const project = JSON.parse(fs.readFileSync(path.join(root, relativeProjectArtifact(storage, "project.json")), "utf8"));
   const owner = { projectId: project.projectId, rootDigest: sha(fs.realpathSync(root)),
     callerDigest: sha(JSON.stringify(["claude", "synthetic-hook-caller", null])) };
   const snapshotRelative = path.join("native-observations", sha(JSON.stringify(owner)), "snapshot.json");

@@ -1,3 +1,9 @@
+import { formatForVerifiedOwner, familyFormatForOriginal } from "./project-storage-format.mjs";
+const sessionIdOf = record => {
+  const format = familyFormatForOriginal({ sessionIdentity: true }, record);
+  return format ? record?.[format.sessionIdField] : undefined;
+};
+const originalFormat = record => familyFormatForOriginal({ kind: record?.kind }, record);
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -7,7 +13,7 @@ import path from "node:path";
 const digest = (bytes) => crypto.createHash("sha256").update(bytes).digest("hex");
 const fail = (message) => { throw Object.assign(new Error(message), { code: "INVALID_RUNTIME_OUTPUT_SPOOL" }); };
 function directoryFor(operationalRoot, authorization, create) {
-  if (!/^head-[a-f0-9]{20}$/.test(authorization.projectId || "")
+  if (!new RegExp(`^${originalFormat(authorization)?.projectPrefix || "head-"}[a-f0-9]{20}$`).test(authorization.projectId || "")
     || !/^execution-authorization-[a-f0-9]{24}$/.test(authorization.authorizationId || "")
     || !/^[a-f0-9]{64}$/.test(authorization.authorizationHash || "")) fail("Spool requires exact authorization identity.");
   const root = fs.realpathSync(operationalRoot);

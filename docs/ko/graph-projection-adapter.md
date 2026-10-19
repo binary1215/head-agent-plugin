@@ -60,8 +60,8 @@ project canon, 지시, 승격 또는 유일한 권위를 주장하는 adapter는
 기본 local adapter는 다음을 저장합니다.
 
 ```text
-.head/graph-projection/current.json
-.head/graph-projection/snapshots/graph-snapshot-*.json
+.lode/graph-projection/current.json
+.lode/graph-projection/snapshots/graph-snapshot-*.json
 ```
 
 snapshot은 불변이며 canonical JSON 기준으로 현재 World Model에 내장된 검증된 graph와 byte-semantic하게 동등합니다. pointer는 콘텐츠 주소 기반이며 project, GraphSnapshot, GraphSnapshot hash, SourceSnapshot identity와 비권위 프로젝션 flag를 기록합니다.
@@ -70,7 +70,7 @@ World Model indexing은 불변 World Model snapshot을 쓰고 검증한 뒤, gra
 
 ## Query 및 fallback 동작
 
-Temporal traversal protocol `0.2.0`은 먼저 내장된 복구 가능 GraphSnapshot에서 결정론적 reference contract를 계산합니다. lexical discovery와 exact HEAD-proposed anchor는 상호 배타적입니다. exact mode는 1~32개의 적격 node ID를 현재 GraphSnapshot에 결속하고 caller의 relation·authority·freshness·confidence·depth·node·edge·candidate policy를 확대할 수 없습니다. 현재 adapter query는 GraphSnapshot, query, result identity, ordering, bound, inclusion 및 exclusion reason을 포함해 canonical `TemporalTraversalResult`와 정확히 동일한 결과를 반환해야 합니다.
+Temporal traversal protocol `0.2.0`은 먼저 내장된 복구 가능 GraphSnapshot에서 결정론적 reference contract를 계산합니다. lexical discovery와 exact Lode-proposed anchor는 상호 배타적입니다. exact mode는 1~32개의 적격 node ID를 현재 GraphSnapshot에 결속하고 caller의 relation·authority·freshness·confidence·depth·node·edge·candidate policy를 확대할 수 없습니다. 현재 adapter query는 GraphSnapshot, query, result identity, ordering, bound, inclusion 및 exclusion reason을 포함해 canonical `TemporalTraversalResult`와 정확히 동일한 결과를 반환해야 합니다.
 
 - 현재 adapter: adapter를 통해 query하고 semantic mismatch가 하나라도 있으면 거부합니다.
 - 구체화된 adapter pointer가 없음: 내장 graph를 사용하고 `GRAPH_PROJECTION_NOT_MATERIALIZED`를 공개합니다.
@@ -85,19 +85,19 @@ reference 비교는 의도적으로 가속보다 정확성을 우선합니다. `
 Onboarding은 ArcadeDB endpoint, database, environment 방식의 username/password reference name만 유지합니다. 선택만 한 상태는 configuration pending이며 remote I/O를 활성화하지 않습니다. 참조된 environment variable을 둘 다 사용할 수 있을 때 활성화는 명시적으로 수행됩니다.
 
 ```powershell
-node scripts/head.mjs world-graph-remote-database-status C:\path\to\project
-node scripts/head.mjs world-graph-remote-database-initialize C:\path\to\project
-node scripts/head.mjs world-graph-remote-activate C:\path\to\project
-node scripts/head.mjs world-graph-remote-status C:\path\to\project
+node scripts/lode.mjs world-graph-remote-database-status C:\path\to\project
+node scripts/lode.mjs world-graph-remote-database-initialize C:\path\to\project
+node scripts/lode.mjs world-graph-remote-activate C:\path\to\project
+node scripts/lode.mjs world-graph-remote-status C:\path\to\project
 ```
 
-Database status는 읽기 전용이며 endpoint·database name·credential value·record identity 없는 콘텐츠 기반 호환성 감사를 보고합니다. Initialization은 선택한 database가 없을 때 생성합니다. 무관한 기존 type은 activation을 차단하지 않으며 reset 사유도 아닙니다. 아홉 개의 `HeadAgentGraph*` 예약 type에 대해 kind·property·정확한 UNIQUE 키·관련 쓰기 제약을 확인하고, 관찰한 키와 제약을 감사 해시에 결속합니다. 누락된 type/property/index는 호환 가능한 부분 schema이지 activation 준비 완료 증거가 아닙니다. metadata를 확인할 수 없으면 미검증 상태이며 reset을 허용하지 않습니다. 예약 계약의 실제 비호환성이 입증돼도 전체 database reset은 `--reset-incompatible true`와 정확한 `--confirm-database`가 모두 있어야 가능합니다. 읽기 전용 조사와 비파괴적 수정도 대안입니다. Reset은 mutable pointer를 무효화하되 불변 영수증과 local graph mirror는 보존합니다. Activation은 graph 쓰기 전에 구축된 예약 schema를 검증합니다. 범용 migration이나 전체 버전 gate가 아닙니다.
+Database status는 읽기 전용이며 endpoint·database name·credential value·record identity 없는 콘텐츠 기반 호환성 감사를 보고합니다. Initialization은 선택한 database가 없을 때 생성합니다. 무관한 기존 type은 activation을 차단하지 않으며 reset 사유도 아닙니다. 아홉 개의 `LodeAgentGraph*` 예약 type에 대해 kind·property·정확한 UNIQUE 키·관련 쓰기 제약을 확인하고, 관찰한 키와 제약을 감사 해시에 결속합니다. 누락된 type/property/index는 호환 가능한 부분 schema이지 activation 준비 완료 증거가 아닙니다. metadata를 확인할 수 없으면 미검증 상태이며 reset을 허용하지 않습니다. 예약 계약의 실제 비호환성이 입증돼도 전체 database reset은 `--reset-incompatible true`와 정확한 `--confirm-database`가 모두 있어야 가능합니다. 읽기 전용 조사와 비파괴적 수정도 대안입니다. Reset은 mutable pointer를 무효화하되 불변 영수증과 local graph mirror는 보존합니다. Activation은 graph 쓰기 전에 구축된 예약 schema를 검증합니다. 범용 migration이나 전체 버전 gate가 아닙니다.
 
 Activation은 projection·topology·sync schema를 구축하고 현재 graph와 target을 비교해 콘텐츠 주소 기반 delta manifest를 씁니다. batch 기본 상한은 50개이며 최대 200개입니다. 정확한 record는 semantic identity를, snapshot-only 변경은 compact rebase record를, 새 내용이나 변경 내용은 전체 canonical JSON을 사용합니다. 매 호출은 checkpoint 유무와 관계없이 실제 batch 내용을 먼저 읽습니다. 정확히 일치하면 batch를 다시 쓰지 않고, 다른 내용은 conflict로 보존하며, 부분 반영이나 확인 불가는 unknown으로 남깁니다. checkpoint 부재는 미실행 증거가 아닙니다. 새 batch는 node UPSERT가 아닌 생성 전용 record와 필수 UNIQUE 키를 사용하므로 경쟁 insert를 덮어쓰지 않습니다. 응답 유실은 정확한 재조회로 대조하며 batch/SQL을 무조건 재시도하지 않습니다. 다른 transport도 이 adapter 보장을 지켜야 합니다.
 
 최초 읽기의 header/body 통신 실패는 null 결과를 포함한 원격 관찰 이전에만 정확히 검증된 local mirror로 대체할 수 있습니다. 인증·잘못된 JSON·빈 성공 query 응답·무결성 오류·용량 제한은 이 fallback 대상이 아닙니다. JS와 Go 읽기 bridge는 모두 빈 성공 body를 거부합니다. 쓰기 응답 유실은 이미 반영됐을 수 있으므로 정확한 재조회로 입증하기 전까지 unknown입니다. local fallback이나 읽기 실패는 쓰기 재실행 권한이 아닙니다. 이는 운영 경계이지 Core-only 작업에 추가하는 gate가 아닙니다. 로컬 fixture 통과를 실제 ArcadeDB 정합성 검증으로 해석하지 않습니다.
 
-모든 batch가 완료되면 activation은 전체 graph JSON을 remote에 중복 저장하는 대신 완전한 topology와 작은 topology-backed GraphSnapshot envelope를 쓰고 검증합니다. Baseline adapter equivalence와 prepared server-traversal conformance는 staged target pointer를 사용하므로 어느 pass도 candidate를 current로 만들 수 없습니다. 두 pass와 local recovery snapshot이 모두 성공한 뒤에만 단일 conditional pointer update가 기존 pointer를 정확히 관찰된 predecessor에서 전진시킵니다. 초기 pointer는 project-unique index를 compare-and-insert fence로 사용합니다. 결과는 다시 읽히며, predecessor가 다르면 fail closed하고, 동일한 target이 이미 설치된 경우 멱등적으로 수락합니다. 그런 다음 local pointer가 이를 원자적으로 mirror합니다. `.head/graph-projection/arcadedb/sync/receipts`는 manifest, checkpoint set, prior/final pointer, 전체 snapshot/topology verification, local recovery 및 atomic transition을 결속하는 콘텐츠 기반 receipt를 기록합니다. Credential value, endpoint, target name, server record identity, timing은 계속 제외됩니다.
+모든 batch가 완료되면 activation은 전체 graph JSON을 remote에 중복 저장하는 대신 완전한 topology와 작은 topology-backed GraphSnapshot envelope를 쓰고 검증합니다. Baseline adapter equivalence와 prepared server-traversal conformance는 staged target pointer를 사용하므로 어느 pass도 candidate를 current로 만들 수 없습니다. 두 pass와 local recovery snapshot이 모두 성공한 뒤에만 단일 conditional pointer update가 기존 pointer를 정확히 관찰된 predecessor에서 전진시킵니다. 초기 pointer는 project-unique index를 compare-and-insert fence로 사용합니다. 결과는 다시 읽히며, predecessor가 다르면 fail closed하고, 동일한 target이 이미 설치된 경우 멱등적으로 수락합니다. 그런 다음 local pointer가 이를 원자적으로 mirror합니다. `.lode/graph-projection/arcadedb/sync/receipts`는 manifest, checkpoint set, prior/final pointer, 전체 snapshot/topology verification, local recovery 및 atomic transition을 결속하는 콘텐츠 기반 receipt를 기록합니다. Credential value, endpoint, target name, server record identity, timing은 계속 제외됩니다.
 
 local canonical GraphSnapshot은 독립적인 recovery source로 유지됩니다. remote topology-backed envelope는 snapshot 범위의 vertex와 edge로부터 정확히 그 graph를 재구성하며 count, set-digest, topology, byte-length 또는 full-content mismatch를 거부합니다. 모든 vertex는 정확한 semantic node JSON을 저장하고 모든 edge는 정확한 semantic edge JSON을 저장하는 반면, ArcadeDB record ID는 operational detail로 남습니다. topology manifest는 project, GraphSnapshot, SourceSnapshot, 정렬된 node 및 edge set digest, count, non-authority flag를 콘텐츠 기반 identity에 결속합니다. Unique index는 vertex와 edge를 `(projectId, graphSnapshotId, semanticId)`에 결속하지만 해당 database index를 semantic identity로 만들지는 않습니다.
 
@@ -147,8 +147,8 @@ activation 후 기본 adapter는 성공한 모든 remote snapshot과 pointer를 
 - `world-graph-status`: projection state를 읽고 검증합니다.
 - `world-graph-remote-activate` 및 `world-graph-remote-status`: 명시적인 activation 및 read-only remote status입니다.
 - `world-graph-remote-database-status` 및 `world-graph-remote-database-initialize`: read-only compatibility audit 및 명시적인 exact-target provisioning/reset boundary입니다.
-- `head_graph_projection_status`: read-only MCP equivalent입니다.
-- `head_graphdb_projection_status` 및 `head_graphdb_database_status`: read-only MCP activation 및 compatibility status equivalent입니다.
+- `lode_graph_projection_status`: read-only MCP equivalent입니다.
+- `lode_graphdb_projection_status` 및 `lode_graphdb_database_status`: read-only MCP activation 및 compatibility status equivalent입니다.
 - `world-temporal`, MCP temporal traversal, Context Compiler temporal expansion은 result identity를 보존하면서 adapter boundary를 사용합니다.
 - 별도의 [`DocumentProjectionAdapter`](document-projection-adapter.md)는 graph identity를 변경하지 않고 결정론적 Markdown 생성을 위해 검증된 GraphSnapshot을 사용합니다.
 
@@ -164,4 +164,4 @@ activation 후 기본 adapter는 성공한 모든 remote snapshot과 pointer를 
 
 자동화된 test는 in-memory transport를 사용하며 user GraphDB를 요구하거나 변경하지 않습니다. Database initialization과 graph activation은 명시적인 remote mutation surface 두 가지뿐이며, 어느 쪽도 credential value를 argument로 받지 않습니다.
 
-선택적인 ArcadeDB native read bridge는 Go computation worker가 아니라 별도의 exact child입니다. `HEAD_AGENT_ARCADEDB_NATIVE_MODE=auto|off|required`는 runtime availability policy를 선택합니다. native capability가 없을 때 JavaScript reference exact child를 사용할 수 있는 것은 `auto`뿐이며, 선택된 binary 또는 manifest의 integrity drift는 모든 mode에서 fail closed합니다. 두 exact child 모두 구성된 username/password reference value와 범위가 제한된 operational environment만 받습니다. Go bridge는 redirect를 거부하고, 전체 batch에 하나의 deadline과 하나의 aggregate wire budget을 적용하며, ArcadeDB query endpoint에서 SELECT query만 노출합니다. Parent-side canonical graph 및 receipt validation은 변경되지 않습니다.
+선택적인 ArcadeDB native read bridge는 Go computation worker가 아니라 별도의 exact child입니다. `LODE_AGENT_ARCADEDB_NATIVE_MODE=auto|off|required`는 runtime availability policy를 선택합니다. native capability가 없을 때 JavaScript reference exact child를 사용할 수 있는 것은 `auto`뿐이며, 선택된 binary 또는 manifest의 integrity drift는 모든 mode에서 fail closed합니다. 두 exact child 모두 구성된 username/password reference value와 범위가 제한된 operational environment만 받습니다. Go bridge는 redirect를 거부하고, 전체 batch에 하나의 deadline과 하나의 aggregate wire budget을 적용하며, ArcadeDB query endpoint에서 SELECT query만 노출합니다. Parent-side canonical graph 및 receipt validation은 변경되지 않습니다.

@@ -99,7 +99,7 @@ for (const [runtime, limit] of [["codex", 32768], ["claude", 10000]]) {
       const input = empty(); input.workContext.status = status; input.workContext.reasonCode = "SYNTHETIC_UNAVAILABLE";
       const text = format(input, pluginRoot, runtime), value = JSON.parse(text);
       assert.equal(value.workCoverage.status, status); assert.equal(value.workCoverage.reasonCode, "SYNTHETIC_UNAVAILABLE");
-      assert.match(value.expansion, /head_session_work_read/); assert.equal(value.ordinaryWorkBlocked, false);
+      assert.match(value.expansion, /lode_session_work_read/); assert.equal(value.ordinaryWorkBlocked, false);
       assert.ok(text.length <= limit);
     }
   });

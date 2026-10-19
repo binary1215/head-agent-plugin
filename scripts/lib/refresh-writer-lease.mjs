@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { withProjectMutation } from "./project-mutation-lock.mjs";
+import { formatForVerifiedOwner, familyFormatForOriginal } from "./project-storage-format.mjs";
 
 export const REFRESH_WRITER_LEASE_VERSION = "0.1.0";
 
@@ -17,27 +18,28 @@ const HOST = crypto.createHash("sha256").update(os.hostname()).digest("hex").sli
 const PUBLICATION_DELAYS_MS = [10, 20, 40, 80];
 const pause = new Int32Array(new SharedArrayBuffer(4));
 
-function leaseDirectory(projectRoot) {
-  return path.join(path.resolve(projectRoot), ".head", "refresh", "writer.lock");
+function leaseDirectory(projectRoot, storage = null) {
+  return path.join(path.resolve(projectRoot), formatForVerifiedOwner(storage).directory, "refresh", "writer.lock");
 }
 
-function ownerFile(projectRoot) {
-  return path.join(leaseDirectory(projectRoot), "owner.json");
+function ownerFile(projectRoot, storage = null) {
+  return path.join(leaseDirectory(projectRoot, storage), "owner.json");
 }
 
-function readOwner(projectRoot) {
-  const file = ownerFile(projectRoot);
+function readOwner(projectRoot, storage = null) {
+  const file = ownerFile(projectRoot, storage);
   if (!fs.existsSync(file)) return null;
   try { return JSON.parse(fs.readFileSync(file, "utf8")); }
   catch (error) { fail(`Refresh writer lease owner is invalid JSON: ${error.message}`, "INVALID_REFRESH_WRITER_LEASE"); }
 }
 
-function verifyOwner(owner, { projectId = "", token = "" } = {}) {
+function verifyOwner(owner, { projectId = "", token = "", storage = null } = {}) {
+  const format = familyFormatForOriginal("head-agent-core-refresh-writer-lease", owner, storage);
   if (!owner || typeof owner !== "object" || Array.isArray(owner)
     || owner.schemaVersion !== 1 || owner.kind !== "RefreshWriterLease"
-    || owner.protocol?.name !== "head-agent-core-refresh-writer-lease"
+    || !format
     || owner.protocol?.version !== REFRESH_WRITER_LEASE_VERSION
-    || typeof owner.projectId !== "string" || !/^head-[a-f0-9]{20}$/.test(owner.projectId)
+    || typeof owner.projectId !== "string" || !new RegExp(`^${format.projectPrefix}[a-f0-9]{20}$`).test(owner.projectId)
     || !Number.isInteger(owner.pid) || owner.pid <= 0
     || typeof owner.token !== "string" || !/^[a-f0-9]{32}$/.test(owner.token)
     || typeof owner.startedAt !== "string" || Number.isNaN(Date.parse(owner.startedAt))
@@ -112,12 +114,12 @@ function publishOwnedDirectory(staging, directory, expectedBytes) {
   }
 }
 
-function removeOwnedDirectory(projectRoot, owner) {
-  const directory = leaseDirectory(projectRoot);
-  const file = ownerFile(projectRoot);
+function removeOwnedDirectory(projectRoot, owner, storage = null) {
+  const directory = leaseDirectory(projectRoot, storage);
+  const file = ownerFile(projectRoot, storage);
   const stat = fs.lstatSync(directory);
   if (!stat.isDirectory() || stat.isSymbolicLink()) fail("Refresh writer lease path is not a safe directory.", "UNSAFE_REFRESH_WRITER_LEASE");
-  const stored = verifyOwner(readOwner(projectRoot), { projectId: owner.projectId, token: owner.token });
+  const stored = verifyOwner(readOwner(projectRoot, storage), { projectId: owner.projectId, token: owner.token, storage });
   if (stored.pid !== owner.pid) fail("Refresh writer lease PID changed before release.", "REFRESH_WRITER_LEASE_TOKEN_MISMATCH");
   const entries = fs.readdirSync(directory).sort();
   if (entries.length !== 1 || entries[0] !== "owner.json") fail("Refresh writer lease contains unexpected files.", "UNSAFE_REFRESH_WRITER_LEASE");
@@ -125,8 +127,8 @@ function removeOwnedDirectory(projectRoot, owner) {
   fs.rmdirSync(directory);
 }
 
-function recoverDeadOwner(projectRoot, projectId) {
-  const directory = leaseDirectory(projectRoot);
+function recoverDeadOwner(projectRoot, projectId, storage = null) {
+  const directory = leaseDirectory(projectRoot, storage);
   if (!fs.existsSync(directory)) return false;
   const stat = fs.lstatSync(directory);
   if (!stat.isDirectory() || stat.isSymbolicLink()) fail("Refresh writer lease path is not a safe directory.", "UNSAFE_REFRESH_WRITER_LEASE");
@@ -137,18 +139,19 @@ function recoverDeadOwner(projectRoot, projectId) {
     fs.rmdirSync(directory);
     return true;
   }
-  const owner = verifyOwner(readOwner(projectRoot), { projectId });
+  const owner = verifyOwner(readOwner(projectRoot, storage), { projectId, storage });
   if (owner.hostIdentity !== HOST) fail("Refresh writer owner is from another or unverified Host.", "REFRESH_WRITER_BUSY");
   const state = processState(owner.pid);
   if (state !== "absent") {
     fail(`Refresh writer is already active or cannot be proven absent (pid ${owner.pid}).`, "REFRESH_WRITER_BUSY");
   }
-  removeOwnedDirectory(projectRoot, owner);
+  removeOwnedDirectory(projectRoot, owner, storage);
   return true;
 }
 
-function acquire({ projectRoot, projectId }) {
-  const directory = leaseDirectory(projectRoot);
+function acquire({ projectRoot, projectId, storage = null }) {
+  const format = formatForVerifiedOwner(storage);
+  const directory = leaseDirectory(projectRoot, storage);
   fs.mkdirSync(path.dirname(directory), { recursive: true });
   for (const name of fs.readdirSync(path.dirname(directory))) {
     const match = /^writer\.lock\.([a-f0-9]{16})\.([1-9][0-9]*)\.([a-f0-9]{32})\.staging$/.exec(name);
@@ -171,7 +174,7 @@ function acquire({ projectRoot, projectId }) {
       const owner = {
         schemaVersion: 1,
         kind: "RefreshWriterLease",
-        protocol: { name: "head-agent-core-refresh-writer-lease", version: REFRESH_WRITER_LEASE_VERSION },
+        protocol: { name: format.protocol("head-agent-core-refresh-writer-lease"), version: REFRESH_WRITER_LEASE_VERSION },
         projectId,
         pid: process.pid,
         hostIdentity: HOST,
@@ -206,39 +209,39 @@ function acquire({ projectRoot, projectId }) {
       }
     } catch (error) {
       if (error?.code !== "EEXIST" || error.cleanupFailure) throw error;
-      if (attempt === 0 && recoverDeadOwner(projectRoot, projectId)) continue;
+      if (attempt === 0 && recoverDeadOwner(projectRoot, projectId, storage)) continue;
       fail("Refresh writer is already active.", "REFRESH_WRITER_BUSY");
     }
   }
   fail("Refresh writer lease could not be acquired.", "REFRESH_WRITER_BUSY");
 }
 
-export function verifyRefreshWriterLease({ projectRoot, projectId, lease }) {
-  const owner = verifyOwner(lease, { projectId, token: lease?.token || "" });
+export function verifyRefreshWriterLease({ projectRoot, projectId, lease, storage = null }) {
+  const owner = verifyOwner(lease, { projectId, token: lease?.token || "", storage });
   if (owner.pid !== process.pid) fail("Refresh writer lease is not owned by this process.", "REFRESH_WRITER_LEASE_NOT_OWNED");
-  const stored = verifyOwner(readOwner(projectRoot), { projectId, token: owner.token });
+  const stored = verifyOwner(readOwner(projectRoot, storage), { projectId, token: owner.token, storage });
   if (stored.pid !== owner.pid) fail("Refresh writer lease PID does not match its stored owner.", "REFRESH_WRITER_LEASE_NOT_OWNED");
   return lease;
 }
 
-export async function withRefreshWriterLease({ projectRoot, projectId, lease = null }, operation) {
+export async function withRefreshWriterLease({ projectRoot, projectId, lease = null, storage = null }, operation) {
   if (typeof operation !== "function") fail("Refresh writer lease requires an operation.", "INVALID_REFRESH_WRITER_LEASE_OPERATION");
   if (lease) {
-    verifyRefreshWriterLease({ projectRoot, projectId, lease });
+    verifyRefreshWriterLease({ projectRoot, projectId, lease, storage });
     return operation(lease);
   }
-  const acquired = withProjectMutation({ root: projectRoot, scope: "refresh-lock-management" }, () => acquire({ projectRoot, projectId }));
+  const acquired = withProjectMutation({ root: projectRoot, storage, scope: "refresh-lock-management" }, () => acquire({ projectRoot, projectId, storage }));
   try {
     return await operation(acquired);
   } finally {
-    withProjectMutation({ root: projectRoot, scope: "refresh-lock-management" }, () => removeOwnedDirectory(projectRoot, acquired));
+    withProjectMutation({ root: projectRoot, storage, scope: "refresh-lock-management" }, () => removeOwnedDirectory(projectRoot, acquired, storage));
   }
 }
 
-export function inspectRefreshWriterLease({ projectRoot, projectId }) {
-  const directory = leaseDirectory(projectRoot);
+export function inspectRefreshWriterLease({ projectRoot, projectId, storage = null }) {
+  const directory = leaseDirectory(projectRoot, storage);
   if (!fs.existsSync(directory)) return { status: "idle", leaseDirectory: directory };
-  const owner = verifyOwner(readOwner(projectRoot), { projectId });
+  const owner = verifyOwner(readOwner(projectRoot, storage), { projectId, storage });
   return {
     status: processState(owner.pid) === "alive" ? "active" : "stale-or-unknown",
     leaseDirectory: directory,

@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { initializeProject, inspectProject } from "../scripts/lib/head-core.mjs";
+import { initializeProject, inspectProject } from "../scripts/lib/lode-core.mjs";
 import { compileContext } from "../scripts/lib/context-compiler.mjs";
 import { createExecutionContract, createWholePlanSnapshot } from "../scripts/lib/execution-lineage.mjs";
 import { finishRun, getPendingReviewContext, reviewRun, startRun } from "../scripts/lib/run-lineage.mjs";
@@ -42,7 +42,7 @@ function syntheticCapabilitySpawn(_command, args) {
 }
 
 async function fixture(t, { scopeKind = "run", worker = false } = {}) {
-  const parent = path.resolve(process.env.HEAD_AGENT_TEST_TMP || os.tmpdir());
+  const parent = path.resolve(process.env.LODE_AGENT_TEST_TMP || process.env.HEAD_AGENT_TEST_TMP || os.tmpdir());
   fs.mkdirSync(parent, { recursive: true });
   const container = fs.mkdtempSync(path.join(parent, "head-current-lineage-"));
   t.after(() => {
@@ -55,6 +55,10 @@ async function fixture(t, { scopeKind = "run", worker = false } = {}) {
   fs.mkdirSync(root);
   fs.mkdirSync(bin);
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const storage = inspectProject(root).storage;
+  assert.equal(storage.directory, ".lode");
+  assert.equal(fs.existsSync(path.resolve(root, ".lode/project.json")), true);
+  assert.equal(fs.existsSync(path.resolve(root, ".head/project.json")), false);
   fs.writeFileSync(path.join(root, "selected.txt"), "selected initial bytes\n");
   const capsule = compileContext({ root, task: "Verify exact synthetic current execution lineage", persist: true }).capsule;
   const plan = createWholePlanSnapshot({ root, objective: "Keep exact execution lineage", plan: [{ id: "check", outcome: "Verify current binding" }] }).artifact;
@@ -71,7 +75,7 @@ async function fixture(t, { scopeKind = "run", worker = false } = {}) {
   const versionEvidence = await buildRuntimeVersionEvidence({ runtimes: ["codex"], environment, spawnImplementation: syntheticCapabilitySpawn });
   const protocolEvidence = await buildRuntimeProtocolEvidence({ runtimes: ["codex"], environment, versionEvidence, spawnImplementation: syntheticCapabilitySpawn });
   const inspected = inspectProject(root);
-  const projectBinding = buildRuntimeProjectBinding({ projectId: inspected.project.projectId,
+  const projectBinding = buildRuntimeProjectBinding({ storage, projectId: inspected.project.projectId,
     headSessionId: inspected.state.sessionId, projectRoot: root, projectStatus: "ready", versionEvidence, protocolEvidence });
   const sessionRequest = "Read only the selected synthetic source";
   const options = { root, runtime: "codex", protocolEvidence, projectBinding,
@@ -80,9 +84,9 @@ async function fixture(t, { scopeKind = "run", worker = false } = {}) {
       selectedContext: "No model or provider invoked", sourcePaths: ["selected.txt"] } } : {}) };
   const authorization = buildRuntimeInvocationAuthorization(options).authorization;
   const input = { root, authorization, ...(scopeKind === "session" ? { sessionRequest } : {}) };
-  const sessionFile = path.join(root, ".head/sessions/current.json");
-  const runFile = run ? path.join(root, ".head/sessions/runs", run.runId, "run.json") : null;
-  return { root, plan, capsule, contract, contractOptions, run, options, authorization, input, sessionFile, runFile };
+  const sessionFile = path.join(root, storage.directory, "sessions/current.json");
+  const runFile = run ? path.join(root, storage.directory, "sessions/runs", run.runId, "run.json") : null;
+  return { storage, root, plan, capsule, contract, contractOptions, run, options, authorization, input, sessionFile, runFile };
 }
 
 function snapshot(root) {
@@ -199,7 +203,7 @@ test("real frozen finish prevents new execution but the exact finish retry still
   assert.equal(frozen.status, "awaiting_review");
   assert.equal(frozen.sessionTransition.kind, "finish");
   assert.equal(frozen.sessionTransition.artifactId, frozen.resultPacketId);
-  assert.equal(fs.existsSync(path.join(f.root, ".head/lineage/result-packets", `${frozen.resultPacketId}.json`)), false,
+  assert.equal(fs.existsSync(path.join(f.root, f.storage.directory, "lineage/result-packets", `${frozen.resultPacketId}.json`)), false,
     "the frozen final Run was published before the result artifact");
   assert.deepEqual(fs.readFileSync(f.sessionFile), sessionBeforeFinish);
   assert.equal(inspectProject(f.root).state.activeRunId, f.run.runId);

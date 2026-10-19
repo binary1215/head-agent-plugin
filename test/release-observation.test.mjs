@@ -7,19 +7,20 @@ import { spawnSync } from "node:child_process";
 import { syncBuiltinESMExports } from "node:module";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { initializeProject, inspectProject } from "../scripts/lib/head-core.mjs";
+import { initializeProject, inspectProject } from "../scripts/lib/lode-core.mjs";
 import { inspectReleaseObservations, observeReleaseState, loadReleaseObservationProjection } from "../scripts/lib/release-observation.mjs";
 import { buildWorldModel, inspectWorldModel, inspectWorldDomainFreshness } from "../scripts/lib/world-model.mjs";
 import { dispatch as dispatchMcp } from "../scripts/mcp-server.mjs";
-import { runCommand } from "../scripts/head.mjs";
+import { runCommand } from "../scripts/lode.mjs";
 import { buildTemporalProvenanceGraph, verifyTemporalProvenanceGraph } from "../scripts/lib/temporal-provenance.mjs";
 import { ConformanceTriggerRegistry } from "../scripts/lib/conformance-trigger-adapter.mjs";
 import { queryProjectGraph } from "../scripts/lib/project-graph.mjs";
 import { createWholePlanSnapshot } from "../scripts/lib/execution-lineage.mjs";
 import { verifyChangeSet, verifyVcsEvidence } from "../scripts/lib/change-set-projection.mjs";
+import { formatForVerifiedOwner } from "../scripts/lib/project-storage-format.mjs";
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const testParent = process.env.HEAD_AGENT_TEST_TMP || os.tmpdir();
+const testParent = process.env.LODE_AGENT_TEST_TMP || process.env.HEAD_AGENT_TEST_TMP || os.tmpdir();
 const sha = (value) => crypto.createHash("sha256").update(value).digest("hex");
 const canonical = (value) => Array.isArray(value) ? value.map(canonical) : value && typeof value === "object" ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])])) : value;
 
@@ -39,6 +40,7 @@ function fixture() {
   fs.mkdirSync(testParent, { recursive: true });
   const root = fs.mkdtempSync(path.join(testParent, "head-agent-release-observation-"));
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const storage = inspectProject(root).storage, layout = formatForVerifiedOwner(storage);
   fs.mkdirSync(path.join(root, "src"), { recursive: true });
   fs.writeFileSync(path.join(root, "src", "feature.mjs"), "export const releaseObservation = true;\n");
   git(root, ["init"]);
@@ -46,7 +48,7 @@ function fixture() {
   git(root, ["config", "user.email", "head@example.invalid"]);
   git(root, ["add", "."]);
   git(root, ["commit", "-m", "initial release observation fixture"]);
-  return root;
+  return { root, storage, layout };
 }
 
 async function cleanupFixture(root) {
@@ -77,16 +79,17 @@ function identified(payload, prefix, idField, hashField) {
 // Synthetic stored evidence, not a Product review or a required ordinary-work flow.
 function storedPair(root, commitObservation) {
   const inspected = inspectProject(root);
+  const layout = formatForVerifiedOwner(inspected.storage);
   const changePayload = { changeKind: "modified", entityKind: "File", logicalEntityId: "synthetic-file", beforeRevisionId: "before", afterRevisionId: "after" };
   const change = { ...changePayload, changeId: `change-record-${sha(JSON.stringify(canonical(changePayload))).slice(0, 24)}` };
-  const changeSet = identified({ schemaVersion: 1, kind: "ChangeSet", protocol: { name: "head-agent-core-change-set", version: "0.2.0" },
+  const changeSet = identified({ schemaVersion: 1, kind: "ChangeSet", protocol: { name: layout.protocol("head-agent-core-change-set"), version: "0.2.0" },
     projectId: inspected.project.projectId, sessionId: inspected.state.sessionId, resultPacketId: `result-packet-${"1".repeat(24)}`,
     reviewDecisionId: `review-decision-${"2".repeat(24)}`, reviewDisposition: "accept", authority: "reviewed-execution-change-lineage",
     instructionAuthority: false, promotionAuthority: false, changes: [change], parentChangeSetIds: [],
     before: { graphSnapshotId: `graph-snapshot-${"3".repeat(24)}`, sourceSnapshotId: `source-snapshot-${"4".repeat(24)}` },
     after: { graphSnapshotId: `graph-snapshot-${"5".repeat(24)}`, sourceSnapshotId: `source-snapshot-${"6".repeat(24)}` },
   }, "change-set", "changeSetId", "changeSetHash");
-  const vcs = identified({ schemaVersion: 1, kind: "VcsEvidence", protocol: { name: "head-agent-core-vcs-evidence", version: "0.1.0" },
+  const vcs = identified({ schemaVersion: 1, kind: "VcsEvidence", protocol: { name: layout.protocol("head-agent-core-vcs-evidence"), version: "0.1.0" },
     projectId: inspected.project.projectId, sessionId: inspected.state.sessionId, changeSetId: changeSet.changeSetId, changeSetHash: changeSet.changeSetHash,
     vcsKind: "git", attachmentMethod: "explicit-commit-selection", rationale: "Synthetic explicit commit evidence.",
     gitHistory: { historyId: `git-history-${"7".repeat(24)}`, historyHash: "8".repeat(64), coverage: "all-reachable-commits" },
@@ -95,7 +98,7 @@ function storedPair(root, commitObservation) {
   }, "vcs-evidence", "vcsEvidenceId", "vcsEvidenceHash");
   verifyChangeSet(changeSet, inspected.project.projectId); verifyVcsEvidence(vcs, changeSet, inspected.project.projectId);
   for (const [directory, id, document] of [["records", changeSet.changeSetId, changeSet], ["vcs-evidence", vcs.vcsEvidenceId, vcs]]) {
-    const dir = path.join(root, ".head/change-sets", directory); fs.mkdirSync(dir, { recursive: true });
+    const dir = path.join(root, layout.directory, "change-sets", directory); fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, `${id}.json`), `${JSON.stringify(document, null, 2)}\n`);
   }
   return { changeSetId: changeSet.changeSetId, vcsEvidenceId: vcs.vcsEvidenceId };
@@ -139,11 +142,11 @@ async function withoutWrites(root, action) {
 }
 
 test("records Git refs and an approved successful deployment as P3 release evidence without authority amplification", async (t) => {
-  const root = fixture();
+  const { root, layout } = fixture();
   t.after(() => cleanupFixture(root));
   const commit = git(root, ["rev-parse", "HEAD"]);
-  const productCanonFile = path.join(root, ".head", "context", "product-model.json");
-  const sessionPointerFile = path.join(root, ".head", "sessions", "current.json");
+  const productCanonFile = path.join(root, layout.directory, "context", "product-model.json");
+  const sessionPointerFile = path.join(root, layout.directory, "sessions", "current.json");
   const canonBefore = fs.readFileSync(productCanonFile, "utf8");
   const sessionBefore = fs.readFileSync(sessionPointerFile, "utf8");
 
@@ -179,7 +182,7 @@ test("records Git refs and an approved successful deployment as P3 release evide
 });
 
 test("fails closed for unapproved, failed, stale-ref, and divergent deployment results", async (t) => {
-  const root = fixture();
+  const { root } = fixture();
   t.after(() => cleanupFixture(root));
   const firstCommit = git(root, ["rev-parse", "HEAD"]);
   fs.appendFileSync(path.join(root, "src", "feature.mjs"), "export const second = true;\n");
@@ -211,7 +214,7 @@ test("fails closed for unapproved, failed, stale-ref, and divergent deployment r
 });
 
 test("release writer retains the optional current-source readers and durable prefixes on late failure", async (t) => {
-  const root = fixture(); t.after(() => cleanupFixture(root));
+  const { root } = fixture(); t.after(() => cleanupFixture(root));
   const commit = git(root, ["rev-parse", "HEAD"]);
   const first = await observeReleaseState({ root, input: deployment(commit, "pair-seed") });
   const pair = storedPair(root, first.branchStates[0].commitObservation);
@@ -233,14 +236,14 @@ test("release writer retains the optional current-source readers and durable pre
 });
 
 test("after-World failure propagates its exact error after all three release records without a final describe", async (t) => {
-  const root = fixture(); t.after(() => cleanupFixture(root));
+  const { root, layout } = fixture(); t.after(() => cleanupFixture(root));
   const input = deployment(git(root, ["rev-parse", "HEAD"]), "after-world-failure");
   const sentinel = Object.assign(new Error("Synthetic after-World release read failure."), { code: "TEST_AFTER_WORLD" });
   const original = fs.readFileSync;
   let describes = 0, reads = 0, caught;
   const adapter = { adapterVersion: "0.1.0", describe() { describes++; return { authority: "observed-evidence-only", providerNeutral: true, persistsProviderIdentity: false }; }, readResult() { reads++; return input; } };
   fs.readFileSync = (file, ...args) => {
-    if (typeof file === "string" && file.startsWith(path.join(root, ".head/release-observations/releases")) && file.endsWith(".json")) throw sentinel;
+    if (typeof file === "string" && file.startsWith(path.join(root, layout.directory, "release-observations/releases")) && file.endsWith(".json")) throw sentinel;
     return original(file, ...args);
   };
   try { await observeReleaseState({ root, adapter }); }
@@ -252,15 +255,15 @@ test("after-World failure propagates its exact error after all three release rec
 });
 
 test("stored releases reach World, temporal, exact Conformance and lazy Project Graph consumers without management writes", async (t) => {
-  const root = fixture(); t.after(() => cleanupFixture(root));
+  const { root, storage, layout } = fixture(); t.after(() => cleanupFixture(root));
   const observed = await observeReleaseState({ root, input: deployment(git(root, ["rev-parse", "HEAD"]), "consumers") });
   const projectId = inspectProject(root).project.projectId;
-  const projection = loadReleaseObservationProjection({ projectRoot: root, projectId });
+  const projection = loadReleaseObservationProjection({ projectRoot: root, projectId, storage });
   const plan = createWholePlanSnapshot({ root, objective: "Independent ordinary work", plan: ["Read the synthetic source"] }).artifact;
   await withoutWrites(root, async () => {
     const world = await buildWorldModel({ root, persist: false });
     assert.ok(world.snapshot.temporalProvenanceGraph.nodes.some(node => node.nodeId === observed.release.releaseObservationId));
-    const temporal = buildTemporalProvenanceGraph({ projectId, files: [], releaseObservationProjection: projection });
+    const temporal = buildTemporalProvenanceGraph({ projectId, storage, files: [], releaseObservationProjection: projection });
     assert.ok(temporal.edges.some(edge => edge.type === "AT_REVISION" && edge.from === observed.release.releaseObservationId));
     assert.ok(temporal.edges.some(edge => edge.type === "EVIDENCED_BY" && edge.from === observed.release.releaseObservationId));
     assert.ok(temporal.edges.some(edge => edge.type === "OBSERVED_ON" && edge.from === observed.release.releaseObservationId));
@@ -285,7 +288,7 @@ test("stored releases reach World, temporal, exact Conformance and lazy Project 
     for (const field of ["instructionAuthority", "promotionAuthority", "recoveryAuthority", "executionAuthority", "ordinaryWorkBlocked"]) assert.equal(result.authority[field], false);
   });
   const originalRead = fs.readFileSync, originalList = fs.readdirSync;
-  const releaseDir = path.join(root, ".head/release-observations");
+  const releaseDir = path.join(root, layout.directory, "release-observations");
   const deny = (file) => typeof file === "string" && (file === releaseDir || file.startsWith(`${releaseDir}${path.sep}`));
   fs.readFileSync = (file, ...args) => { assert.equal(deny(file), false, "supplied projection must not read release originals"); return originalRead(file, ...args); };
   fs.readdirSync = (file, ...args) => { assert.equal(deny(file), false, "supplied projection must not enumerate release originals"); return originalList(file, ...args); };
@@ -294,12 +297,12 @@ test("stored releases reach World, temporal, exact Conformance and lazy Project 
   const branch = structuredClone(projection.branchStates[0]);
   delete branch.branchStateObservationId; delete branch.branchStateObservationHash; branch.referencesDigest = sha("new-observed-ref-set");
   const added = identified(branch, "branch-state-observation", "branchStateObservationId", "branchStateObservationHash");
-  fs.writeFileSync(path.join(root, ".head/release-observations/branch-states", `${added.branchStateObservationId}.json`), JSON.stringify(added));
+  fs.writeFileSync(path.join(root, layout.directory, "release-observations/branch-states", `${added.branchStateObservationId}.json`), JSON.stringify(added));
   await withoutWrites(root, async () => {
     const domains = inspectWorldDomainFreshness({ root });
     assert.equal(domains.freshness.domains.git.status, "stale"); assert.equal(domains.freshness.domains.code.status, "current");
   });
-  const releaseFile = path.join(root, ".head/release-observations/releases", `${observed.release.releaseObservationId}.json`);
+  const releaseFile = path.join(root, layout.directory, "release-observations/releases", `${observed.release.releaseObservationId}.json`);
   fs.writeFileSync(releaseFile, "{invalid-json");
   await withoutWrites(root, async () => {
     const result = await queryProjectGraph({ root, anchorIds: [plan.wholePlanId], depth: 1 });
@@ -309,7 +312,7 @@ test("stored releases reach World, temporal, exact Conformance and lazy Project 
 });
 
 test("keeps host provenance at the adapter boundary and requires explicit MCP observation confirmation", async (t) => {
-  const root = fixture();
+  const { root } = fixture();
   t.after(() => cleanupFixture(root));
   const commit = git(root, ["rev-parse", "HEAD"]);
   const input = deployment(commit, "mcp");

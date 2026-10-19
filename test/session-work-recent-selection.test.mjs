@@ -1,3 +1,4 @@
+import { relativeProjectArtifact } from "../scripts/lib/project-storage-format.mjs";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -17,8 +18,9 @@ const encoded = (v) => JSON.stringify(canonical(v));
 function project(t) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "head-recent-selection-")));
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const storage = inspectProject(root).storage;
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  return root;
+  return { root, storage };
 }
 function atTime(time, callback) {
   const RealDate = globalThis.Date;
@@ -61,8 +63,8 @@ function accounting(value) {
   assert.ok(JSON.stringify(value.records).length <= value.coverage.maxCharacters);
 }
 
-function navigationCases(root) {
-  const file = path.join(root, ".head/graph-discovery/index.json");
+function navigationCases(root, storage) {
+  const file = path.join(root, relativeProjectArtifact(storage, "graph-discovery", "index.json"));
   const raw = fs.readFileSync(file, "utf8"), legacy = JSON.parse(raw);
   assert.equal(legacy.sessionWorkNavigation?.version, 1);
   delete legacy.sessionWorkNavigation;
@@ -73,7 +75,7 @@ function navigationCases(root) {
 }
 
 test("global recent selection crosses 511/512/513/514 lexical boundaries; explicit pages and exact IDs retain their contracts", (t) => {
-  const root = project(t), inspected = inspectProject(root);
+  const { root, storage } = project(t), inspected = inspectProject(root);
   const inputs = Array.from({ length: 514 }, (_, i) => ({ summary: `Boundary evidence ${i}` }))
     .map((input) => ({ input, id: "work-evidence-" + sha(encoded({ projectId: inspected.project.projectId,
       sessionId: inspected.state.sessionId, content: normalizeSessionWorkEvidence(input) })).slice(0, 24) }))
@@ -81,7 +83,7 @@ test("global recent selection crosses 511/512/513/514 lexical boundaries; explic
   for (let i = 0; i < inputs.length; i += 1) {
     assert.equal(save(root, inputs[i].input, i).evidence.evidenceId, inputs[i].id);
     if (i < 510) continue;
-    const navigation = navigationCases(root);
+    const navigation = navigationCases(root, storage);
     for (const variant of navigation.variants) {
     variant.prepare();
     const before = snapshot(root), value = readSessionWorkContext({ root });
@@ -126,7 +128,7 @@ test("global recent selection crosses 511/512/513/514 lexical boundaries; explic
 });
 
 test("timestamp ties use stable evidence IDs; exact retry retains the original recording time and bytes", (t) => {
-  const root = project(t), saved = ["a", "b", "c"].map((summary) => save(root, { summary }));
+  const { root, storage } = project(t), saved = ["a", "b", "c"].map((summary) => save(root, { summary }));
   const before = snapshot(root), retry = save(root, { summary: "b" }, 9000);
   assert.equal(retry.status, "session_work_evidence_reused");
   assert.equal(retry.writes, 0);
@@ -138,7 +140,7 @@ test("timestamp ties use stable evidence IDs; exact retry retains the original r
 });
 
 test("early/late/newest corrupt originals are isolated with bounded default samples and truthful totals", (t) => {
-  const root = project(t), saved = Array.from({ length: 42 }, (_, i) => save(root, { summary: `Corruption ${i}` }, i));
+  const { root, storage } = project(t), saved = Array.from({ length: 42 }, (_, i) => save(root, { summary: `Corruption ${i}` }, i));
   const sorted = [...saved].sort((a, b) => a.evidence.evidenceId.localeCompare(b.evidence.evidenceId));
   const intact = sorted.filter((record) => record !== saved.at(-1)).slice(20, 22);
   const bad = sorted.filter((record) => !intact.includes(record));
@@ -164,10 +166,10 @@ test("early/late/newest corrupt originals are isolated with bounded default samp
 
 for (const change of ["timestamp", "disappear", "corrupt"]) {
   test(`fallback candidate ${change} between scan and reread is unavailable once, without suppressing older evidence`, (t) => {
-    const root = project(t), older = save(root, { summary: "Intact older" }), newest = save(root, { summary: "Newest" }, 1);
+    const { root, storage } = project(t), older = save(root, { summary: "Intact older" }), newest = save(root, { summary: "Newest" }, 1);
     // The canonical fallback still scans then rereads. Historical navigation
     // reads each selected original directly; it does not promise an atomic scan.
-    navigationCases(root).variants.find(variant => variant.mode === "legacy").prepare();
+    navigationCases(root, storage).variants.find(variant => variant.mode === "legacy").prepare();
     const read = fs.readFileSync;
     let changed = false;
     fs.readFileSync = (file, ...args) => {
@@ -199,7 +201,7 @@ for (const change of ["timestamp", "disappear", "corrupt"]) {
 
 for (const change of ["timestamp", "disappear", "corrupt"]) {
   test(`hinted candidate ${change} before canonical read uses current bytes, not historical proof`, (t) => {
-    const root = project(t), older = save(root, { summary: "Intact older" }), newest = save(root, { summary: "Newest" }, 1);
+    const { root, storage } = project(t), older = save(root, { summary: "Intact older" }), newest = save(root, { summary: "Newest" }, 1);
     const read = fs.readFileSync;
     let changed = false;
     fs.readFileSync = (file, ...args) => {
@@ -236,7 +238,7 @@ for (const change of ["timestamp", "disappear", "corrupt"]) {
 }
 
 test("full output and bare-size exclusions avoid reference reads; enriched overflow still considers older fitting work", (t) => {
-  const root = project(t), body = Buffer.alloc(1024 * 1024, 120), source = path.join(root, "retained-source.txt");
+  const { root, storage } = project(t), body = Buffer.alloc(1024 * 1024, 120), source = path.join(root, "retained-source.txt");
   fs.writeFileSync(source, body);
   const ref = { path: "retained-source.txt", digest: sha(body), kind: "source" };
   const older = save(root, { summary: "Small older" });
@@ -268,7 +270,7 @@ test("full output and bare-size exclusions avoid reference reads; enriched overf
 });
 
 test("selected Session isolation and P2 basis changes remain enforced during global selection", (t) => {
-  const root = project(t), a = createHeadSession({ root, purpose: "A only" }), b = createHeadSession({ root, purpose: "B only" });
+  const { root, storage } = project(t), a = createHeadSession({ root, purpose: "A only" }), b = createHeadSession({ root, purpose: "B only" });
   let saved;
   withSessionRoute(root, a.sessionId, () => { saved = save(root, { summary: "Only A" }); });
   const before = snapshot(root);
@@ -304,7 +306,7 @@ test("selected Session isolation and P2 basis changes remain enforced during glo
 });
 
 test("enumeration is sequential, and originals published after it are discovered on the next read", (t) => {
-  const root = project(t), older = save(root, { summary: "Before enumeration" });
+  const { root, storage } = project(t), older = save(root, { summary: "Before enumeration" });
   const readdir = fs.readdirSync;
   let newest;
   fs.readdirSync = (dir, ...args) => {
@@ -320,7 +322,7 @@ test("enumeration is sequential, and originals published after it are discovered
 });
 
 test("existing bound/cursor validation and exact missing-ID details are unchanged", (t) => {
-  const root = project(t), missing = "work-evidence-" + "0".repeat(24);
+  const { root, storage } = project(t), missing = "work-evidence-" + "0".repeat(24);
   for (const input of [{ maxRecords: 0 }, { maxRecords: 513 }, { maxCharacters: 1 }, { maxCharacters: 512 * 1024 + 1 },
     { afterEvidenceId: "" }, { afterEvidenceId: "start" }, { evidenceIds: [], afterEvidenceId: missing },
     { evidenceIds: Array(513).fill(missing) }]) {

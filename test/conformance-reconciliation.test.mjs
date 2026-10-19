@@ -28,11 +28,11 @@ const testParent = process.env.HEAD_AGENT_TEST_TMP || os.tmpdir();
 const sha = (value) => crypto.createHash("sha256").update(value).digest("hex");
 
 test("HEAD maintenance stays visible, preserves user authority, and rejects forged author chains", async (t) => {
-  const root = fixture();
+  const { root, layout } = fixture();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.writeFileSync(path.join(root, "source.mjs"), "export const value = 1;\n");
   const finding = proposeConformanceFindings(proposal(root, prepareConformanceAssessment({ root }), "source.mjs")).findings[0];
-  const protectedPaths = [".head/project.json", ".head/sessions/current.json", ".head/context/product-model.json"];
+  const protectedPaths = [`${layout.directory}/project.json`, `${layout.directory}/sessions/current.json`, `${layout.directory}/context/product-model.json`];
   const before = protectedPaths.map(p => fs.readFileSync(path.join(root, p)));
   const request = { root, findingId: finding.findingId, actor: "head", disposition: "acknowledge", rationale: "HEAD inspected this candidate; no user response is needed." };
   const input = path.join(root, "maintenance.json");
@@ -60,12 +60,12 @@ test("HEAD maintenance stays visible, preserves user authority, and rejects forg
   forged.authority = HEAD_CONFORMANCE_MAINTENANCE_AUTHORITY;
   forged.dispositionHash = sha(conformanceCanonicalJson(forged));
   forged.dispositionId = `conformance-disposition-${forged.dispositionHash.slice(0, 24)}`;
-  fs.writeFileSync(path.join(root, ".head/conformance/dispositions", `${forged.dispositionId}.json`), JSON.stringify(forged));
+  fs.writeFileSync(path.join(root, layout.directory, "conformance/dispositions", `${forged.dispositionId}.json`), JSON.stringify(forged));
   assert.throws(() => inspectConformanceQueue({ root }), { code: "INVALID_CONFORMANCE_DISPOSITION_CHAIN" });
 });
 
 test("exact logical Canon lookup survives revision drift and preserves deferred findings without unrelated source reads", async (t) => {
-  const root = fixture({ constraints: 66 });
+  const { root, layout } = fixture({ constraints: 66 });
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.writeFileSync(path.join(root, "selected.mjs"), "export const selected = true;\n");
   fs.writeFileSync(path.join(root, "unrelated.mjs"), "export const unrelated = true;\n");
@@ -77,11 +77,11 @@ test("exact logical Canon lookup survives revision drift and preserves deferred 
   recordConformanceDisposition({ root, findingId: chosen.findingId, disposition: "defer", actor: "head", rationale: "Not material to the earlier task." });
   const canonAnchor = chosen.canonAnchor;
   assert.equal(inspectConformanceQueue({ root, canonAnchor }).findings[0].status, "deferred");
-  const canonPath = path.join(root, ".head/context/product-model.json");
+  const canonPath = path.join(root, layout.directory, "context/product-model.json");
   const canon = JSON.parse(fs.readFileSync(canonPath));
   canon.constraints[65].statement = "Revised logical policy";
   fs.writeFileSync(canonPath, JSON.stringify(canon));
-  const protectedPaths = [canonPath, path.join(root, ".head/project.json"), path.join(root, ".head/sessions/current.json")];
+  const protectedPaths = [canonPath, path.join(root, layout.directory, "project.json"), path.join(root, layout.directory, "sessions/current.json")];
   const before = protectedPaths.map(p => fs.readFileSync(p));
   const read = fs.readFileSync;
   let unrelatedReads = 0;
@@ -110,13 +110,14 @@ function fixture({ constraints = 1 } = {}) {
   fs.mkdirSync(testParent, { recursive: true });
   const root = fs.mkdtempSync(path.join(testParent, "head-agent-conformance-"));
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const layout = inspectProject(root).storage;
   const product = {
     schemaVersion: 1,
     featureGroups: [], capabilities: [], features: [], requirements: [], decisions: [],
     constraints: Array.from({ length: constraints }, (_, index) => ({ key: `constraint.${index}`, statement: `Approved constraint ${index}.`, description: "" })),
   };
-  fs.writeFileSync(path.join(root, ".head", "context", "product-model.json"), `${JSON.stringify(product, null, 2)}\n`);
-  return root;
+  fs.writeFileSync(path.join(root, layout.directory, "context", "product-model.json"), `${JSON.stringify(product, null, 2)}\n`);
+  return { root, layout };
 }
 
 function sourceAnchor(root, relativePath, { startLine = 1, endLine = 1 } = {}) {
@@ -147,12 +148,12 @@ function proposal(root, prepared, relativePath, { constraint = "constraint.0", s
 }
 
 test("records semantic candidates without Graph, lexical gates, Canon mutation, or ordinary-work blocking", (t) => {
-  const root = fixture();
+  const { root, layout } = fixture();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, "src"));
   fs.writeFileSync(path.join(root, "src", "opaque-name.mjs"), "export const value = 1;\n");
-  const canonFile = path.join(root, ".head", "context", "product-model.json");
-  const sessionFile = path.join(root, ".head", "sessions", "current.json");
+  const canonFile = path.join(root, layout.directory, "context", "product-model.json");
+  const sessionFile = path.join(root, layout.directory, "sessions", "current.json");
   const canonBefore = fs.readFileSync(canonFile, "utf8");
   const sessionBefore = fs.readFileSync(sessionFile, "utf8");
 
@@ -176,7 +177,7 @@ test("records semantic candidates without Graph, lexical gates, Canon mutation, 
 });
 
 test("converges wording-only duplicates and rejects only stale or unsafe exact evidence", (t) => {
-  const root = fixture();
+  const { root, layout } = fixture();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, "src"));
   fs.writeFileSync(path.join(root, "src", "module.mjs"), "export const state = true;\n");
@@ -195,7 +196,7 @@ test("converges wording-only duplicates and rejects only stale or unsafe exact e
 });
 
 test("converges wording-only duplicate candidates inside one proposal batch", (t) => {
-  const root = fixture();
+  const { root, layout } = fixture();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, "src"));
   fs.writeFileSync(path.join(root, "src", "batch.mjs"), "export const state = true;\n");
@@ -216,7 +217,7 @@ test("converges wording-only duplicate candidates inside one proposal batch", (t
 });
 
 test("isolates an oversized current source anchor to one needs-recheck queue row", (t) => {
-  const root = fixture({ constraints: 2 });
+  const { root, layout } = fixture({ constraints: 2 });
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, "src"));
   fs.writeFileSync(path.join(root, "src", "large.mjs"), "export const large = false;\n");
@@ -241,7 +242,7 @@ test("isolates an oversized current source anchor to one needs-recheck queue row
 });
 
 test("binds optional World source identities to the same exact file", async (t) => {
-  const root = fixture();
+  const { root, layout } = fixture();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, "src"));
   fs.writeFileSync(path.join(root, "src", "first.mjs"), "export const first = true;\n");
@@ -256,7 +257,7 @@ test("binds optional World source identities to the same exact file", async (t) 
 });
 
 test("keeps dispositions non-authoritative and closes only an explicitly accepted current resolution", (t) => {
-  const root = fixture();
+  const { root, layout } = fixture();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, "src"));
   fs.writeFileSync(path.join(root, "src", "policy.mjs"), "export const enabled = false;\n");
@@ -282,7 +283,7 @@ test("keeps dispositions non-authoritative and closes only an explicitly accepte
 });
 
 test("pages beyond the sixty-fourth finding and resynchronizes stale read-only cursors", (t) => {
-  const root = fixture({ constraints: 65 });
+  const { root, layout } = fixture({ constraints: 65 });
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, "src"));
   for (let index = 0; index < 65; index += 1) fs.writeFileSync(path.join(root, "src", `file-${index}.mjs`), `export const value = ${index};\n`);
@@ -307,8 +308,8 @@ test("pages beyond the sixty-fourth finding and resynchronizes stale read-only c
 });
 
 test("keeps Host triggers optional, coalesced, Project-bound, and uncertain-safe", async (t) => {
-  const root = fixture();
-  const other = fixture();
+  const { root, layout } = fixture();
+  const { root: other } = fixture();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   t.after(() => fs.rmSync(other, { recursive: true, force: true }));
   const registry = new ConformanceTriggerRegistry();
@@ -344,7 +345,7 @@ test("keeps Host triggers optional, coalesced, Project-bound, and uncertain-safe
 });
 
 test("retains queued triggers when preparation fails before batch commit", async (t) => {
-  const root = fixture();
+  const { root, layout } = fixture();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const registry = new ConformanceTriggerRegistry();
   const source = registry.register({ root, sourceKey: "atomic-prepare", triggerKinds: ["observation"], mode: "opportunistic" });
@@ -355,7 +356,7 @@ test("retains queued triggers when preparation fails before batch commit", async
     input: { subject: { type: "example.target", key: "global" }, form: "event", temporalScope: { observedAt: "2026-09-02T00:00:00.000Z", start: null, end: null }, sourceEventKeyDigest: sha("atomic-trigger-event"), sourceEvidenceDigest: sha("atomic-trigger-evidence"), coverage: { state: "partial", basis: "bounded-event", queryDigest: null, examinedCount: 1, sourceReportedTotal: null, omittedCount: null, cursorStartDigest: null, cursorEndDigest: null }, payload: { changed: true } },
   });
   registry.enqueue({ root, sourceId: source.sourceId, trigger: { kind: "observation", artifactId: observed.observation.observationId, artifactHash: observed.observation.observationHash } });
-  const canonFile = path.join(root, ".head", "context", "product-model.json");
+  const canonFile = path.join(root, layout.directory, "context", "product-model.json");
   const canonBytes = fs.readFileSync(canonFile);
   fs.writeFileSync(canonFile, "{ invalid json\n");
   assert.throws(() => registry.prepare({ root, sourceId: source.sourceId }), { code: "INVALID_PRODUCT_MODEL_JSON" });
@@ -369,7 +370,7 @@ test("retains queued triggers when preparation fails before batch commit", async
 });
 
 test("reports refresh omission counts only in the batch that owns the coalesced receipt", async (t) => {
-  const root = fixture();
+  const { root, layout } = fixture();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, "src"));
   const sourceFile = path.join(root, "src", "refresh.mjs");
@@ -418,11 +419,11 @@ test("reports refresh omission counts only in the batch that owns the coalesced 
 });
 
 test("exposes the same conversational Core flow through typed MCP without Host configuration", async (t) => {
-  const root = fixture();
+  const { root, layout } = fixture();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, "src"));
   fs.writeFileSync(path.join(root, "src", "mcp.mjs"), "export const mcp = true;\n");
-  const requiredTools = ["head_conformance_prepare", "head_conformance_propose", "head_conformance_queue", "head_conformance_read", "head_conformance_disposition", "head_conformance_resolution_propose", "head_conformance_trigger_status", "head_conformance_trigger_prepare"];
+  const requiredTools = ["lode_conformance_prepare", "lode_conformance_propose", "lode_conformance_queue", "lode_conformance_read", "lode_conformance_disposition", "lode_conformance_resolution_propose", "lode_conformance_trigger_status", "lode_conformance_trigger_prepare"];
   assert.equal(requiredTools.every((name) => mcpTools.some((tool) => tool.name === name)), true);
   const preparedResponse = await dispatchMcp({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "head_conformance_prepare", arguments: { project_root: root } } });
   const prepared = preparedResponse.result.structuredContent;
@@ -439,7 +440,7 @@ test("exposes the same conversational Core flow through typed MCP without Host c
 });
 
 test("normalizes omitted whole-file source fields before shared CLI and Core verification", (t) => {
-  const root = fixture();
+  const { root, layout } = fixture();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, "src"));
   const sourceFile = path.join(root, "src", "whole-file.mjs");
@@ -471,13 +472,13 @@ test("normalizes omitted whole-file source fields before shared CLI and Core ver
 });
 
 test("revalidates resolution evidence only for a new acceptance and preserves exact recorded replay", async (t) => {
-  const root = fixture();
+  const { root, layout } = fixture();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, "src"));
   const sourceFile = path.join(root, "src", "resolution.mjs");
   fs.writeFileSync(sourceFile, "export const enabled = false;\n");
-  const canonFile = path.join(root, ".head", "context", "product-model.json");
-  const sessionFile = path.join(root, ".head", "sessions", "current.json");
+  const canonFile = path.join(root, layout.directory, "context", "product-model.json");
+  const sessionFile = path.join(root, layout.directory, "sessions", "current.json");
   const canonBefore = fs.readFileSync(canonFile, "utf8");
   const sessionBefore = fs.readFileSync(sessionFile, "utf8");
   const initial = prepareConformanceAssessment({ root });

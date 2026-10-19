@@ -1,10 +1,11 @@
+import { relativeProjectArtifact } from "../scripts/lib/project-storage-format.mjs";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { initializeProject } from "../scripts/lib/head-core.mjs";
+import { initializeProject, inspectProject } from "../scripts/lib/head-core.mjs";
 import { createHeadSession, withSessionRoute } from "../scripts/lib/session-routing.mjs";
 import { createSessionHostAdapter } from "../scripts/lib/session-host-adapter.mjs";
 import { sessionStartContext } from "../scripts/session-host-hook.mjs";
@@ -25,6 +26,7 @@ function fixture(t, runtime, purpose = "Selected current purpose; investigate on
   const root = path.join(base, "project"), operational = path.join(base, "host");
   fs.mkdirSync(root);
   initializeProject({ root, pluginRoot, runtimes: [runtime] });
+  const storage = inspectProject(root).storage;
   const session = createHeadSession({ root, purpose });
   const environment = { HEAD_AGENT_OPERATIONAL_STATE_ROOT: operational };
   const nativeSessionId = "synthetic-startup-caller";
@@ -40,8 +42,8 @@ function fixture(t, runtime, purpose = "Selected current purpose; investigate on
     assert.equal(value.persisted, false);
     assert.equal(value.logicalSessionId, session.sessionId);
     assert.deepEqual(value.route, { session_id: session.sessionId });
-    if (value.expansion.startsWith("Omitted work:")) assert.match(value.expansion, /head_session_work_read.*project_root:projectRoot.*route/);
-    else { assert.match(value.expansion, /head_conversation_enter.*project_root:projectRoot.*exact route/); assert.match(value.expansion, /When needed/); }
+    if (value.expansion.startsWith("Omitted work:")) assert.match(value.expansion, /lode_session_work_read.*project_root:projectRoot.*route/);
+    else { assert.match(value.expansion, /lode_conversation_enter.*project_root:projectRoot.*exact route/); assert.match(value.expansion, /When needed/); }
     assert.match(value.scope, /Read-only, non-atomic.*(?:Recheck|Check) current authority (?:before an effect|for effects)/);
     t.diagnostic(JSON.stringify({ runtime, length: text.length, sessionId: value.logicalSessionId,
       records: value.records.length, omittedEvidenceCount: value.omittedEvidenceCount,
@@ -52,7 +54,7 @@ function fixture(t, runtime, purpose = "Selected current purpose; investigate on
   };
   t.after(() => { if (process.env.HEAD_AGENT_KEEP_TEST_TMP !== "1") fs.rmSync(base, { recursive: true, force: true }); });
   t.diagnostic(JSON.stringify({ fixture: base, runtime, evidenceScope: "synthetic-public-adapter-and-hook; actualHost-unverified" }));
-  return { base, root, operational, environment, event, host, session, read,
+  return { base, root, storage, operational, environment, event, host, session, read,
     selected: (fn) => withSessionRoute(root, session.sessionId, fn) };
 }
 function snapshot(directory) {
@@ -76,8 +78,9 @@ const checkpoint = (f, purpose = "Historical checkpoint purpose", fields = {}) =
   nextExpectedResult: "Historical suggestion; no effect permission", ...fields,
 }));
 const evidence = (f, summary) => f.selected(() => recordSessionWorkEvidence({ root: f.root, input: { summary } }));
-function navigationCases(root) {
-  const file = path.join(root, ".head/graph-discovery/index.json"), raw = fs.readFileSync(file, "utf8"), legacy = JSON.parse(raw);
+function navigationCases(f) {
+  const { root } = f;
+  const file = path.join(root, relativeProjectArtifact(f.storage, "graph-discovery", "index.json")), raw = fs.readFileSync(file, "utf8"), legacy = JSON.parse(raw);
   assert.equal(legacy.sessionWorkNavigation?.version, 1); delete legacy.sessionWorkNavigation;
   return ["hinted", "legacy", "missing"].map(mode => ({ mode, prepare() {
     if (mode === "missing") fs.unlinkSync(file); else fs.writeFileSync(file, mode === "hinted" ? raw : JSON.stringify(legacy));
@@ -119,10 +122,10 @@ function assertPartialWorkExpansion(f, raw, value, runtime, mode) {
   }
   assert.equal(value.projectRoot, f.root); assert.deepEqual(value.route, { session_id: f.session.sessionId });
   if (value.expansion.startsWith("Omitted work:")) {
-    assert.equal(value.expansion, "Omitted work: head_session_work_read(project_root:projectRoot, ...route)");
+    assert.equal(value.expansion, "Omitted work: lode_session_work_read(project_root:projectRoot, ...route)");
   } else {
-    assert.match(value.expansion, /^When needed, head_conversation_enter with project_root:projectRoot and the exact route above reads originals/);
-    assert.match(value.expansion, /Omitted work: head_session_work_read with the same root\/route\.$/);
+    assert.match(value.expansion, /^When needed, lode_conversation_enter with project_root:projectRoot and the exact route above reads originals/);
+    assert.match(value.expansion, /Omitted work: lode_session_work_read with the same root\/route\.$/);
   }
   // Use the actual emitted root/route, not an evaluated prose instruction.
   const read = input => withSessionRoute(value.projectRoot, value.route.session_id,
@@ -162,7 +165,7 @@ for (const runtime of ["codex", "claude"]) {
     const intactBefore = snapshot(f.base), intact = f.read();
     assert.deepEqual(intact.currentProjectDirection, directionView(direction));
     assert.deepEqual(snapshot(f.base), intactBefore);
-    fs.unlinkSync(path.join(f.root, ".head", "project-direction", "current.json"));
+    fs.unlinkSync(path.join(f.root, relativeProjectArtifact(f.storage, "project-direction", "current.json")));
     const lostBefore = snapshot(f.base), raw = f.host.enter({ root: f.root }), lost = f.read();
     assert.deepEqual(raw.projectStatus.currentProjectDirectionAvailability, unavailable);
     assert.deepEqual(lost.currentProjectDirectionAvailability, unavailable);
@@ -197,10 +200,10 @@ for (const runtime of ["codex", "claude"]) {
     assert.equal(value.sessionRecovery.contentIncluded, false);
     assert.equal(value.sessionRecovery.historicalApprovalGrantsCurrentEffect, false);
     assert.equal(value.projectRoot, f.root);
-    assert.match(value.expansion, /head_conversation_enter.*workContext\.sessionPurpose/);
+    assert.match(value.expansion, /lode_conversation_enter.*workContext\.sessionPurpose/);
     assert.match(value.requiredSourceExpansion, /no constraint or cancellation is assumed absent/);
     assert.deepEqual(snapshot(f.base), before);
-    fs.unlinkSync(path.join(f.root, ".head", "project-direction", "current.json"));
+    fs.unlinkSync(path.join(f.root, relativeProjectArtifact(f.storage, "project-direction", "current.json")));
     before = snapshot(f.base); value = f.read();
     assert.equal(value.sessionPurposeCoverage.contentIncluded, false);
     assert.deepEqual(value.currentProjectDirectionAvailability, unavailable);
@@ -211,9 +214,9 @@ for (const runtime of ["codex", "claude"]) {
     const f = fixture(t, runtime);
     for (let i = 0; i < 40; i += 1) evidence(f, `${i}: ` + "reviewable evidence ".repeat(100));
     updateProjectDirection({ root: f.root, input: { goal: "Preserve unavailable diagnosis under evidence budget" } });
-    fs.unlinkSync(path.join(f.root, ".head", "project-direction", "current.json"));
+    fs.unlinkSync(path.join(f.root, relativeProjectArtifact(f.storage, "project-direction", "current.json")));
     let selectedBodies;
-    for (const variant of navigationCases(f.root)) {
+    for (const variant of navigationCases(f)) {
     variant.prepare();
     const before = snapshot(f.base), raw = f.host.enter({ root: f.root }), value = f.read();
     assert.equal(raw.workContext.records.length, 8);
@@ -241,8 +244,8 @@ for (const runtime of ["codex", "claude"]) {
     const purpose = "Fitting current purpose " + "p".repeat(4200), f = fixture(t, runtime, purpose);
     for (let i = 0; i < 40; i += 1) evidence(f, `${i}: ` + "bounded P3 history ".repeat(100));
     updateProjectDirection({ root: f.root, input: { goal: "Known direction loss with a fitting current purpose" } });
-    fs.unlinkSync(path.join(f.root, ".head", "project-direction", "current.json"));
-    for (const variant of navigationCases(f.root)) {
+    fs.unlinkSync(path.join(f.root, relativeProjectArtifact(f.storage, "project-direction", "current.json")));
+    for (const variant of navigationCases(f)) {
     variant.prepare();
     const before = snapshot(f.base), raw = f.host.enter({ root: f.root }), value = f.read();
     assertPartialWorkExpansion(f, raw, value, runtime, variant.mode);

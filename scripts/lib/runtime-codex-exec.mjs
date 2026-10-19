@@ -1,3 +1,9 @@
+import { formatForVerifiedOwner, familyFormatForOriginal } from "./project-storage-format.mjs";
+const sessionIdOf = record => {
+  const format = familyFormatForOriginal({ sessionIdentity: true }, record);
+  return format ? record?.[format.sessionIdField] : undefined;
+};
+const originalFormat = record => familyFormatForOriginal({ kind: record?.kind }, record);
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -294,7 +300,7 @@ function verifyCurrentCodexTarget({ authorization, protocolEvidence, projectBind
     || binding.bindingId !== authorization.runtimeProjectBindingId
     || binding.protocolEvidenceId !== protocol.evidenceId
     || binding.projectId !== authorization.projectId
-    || binding.headSessionId !== authorization.headSessionId) {
+    || sessionIdOf(binding) !== sessionIdOf(authorization)) {
     fail("Codex capability and project binding changed after authorization.", "CODEX_EXEC_CAPABILITY_BINDING_DRIFT");
   }
   const observation = protocol.observations.find((item) => item.runtime === "codex");

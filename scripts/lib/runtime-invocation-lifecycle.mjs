@@ -1,10 +1,16 @@
+import { formatForVerifiedOwner, familyFormatForOriginal } from "./project-storage-format.mjs";
+const sessionIdOf = record => {
+  const format = familyFormatForOriginal({ sessionIdentity: true }, record);
+  return format ? record?.[format.sessionIdField] : undefined;
+};
+const originalFormat = record => familyFormatForOriginal({ kind: record?.kind }, record);
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { assertProjectActionsCurrent, readProjectDirection, assertAuthorizationProjectDirection } from "./project-direction.mjs";
 import { assertRunSession } from "./session-routing.mjs";
 import { spawn } from "node:child_process";
-import { inspectProject, SCHEMA_VERSION } from "./head-core.mjs";
+import { inspectProject, SCHEMA_VERSION } from "./lode-core.mjs";
 import { readContextCapsule } from "./context-compiler.mjs";
 import { readLineageArtifact } from "./execution-lineage.mjs";
 import { inspectRunStorageTransition } from "./run-lineage.mjs";
@@ -207,6 +213,7 @@ export function verifyRuntimeStructuredResult(document, { scopeKind = null, auth
       basis: verifiedAuthorization?.workerInput.proposalBasis ?? null,
       basisDigest: verifiedAuthorization?.workerInput.executionBoundary.proposalBasisDigest ?? null,
       maxBytes: verifiedAuthorization?.limits.maxInputBytes ?? 128 * 1024,
+      storage: verifiedAuthorization ? originalFormat(verifiedAuthorization) : undefined,
     }) } : {}),
   };
   if (result.schemaVersion !== 1 || result.kind !== "RuntimeStructuredResult"
@@ -239,8 +246,8 @@ function readJson(file, label) {
   catch (error) { fail(`${label} is invalid JSON: ${error.message}`, "INVALID_RUNTIME_INVOCATION_ARTIFACT"); }
 }
 
-function runCanon(projectRoot, runId) {
-  const file = path.join(projectRoot, ".head", "sessions", "runs", runId, "run.json");
+function runCanon(projectRoot, runId, storage) {
+  const file = path.join(projectRoot, formatForVerifiedOwner(storage).directory, "sessions", "runs", runId, "run.json");
   if (!fs.existsSync(file)) fail(`Active Run canon is missing: ${runId}.`, "RUNTIME_INVOCATION_RUN_MISSING");
   const run = readJson(file, "Run canon");
   assertRunSession(projectRoot, run, inspectProject(projectRoot).state);
@@ -372,14 +379,14 @@ function normalizeScopeInput(value = { kind: "run" }) {
   return { kind, request, contextCapsuleId };
 }
 
-function authorizationFile(root, authorizationId) {
-  return path.join(root, ".head", "runtime", "execution-authorizations", `${authorizationId}.json`);
+function authorizationFile(root, authorizationId, storage) {
+  return path.join(root, formatForVerifiedOwner(storage).directory, "runtime", "execution-authorizations", `${authorizationId}.json`);
 }
 
-function verifyWorkerInput(worker) {
+function verifyWorkerInput(worker, storage) {
   assertFields(worker, ["taskKey", "role", "outcome", "selectedContext", "sessionRequest", "sourceBasis", "previousAuthorizationId", ...(Object.hasOwn(worker || {}, "executionBoundary") ? ["executionBoundary"] : []), ...(Object.hasOwn(worker || {}, "writeBasis") ? ["writeBasis"] : []), ...(Object.hasOwn(worker || {}, "proposalBasis") ? ["proposalBasis"] : [])], "Worker execution input");
   if (!/^[a-z][a-z0-9-]{0,95}$/.test(worker.taskKey || "")
-    || !/^[a-z][a-z0-9-]{0,63}$/.test(worker.role || "") || worker.role === "head"
+    || !/^[a-z][a-z0-9-]{0,63}$/.test(worker.role || "") || worker.role === formatForVerifiedOwner(storage).roleField
     || typeof worker.outcome !== "string" || !worker.outcome.trim()
     || typeof worker.selectedContext !== "string"
     || worker.previousAuthorizationId !== null && !/^execution-authorization-[a-f0-9]{24}$/.test(worker.previousAuthorizationId)
@@ -410,12 +417,12 @@ function attachWorkerInput(input, worker) {
       effectivePermissionEvidence: false } };
 }
 
-function persistWorkerAuthorization(root, authorization, retry) {
+function persistWorkerAuthorization(root, authorization, retry, storage) {
   return withProjectMutation({ root, scope: "worker-member-authorization" }, () => {
     const chain = readWorkerMemberChain(root, authorization).map(verifyRuntimeInvocationAuthorization);
     // Repair publication from frozen bytes before considering a new capture.
     for (const record of chain) {
-      const published = authorizationFile(root, record.authorizationId);
+      const published = authorizationFile(root, record.authorizationId, originalFormat(record));
       if (!fs.existsSync(published)) writeRuntimeInvocationArtifactExclusive(published, json(record));
       else if (readRuntimeInvocationAuthorization({ root, authorizationId: record.authorizationId }).authorization.authorizationHash !== record.authorizationHash) {
         fail("Worker authorization lookup conflicts with its frozen input.", "WORKER_MEMBER_AUTHORIZATION_CONFLICT");
@@ -426,10 +433,10 @@ function persistWorkerAuthorization(root, authorization, retry) {
       const payload = { ...authorization, workerInput: { ...authorization.workerInput, previousAuthorizationId: current.workerInput.previousAuthorizationId } };
       delete payload.authorizationId; delete payload.authorizationHash;
       const comparable = identify(payload, "execution-authorization", "authorizationId", "authorizationHash");
-      if (comparable.authorizationHash === current.authorizationHash && !retry) return { status: "existing", file: authorizationFile(root, current.authorizationId), authorization: current };
-      let lease = inspectRuntimeExecutionLease({ projectRoot: root, projectId: current.projectId, authorizationId: current.authorizationId });
+      if (comparable.authorizationHash === current.authorizationHash && !retry) return { status: "existing", file: authorizationFile(root, current.authorizationId, originalFormat(current)), authorization: current };
+      let lease = inspectRuntimeExecutionLease({ projectRoot: root, projectId: current.projectId, authorizationId: current.authorizationId, storage: originalFormat(current) });
       if (!lease.singleUseConsumed && comparable.authorizationHash === current.authorizationHash) {
-        return { status: "existing", file: authorizationFile(root, current.authorizationId), authorization: current };
+        return { status: "existing", file: authorizationFile(root, current.authorizationId, originalFormat(current)), authorization: current };
       }
       if (lease.status === "claimed") {
         try { lease = reconcileUnconsumedWorkerLease({ projectRoot: root, authorization: current }); }
@@ -446,7 +453,7 @@ function persistWorkerAuthorization(root, authorization, retry) {
     }
     const memberFile = workerMemberFile(root, authorization, current?.authorizationId || null);
     writeRuntimeInvocationArtifactExclusive(memberFile, json(authorization));
-    const file = authorizationFile(root, authorization.authorizationId);
+    const file = authorizationFile(root, authorization.authorizationId, storage);
     if (fs.existsSync(file)) {
       const existing = readRuntimeInvocationAuthorization({ root, authorizationId: authorization.authorizationId }).authorization;
       return { status: "existing", file, authorization: existing };
@@ -460,14 +467,14 @@ export function reconcileWorkerMember({ root = ".", taskKey } = {}) {
   const inspected = inspectProject(root);
   if (inspected.status !== "ready") fail("Worker member reconciliation requires a ready project.", "PROJECT_NOT_READY");
   if (!/^[a-z][a-z0-9-]{0,95}$/.test(taskKey || "")) fail("Worker task key is invalid.", "INVALID_WORKER_EXECUTION_INPUT");
-  const basis = { projectId: inspected.project.projectId, headSessionId: inspected.state.sessionId,
+  const basis = { kind: "ExecutionAuthorization", projectId: inspected.project.projectId, [formatForVerifiedOwner(inspected).sessionIdField]: inspected.state.sessionId,
     scope: { runId: inspected.state.activeRunId || null }, workerInput: { taskKey } };
   return withProjectMutation({ root, scope: "worker-member-authorization" }, () => {
     const records = readWorkerMemberChain(root, basis).map(verifyRuntimeInvocationAuthorization);
     if (!records.length) fail("No frozen input exists for this worker member.", "WORKER_MEMBER_NOT_FOUND");
     const recovered = [];
     for (const record of records) {
-      const file = authorizationFile(root, record.authorizationId);
+      const file = authorizationFile(root, record.authorizationId, originalFormat(record));
       if (!fs.existsSync(file)) { writeRuntimeInvocationArtifactExclusive(file, json(record)); recovered.push(record.authorizationId); }
       else if (readRuntimeInvocationAuthorization({ root, authorizationId: record.authorizationId }).authorization.authorizationHash !== record.authorizationHash) {
         fail("Published worker input conflicts with frozen member input.", "WORKER_MEMBER_AUTHORIZATION_CONFLICT");
@@ -507,7 +514,7 @@ export function buildRuntimeInvocationAuthorization({
     if (!inspected.state.activeRunId || !inspected.state.activeExecutionContractId) {
       fail("Run execution authorization requires an active contract-bound Run.", "ACTIVE_CONTRACT_BOUND_RUN_REQUIRED");
     }
-    const run = runCanon(projectRoot, inspected.state.activeRunId);
+    const run = runCanon(projectRoot, inspected.state.activeRunId, inspected.storage);
     const contract = lineage(projectRoot, inspected.state.activeExecutionContractId, "ExecutionContract");
     const plan = lineage(projectRoot, contract.wholePlanId, "WholePlanSnapshot");
     const capsule = readContextCapsule({ root: projectRoot, capsuleId: contract.capsuleId }).capsule;
@@ -554,10 +561,10 @@ export function buildRuntimeInvocationAuthorization({
   const rootDigest = digest(realRoot(projectRoot));
   const bindingMismatches = [
     verifiedBinding.projectId !== inspected.project.projectId ? "project" : null,
-    verifiedBinding.headSessionId !== inspected.state.sessionId ? "session" : null,
+    sessionIdOf(verifiedBinding) !== inspected.state.sessionId ? "session" : null,
     verifiedBinding.projectRootDigest !== rootDigest ? "root" : null,
     verifiedBinding.protocolEvidenceId !== verifiedProtocol.evidenceId ? "protocol" : null,
-    verifiedBinding.status !== "verified-head-project-session-capability-binding" ? "status" : null,
+    verifiedBinding.status !== formatForVerifiedOwner(inspected).value("verified-head-project-session-capability-binding") ? "status" : null,
     runtimeBinding?.capabilityStatus !== "observed" ? "runtime-binding" : null,
     !runtimeObservation?.protocolNegotiationObserved ? "runtime-observation" : null,
   ].filter(Boolean);
@@ -571,14 +578,14 @@ export function buildRuntimeInvocationAuthorization({
     const proposalWorker = isWorkerPatchProposalMode(selection.executionBoundary?.mode);
     assertFields(selection, ["taskKey", "role", "outcome", "selectedContext", "sourcePaths", ...(Object.hasOwn(selection, "executionBoundary") ? ["executionBoundary"] : []), ...(proposalWorker ? ["proposalPaths"] : [])], "Worker selection");
     const { sourcePaths, proposalPaths, ...brief } = selection;
-    const sourceBasis = captureWorkerSourceBasis({ root: projectRoot, paths: sourcePaths, maxBytes: normalizedLimits.maxInputBytes });
+    const sourceBasis = captureWorkerSourceBasis({ root: projectRoot, paths: sourcePaths, maxBytes: normalizedLimits.maxInputBytes, storage: inspected.storage });
     const writeBasis = brief.executionBoundary?.writeBasisDigest === undefined ? null
-      : captureWorkerWriteBasis({ root: projectRoot, paths: brief.executionBoundary.ownedPaths, maxBytes: normalizedLimits.maxInputBytes });
-    const proposalBasis = proposalWorker ? captureWorkerWriteBasis({ root: projectRoot, paths: proposalPaths, maxBytes: normalizedLimits.maxInputBytes }) : null;
-    workerInput = verifyWorkerInput({ ...brief, sourceBasis, ...(writeBasis !== null ? { writeBasis } : {}), ...(proposalBasis !== null ? { proposalBasis } : {}), sessionRequest: selectedScope.kind === "session" ? selectedScope.request : null, previousAuthorizationId: null });
-    if (proposalWorker) verifyWorkerPatchProposalExecutionBoundary(workerInput.executionBoundary, sourceBasis, selectedWorkspaceMode, proposalBasis, normalizedLimits.maxInputBytes);
-    else if (Object.hasOwn(workerInput, "executionBoundary")) verifyWorkerExecutionBoundary(workerInput.executionBoundary, sourceBasis, selectedWorkspaceMode, writeBasis, normalizedLimits.maxInputBytes);
-    const roleFile = path.join(projectRoot, ".head", "roles", `${workerInput.role}.md`);
+      : captureWorkerWriteBasis({ root: projectRoot, paths: brief.executionBoundary.ownedPaths, maxBytes: normalizedLimits.maxInputBytes, storage: inspected.storage });
+    const proposalBasis = proposalWorker ? captureWorkerWriteBasis({ root: projectRoot, paths: proposalPaths, maxBytes: normalizedLimits.maxInputBytes, storage: inspected.storage }) : null;
+    workerInput = verifyWorkerInput({ ...brief, sourceBasis, ...(writeBasis !== null ? { writeBasis } : {}), ...(proposalBasis !== null ? { proposalBasis } : {}), sessionRequest: selectedScope.kind === "session" ? selectedScope.request : null, previousAuthorizationId: null }, inspected.storage);
+    if (proposalWorker) verifyWorkerPatchProposalExecutionBoundary(workerInput.executionBoundary, sourceBasis, selectedWorkspaceMode, proposalBasis, normalizedLimits.maxInputBytes, inspected.storage);
+    else if (Object.hasOwn(workerInput, "executionBoundary")) verifyWorkerExecutionBoundary(workerInput.executionBoundary, sourceBasis, selectedWorkspaceMode, writeBasis, normalizedLimits.maxInputBytes, inspected.storage);
+    const roleFile = path.join(projectRoot, formatForVerifiedOwner(inspected).directory, "roles", `${workerInput.role}.md`);
     if (!fs.existsSync(roleFile) || !fs.lstatSync(roleFile).isFile() || fs.lstatSync(roleFile).isSymbolicLink()) {
       fail("Worker role must be registered before input authorization.", "INVALID_BOUNDED_WORKER_ROLE");
     }
@@ -597,7 +604,7 @@ export function buildRuntimeInvocationAuthorization({
     protocolVersion: workerInput?.proposalBasis ? PROPOSAL_WORKER_EXECUTION_AUTHORIZATION_VERSION : workerInput?.writeBasis ? WRITE_BOUND_WORKER_EXECUTION_AUTHORIZATION_VERSION : workerInput?.executionBoundary ? BOUND_WORKER_EXECUTION_AUTHORIZATION_VERSION : workerInput ? WORKER_EXECUTION_AUTHORIZATION_VERSION : RUNTIME_INVOCATION_AUTHORIZATION_VERSION,
     ...(workerInput ? { workerInput } : {}),
     projectId: inspected.project.projectId,
-    headSessionId: inspected.state.sessionId,
+    [formatForVerifiedOwner(inspected).sessionIdField]: inspected.state.sessionId,
     scope: executionScope,
     runtime: selectedRuntime,
     workspaceMode: selectedWorkspaceMode,
@@ -644,8 +651,8 @@ export function buildRuntimeInvocationAuthorization({
     "authorizationHash",
   ));
   if (!persist) return { status: "preview", authorization };
-  if (workerInput) return persistWorkerAuthorization(projectRoot, authorization, retry);
-  const file = authorizationFile(projectRoot, authorization.authorizationId);
+  if (workerInput) return persistWorkerAuthorization(projectRoot, authorization, retry, inspected.storage);
+  const file = authorizationFile(projectRoot, authorization.authorizationId, inspected.storage);
   if (fs.existsSync(file)) {
     return { status: "existing", file, authorization: readRuntimeInvocationAuthorization({ root: projectRoot, authorizationId: authorization.authorizationId }).authorization };
   }
@@ -654,13 +661,14 @@ export function buildRuntimeInvocationAuthorization({
 }
 
 export function verifyRuntimeInvocationAuthorization(document) {
+  const format = originalFormat(document);
   const legacyAuthorization = document?.protocolVersion === LEGACY_EXECUTION_AUTHORIZATION_VERSION;
   const proposalWorker = document?.protocolVersion === PROPOSAL_WORKER_EXECUTION_AUTHORIZATION_VERSION;
   const writeBoundWorker = document?.protocolVersion === WRITE_BOUND_WORKER_EXECUTION_AUTHORIZATION_VERSION;
   const boundWorker = proposalWorker || writeBoundWorker || document?.protocolVersion === BOUND_WORKER_EXECUTION_AUTHORIZATION_VERSION;
   const workerAuthorization = boundWorker || document?.protocolVersion === WORKER_EXECUTION_AUTHORIZATION_VERSION;
   assertFields(document, [
-    "schemaVersion", "kind", "protocolVersion", "projectId", "headSessionId", "scope", "runtime", "workspaceMode", "requiredAllowedActions",
+    "schemaVersion", "kind", "protocolVersion", "projectId", (format?.sessionIdField || "headSessionId"), "scope", "runtime", "workspaceMode", "requiredAllowedActions",
     "projectRootDigest", "runtimeProjectBindingId", "runtimeProtocolEvidenceId", "runtimeProtocolObservationId",
     "executionInput", "limits", "authorizationBoundary", "authority", "instructionAuthority", "promotionAuthority",
     "mutatesCanon", "authorizationId", "authorizationHash", ...(legacyAuthorization ? [] : ["runtimeSelection"]),
@@ -689,15 +697,15 @@ export function verifyRuntimeInvocationAuthorization(document) {
   if (!EXECUTION_SCOPE_KINDS.includes(scopeKind)) fail("Execution authorization scope is invalid.", "INVALID_RUNTIME_INVOCATION_AUTHORIZATION");
   const runScope = scopeKind === "run";
   if (workerAuthorization) {
-    const worker = verifyWorkerInput(document.workerInput);
-    verifyWorkerSourceBasis(worker.sourceBasis, normalizeLimits(document.limits).maxInputBytes);
+    const worker = verifyWorkerInput(document.workerInput, format);
+    verifyWorkerSourceBasis(worker.sourceBasis, normalizeLimits(document.limits).maxInputBytes, format);
     if (boundWorker !== Object.hasOwn(worker, "executionBoundary")) fail("Worker execution boundary version differs.", "INVALID_WORKER_EXECUTION_INPUT");
     if (writeBoundWorker !== Object.hasOwn(worker, "writeBasis")
       || writeBoundWorker !== Object.hasOwn(worker.executionBoundary || {}, "writeBasisDigest")) fail("Worker write basis version differs.", "INVALID_WORKER_EXECUTION_INPUT");
     if (proposalWorker !== Object.hasOwn(worker, "proposalBasis")
       || proposalWorker !== isWorkerPatchProposalMode(worker.executionBoundary?.mode)) fail("Worker proposal basis version differs.", "INVALID_WORKER_EXECUTION_INPUT");
-    if (proposalWorker) verifyWorkerPatchProposalExecutionBoundary(worker.executionBoundary, worker.sourceBasis, workspaceMode, worker.proposalBasis, normalizeLimits(document.limits).maxInputBytes);
-    else if (boundWorker) verifyWorkerExecutionBoundary(worker.executionBoundary, worker.sourceBasis, workspaceMode, worker.writeBasis ?? null, normalizeLimits(document.limits).maxInputBytes);
+    if (proposalWorker) verifyWorkerPatchProposalExecutionBoundary(worker.executionBoundary, worker.sourceBasis, workspaceMode, worker.proposalBasis, normalizeLimits(document.limits).maxInputBytes, format);
+    else if (boundWorker) verifyWorkerExecutionBoundary(worker.executionBoundary, worker.sourceBasis, workspaceMode, worker.writeBasis ?? null, normalizeLimits(document.limits).maxInputBytes, format);
     if (Buffer.byteLength(canonicalJson(worker)) > normalizeLimits(document.limits).maxInputBytes) {
       fail("Retained worker input exceeds its authorization bound.", "RUNTIME_INVOCATION_INPUT_LIMIT");
     }
@@ -728,8 +736,8 @@ export function verifyRuntimeInvocationAuthorization(document) {
     || document.runtime !== runtime
     || document.workspaceMode !== workspaceMode || canonicalJson(document.requiredAllowedActions) !== canonicalJson(expectedActions)
     || !legacyAuthorization && canonicalJson(document.runtimeSelection) !== canonicalJson(runtimeSelection)
-    || !/^head-[a-f0-9]{20}$/.test(document.projectId || "")
-    || !/^session-[A-Fa-f0-9-]{36}$/.test(document.headSessionId || "")
+    || (!format || !new RegExp(`^${format.projectPrefix}[a-f0-9]{20}$`).test(document.projectId || ""))
+    || !/^session-[A-Fa-f0-9-]{36}$/.test(sessionIdOf(document) || "")
     || (runScope && (!/^run-[0-9]+-[a-f0-9]{6}$/.test(document.scope.runId || "")
       || !/^whole-plan-[a-f0-9]{24}$/.test(document.scope.wholePlanId || "")
       || !/^execution-contract-[a-f0-9]{24}$/.test(document.scope.executionContractId || "")
@@ -769,7 +777,7 @@ export function readRuntimeInvocationAuthorization({ root = ".", authorizationId
   }
   const inspected = inspectProject(root);
   if (inspected.status === "not_initialized") fail("HEAD Agent Core is not initialized.", "NOT_INITIALIZED");
-  const file = authorizationFile(inspected.project.projectRoot, authorizationId);
+  const file = authorizationFile(inspected.project.projectRoot, authorizationId, inspected.storage);
   if (!fs.existsSync(file)) fail(`Runtime invocation authorization not found: ${authorizationId}.`, "RUNTIME_INVOCATION_AUTHORIZATION_NOT_FOUND");
   const authorization = verifyRuntimeInvocationAuthorization(readJson(file, "Runtime invocation authorization"));
   if (authorization.projectId !== inspected.project.projectId) fail("Runtime invocation authorization belongs to another project.", "RUNTIME_INVOCATION_PROJECT_MISMATCH");
@@ -782,7 +790,7 @@ export function inspectRuntimeInvocationExecutionLease({ root = ".", authorizati
   const authorization = readRuntimeInvocationAuthorization({ root: inspected.project.projectRoot, authorizationId }).authorization;
   const recordedReceiptFile = path.join(
     inspected.project.projectRoot,
-    ".head", "runtime", "invocations", authorization.authorizationId, "receipt.json",
+    formatForVerifiedOwner(inspected).directory, "runtime", "invocations", authorization.authorizationId, "receipt.json",
   );
   const recordedReceipt = fs.existsSync(recordedReceiptFile)
     ? verifyRuntimeInvocationLifecycleReceipt(readJson(recordedReceiptFile, "Runtime invocation lifecycle receipt"))
@@ -794,11 +802,12 @@ export function inspectRuntimeInvocationExecutionLease({ root = ".", authorizati
     status: "verified",
     authorizationId: authorization.authorizationId,
     projectId: authorization.projectId,
-    headSessionId: authorization.headSessionId,
+    [originalFormat(authorization).sessionIdField]: sessionIdOf(authorization),
     scope: authorization.scope,
     runtime: authorization.runtime,
     lease: inspectRuntimeExecutionLease({
       projectRoot: inspected.project.projectRoot,
+      storage: inspected.storage,
       projectId: inspected.project.projectId,
       authorizationId: authorization.authorizationId,
     }),
@@ -824,7 +833,7 @@ export function prepareRuntimeInvocationExecution(input = {}) {
 function prepareRuntimeInvocationInput({ root = ".", authorization, sessionRequest = "" } = {}, verifyCurrentSources) {
   const verified = verifyRuntimeInvocationAuthorization(authorization);
   const inspected = inspectProject(root);
-  if (inspected.status !== "ready" || inspected.project.projectId !== verified.projectId || inspected.state.sessionId !== verified.headSessionId) {
+  if (inspected.status !== "ready" || inspected.project.projectId !== verified.projectId || inspected.state.sessionId !== sessionIdOf(verified)) {
     fail("Runtime execution requires the authorization's exact project and HEAD Session.", "RUNTIME_INVOCATION_FENCE_MISMATCH");
   }
   if (verified.scope.kind === "run" && (inspected.state.activeRunId !== verified.scope.runId
@@ -844,16 +853,16 @@ function prepareRuntimeInvocationInput({ root = ".", authorization, sessionReque
   if (verified.workerInput) {
     requireCurrentWorkerMember(projectRoot, verified);
     if (verifyCurrentSources) {
-      requireCurrentWorkerSourceBasis({ root: projectRoot, basis: verified.workerInput.sourceBasis, maxBytes: verified.limits.maxInputBytes });
-      if (verified.workerInput.writeBasis) requireCurrentWorkerWriteBasis({ root: projectRoot, basis: verified.workerInput.writeBasis, maxBytes: verified.limits.maxInputBytes });
-      if (verified.workerInput.proposalBasis) requireCurrentWorkerWriteBasis({ root: projectRoot, basis: verified.workerInput.proposalBasis, maxBytes: verified.limits.maxInputBytes });
+      requireCurrentWorkerSourceBasis({ root: projectRoot, basis: verified.workerInput.sourceBasis, maxBytes: verified.limits.maxInputBytes, storage: inspected.storage });
+      if (verified.workerInput.writeBasis) requireCurrentWorkerWriteBasis({ root: projectRoot, basis: verified.workerInput.writeBasis, maxBytes: verified.limits.maxInputBytes, storage: inspected.storage });
+      if (verified.workerInput.proposalBasis) requireCurrentWorkerWriteBasis({ root: projectRoot, basis: verified.workerInput.proposalBasis, maxBytes: verified.limits.maxInputBytes, storage: inspected.storage });
     }
     if (sessionRequest && sessionRequest !== verified.workerInput.sessionRequest) fail("Worker Session request changed.", "RUNTIME_INVOCATION_INPUT_DRIFT");
     sessionRequest = verified.workerInput.sessionRequest || "";
   }
   let executionInput;
   if (verified.scope.kind === "run") {
-    const run = runCanon(projectRoot, verified.scope.runId);
+    const run = runCanon(projectRoot, verified.scope.runId, inspected.storage);
     const contract = lineage(projectRoot, verified.scope.executionContractId, "ExecutionContract");
     assertProjectActionsCurrent({ root: projectRoot, actions: contract.allowedActions || [] });
     const plan = lineage(projectRoot, verified.scope.wholePlanId, "WholePlanSnapshot");
@@ -1029,7 +1038,7 @@ function lifecycleSummary({ authorization, events, status, exitCode, signal, std
     protocolVersion: RUNTIME_LIFECYCLE_RECEIPT_VERSION,
     authorizationId: authorization.authorizationId,
     projectId: authorization.projectId,
-    headSessionId: authorization.headSessionId,
+    [originalFormat(authorization).sessionIdField]: sessionIdOf(authorization),
     scopeKind: authorization.scope.kind,
     runId: authorization.scope.runId,
     executionContractId: authorization.scope.executionContractId,
@@ -1100,9 +1109,10 @@ export function buildRuntimeInvocationLifecycleReceipt(input = {}) {
 }
 
 export function verifyRuntimeInvocationLifecycleReceipt(document) {
+  const format = originalFormat(document);
   const legacyReceipt = document?.protocolVersion === LEGACY_RUNTIME_LIFECYCLE_RECEIPT_VERSION;
   assertFields(document, [
-    "schemaVersion", "kind", "protocolVersion", "authorizationId", "projectId", "headSessionId", "scopeKind", "runId",
+    "schemaVersion", "kind", "protocolVersion", "authorizationId", "projectId", (format?.sessionIdField || "headSessionId"), "scopeKind", "runId",
     "executionContractId", "executionLeaseConsumptionId", "runtime", "status", "exitCode", "signal", "eventIds", "eventTypes",
     "unknownEventTypes", "providerSessionReferenceDigests", "eventCount", "stdoutBytes", "stderrBytes",
     "stdoutDigest", "stderrDigest", "inputDigestObserved", "processBoundary", "providerBoundary", "executionLeaseBoundary", "authority",
@@ -1148,8 +1158,8 @@ export function verifyRuntimeInvocationLifecycleReceipt(document) {
     || !statuses.has(document.status)
     || document.runtime !== normalizeRuntime(document.runtime)
     || !/^execution-authorization-[a-f0-9]{24}$/.test(document.authorizationId || "")
-    || !/^head-[a-f0-9]{20}$/.test(document.projectId || "")
-    || !/^session-[A-Fa-f0-9-]{36}$/.test(document.headSessionId || "")
+    || (!format || !new RegExp(`^${format.projectPrefix}[a-f0-9]{20}$`).test(document.projectId || ""))
+    || !/^session-[A-Fa-f0-9-]{36}$/.test(sessionIdOf(document) || "")
     || !EXECUTION_SCOPE_KINDS.includes(document.scopeKind)
     || (document.scopeKind === "run" && (!/^run-[0-9]+-[a-f0-9]{6}$/.test(document.runId || "")
       || !/^execution-contract-[a-f0-9]{24}$/.test(document.executionContractId || "")))

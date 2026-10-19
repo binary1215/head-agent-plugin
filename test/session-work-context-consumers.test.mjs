@@ -1,3 +1,4 @@
+import { relativeProjectArtifact } from "../scripts/lib/project-storage-format.mjs";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
@@ -106,7 +107,7 @@ function withoutSyncWrites(action) {
 }
 function assertHookWorkScope(value, work) {
   assert.equal(value.workCoverage.status, work.status);
-  if (work.status === "work_context_partial") assert.match(value.expansion, /head_session_work_read/u);
+  if (work.status === "work_context_partial") assert.match(value.expansion, /lode_session_work_read/u);
   if (value.workCoverage.coverage) {
     assert.deepEqual(value.workCoverage.coverage, work.coverage);
     assert.deepEqual(value.workCoverage.omissions, work.omissions);
@@ -120,8 +121,9 @@ function assertHookWorkScope(value, work) {
     assert.match(value.scope, /historical|hint/i); assert.match(value.scope, /inspected/i);
   }
 }
-function navigationCases(root) {
-  const file = path.join(root, ".head/graph-discovery/index.json"), raw = fs.readFileSync(file, "utf8"), legacy = JSON.parse(raw);
+function navigationCases(f) {
+  const { root } = f;
+  const file = path.join(root, relativeProjectArtifact(f.storage, "graph-discovery", "index.json")), raw = fs.readFileSync(file, "utf8"), legacy = JSON.parse(raw);
   assert.equal(legacy.sessionWorkNavigation?.version, 1); delete legacy.sessionWorkNavigation;
   return ["hinted", "legacy", "missing"].map(mode => ({ mode, prepare() {
     if (mode === "missing") fs.unlinkSync(file); else fs.writeFileSync(file, mode === "hinted" ? raw : JSON.stringify(legacy));
@@ -229,8 +231,8 @@ test("shared optional schema travels through direct record, CLI JSON and checkpo
   const topics = ["ConnectedTopicMhjv4172", "Alternative topic", "ConnectedTopicMhjv4172"];
   const root = (await call(f, "head_session_work_record", { evidence: { summary: "Synthetic initial anchor", workTopics: topics } })).structuredContent;
   assert.deepEqual(root.evidence.content.workTopics, topics);
-  const recordSchema = catalogTools.find(tool => tool.name === "head_session_work_record").inputSchema.properties.evidence;
-  const checkpointSchema = catalogTools.find(tool => tool.name === "head_checkpoint_sync").inputSchema.properties.work_evidence;
+  const recordSchema = catalogTools.find(tool => tool.name === "lode_session_work_record").inputSchema.properties.evidence;
+  const checkpointSchema = catalogTools.find(tool => tool.name === "lode_checkpoint_sync").inputSchema.properties.work_evidence;
   assert.deepEqual(recordSchema.properties.workTopics, checkpointSchema.properties.workTopics);
   assert.equal(recordSchema.properties.workTopics.type, "array");
   assert.equal(recordSchema.properties.workTopics.items.type, "string");
@@ -373,7 +375,7 @@ for (const runtime of ["codex", "claude"]) test(`${runtime} private startup grou
 test("organized originals and overlays reach CLI, direct/router MCP and entry with zero writes", async t => {
   const f = fixture(t), saved = representative(f);
   let selectedBodies;
-  for (const variant of navigationCases(f.root)) {
+  for (const variant of navigationCases(f)) {
   variant.prepare(); const before = snapshot(f.base), expected = withoutSyncWrites(() => f.read());
   assertDefaultInspection(expected, variant.mode, 14);
   if (variant.mode === "hinted") defaultAccounting(expected); else accounting(expected);
@@ -470,7 +472,7 @@ test("hinted and canonical-fallback counts disclose actual inspection without in
   const latest = f.save({ summary: "Latest bounded result", executionObservation: { state: "ended", target: exact(target) },
     pending: ["X remains; no repeated effect"], unknowns: ["External outcome is unknown"] });
   const options = { maxRecords: 1 }, input = path.join(f.base, "one-body.json"); fs.writeFileSync(input, JSON.stringify(options));
-  for (const variant of navigationCases(f.root)) {
+  for (const variant of navigationCases(f)) {
   variant.prepare();
   const before = snapshot(f.base);
   await withoutSyncWrites(async () => {
@@ -505,7 +507,7 @@ for (const runtime of ["codex", "claude"]) test(`${runtime} public synthetic Hoo
   const f = fixture(t, "CURRENT SELECTED PURPOSE: investigate locally"), saved = representative(f);
   const direction = updateProjectDirection({ root: f.root, input: { goal: "CURRENT COMMON GOAL: explain only", constraints: ["No external effects"], cancelledActions: ["deployment"] } }).direction;
   const synced = checkpoint(f), caller = hostFixture(f, runtime);
-  for (const variant of navigationCases(f.root)) {
+  for (const variant of navigationCases(f)) {
   variant.prepare(); const before = snapshot(f.base);
   const entry = withoutSyncWrites(() => caller.host.enter({ root: f.root })), { value, text } = withoutSyncWrites(() => caller.read());
   assertHookWorkScope(value, entry.workContext);

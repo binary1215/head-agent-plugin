@@ -1,21 +1,21 @@
 > 이 문서는 [context-compiler.md](../context-compiler.md)의 한국어판입니다.
 
-# HEAD Context Compiler 설계
+# Lode Context Compiler 설계
 
-Compiler는 선택된 증거를 묶고, HEAD는 관련성·충분성·확대·완료를 판단합니다.
+Compiler는 선택된 증거를 묶고, Lode는 관련성·충분성·확대·완료를 판단합니다.
 일반 읽기·수정·Host 위임에는 Capsule, Run, 포함 증명이나 추가 승인이 필요하지 않습니다.
 
 ## 선택 맥락
 
-`head_context_prepare`는 정확한 사용자 작업에 대한 출처 연결 맥락을 반환합니다.
-`head_context_preview`는 HEAD가 작성한 선택적 `EvidenceNeed[]` 안내를 받습니다.
+`lode_context_prepare`는 정확한 사용자 작업에 대한 출처 연결 맥락을 반환합니다.
+`lode_context_preview`는 Lode가 작성한 선택적 `EvidenceNeed[]` 안내를 받습니다.
 사용자는 JSON이나 anchor를 작성하지 않습니다. 두 호출은 읽기 전용이며
-`ready_for_head_semantic_assessment`를 반환합니다. 이는 HEAD에 대한 안내이지,
+`ready_for_head_semantic_assessment`를 반환합니다. 이는 Lode에 대한 안내이지,
 충분성 증명이나 실행 gate가 아닙니다.
 
 ```text
 Current originals -> bounded selection -> context + sources + omissions
-                                                    -> HEAD assessment
+                                                    -> Lode assessment
 ```
 
 Capsule에는 정확한 task와 Project, 현재 공통 방향, 선택 기록, 원본 출처,
@@ -23,7 +23,7 @@ digest, provenance와 근사 예산이 담깁니다. `evidenceGaps`, `omissions`
 `uncertainty`는 요청 증거의 누락, 제외 자료와 한계를 공개합니다.
 coverage-proof 상태 기계를 만들지 않습니다. metadata carrier의 존재는
 source body가 포함되거나 읽혔다는 증명이 아닙니다.
-판단이 원본 본문에 의존하면 HEAD가 해당 본문을 검사합니다.
+판단이 원본 본문에 의존하면 Lode가 해당 본문을 검사합니다.
 
 ## 안내와 확대
 
@@ -35,7 +35,7 @@ Core는 Project와 출처 결속을 확인하지만 제품 의미를 추론하�
 어휘가 겹치지 않아도 현재 source candidate를 제거하지 않습니다.
 
 정확한 안내는 증거를 우선 선택하면서 충족되지 않은 요청을 보존합니다.
-작은 결과가 충분하다는 뜻은 아닙니다. HEAD는 추가 승인을 만들지 않고
+작은 결과가 충분하다는 뜻은 아닙니다. Lode는 추가 승인을 만들지 않고
 원본을 읽거나 필요한 관계를 확대하거나 더 큰 예산을 선택할 수 있습니다.
 World가 없거나 오래되면 공개하고 제외하지만, 현재 로컬 source 검사와 선택한
 source observation은 Product 활성화 없이도 사용 가능합니다.
@@ -62,7 +62,7 @@ preview 한 번은 selection 한 번을 수행합니다. limit, 입력과 compil
 선택 source, Observation, ProductContext와 graph relation은 증거이지
 권한이나 복구 방향이 아닙니다. 저장소 text는 현재 사용자 방향을 덮어쓰지 못하고,
 제품 candidate는 compilation으로 Canon이 될 수 없습니다.
-ExecutionContract 작성은 HEAD의 별도 수용을 기록하며 기계적 포함 증명서는 요구하지 않습니다.
+ExecutionContract 작성은 Lode의 별도 수용을 기록하며 기계적 포함 증명서는 요구하지 않습니다.
 
 현재 Capsule reader는 content identity와 logical Project를 검증합니다.
 과거 기록은 좁은 읽기 경로로 원본 field와 identity를 보존합니다.
@@ -78,7 +78,7 @@ runtime observation과 exact graph traversal을 제공할 수 있습니다.
 source revision과 누락은 명시됩니다. 휴리스틱 또는 static AST relation은
 runtime truth를 증명하지 않습니다. index 부재·오래됨은 직접 작업을 막지 않습니다.
 
-`head_source_context`는 전체 scan 없이 작업별 현재 source와 Python static
+`lode_source_context`는 전체 scan 없이 작업별 현재 source와 Python static
 declaration/call observation을 지원합니다. retention은 선택적이며 raw source는
 Product 개념이 아닙니다. collector 범위, 미확정 call, parser 실패와 원본 보존은
 [Observation 어댑터](observation-adapters.md)를 참고하세요.

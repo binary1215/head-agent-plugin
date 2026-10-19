@@ -1,3 +1,4 @@
+import { formatForVerifiedOwner, familyFormatForOriginal } from "./project-storage-format.mjs";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -81,16 +82,16 @@ function snapshot(value) {
   for (const key of ["endpointId", "terminalId", "processProofHash"]) if (new Set(endpoints.map(item => item[key])).size !== endpoints.length) fail("Host endpoint ownership is not unique.", "INVALID_WORKSPACE_HOST_EXPORT_ENDPOINT");
   return { ...value, endpoints };
 }
-export function publishWorkspaceHostExportSnapshot({ exportRoot, projectRoot, hostInstanceId, endpoints } = {}) {
+export function publishWorkspaceHostExportSnapshot({ exportRoot, projectRoot, hostInstanceId, endpoints, storage } = {}) {
   const scope = roots({ exportRoot, projectRoot }); const file = paths(scope.exportRoot).current;
-  const value = snapshot({ schemaVersion: 1, kind: "WorkspaceHostExportSnapshot", protocol: { name: "head-agent-core-workspace-host-export", version: WORKSPACE_HOST_EXPORT_VERSION }, hostInstanceId: id(hostInstanceId), snapshotSequence: `snapshot-${crypto.randomUUID()}`, endpoints });
+  const value = snapshot({ schemaVersion: 1, kind: "WorkspaceHostExportSnapshot", protocol: { name: formatForVerifiedOwner(storage).protocol("head-agent-core-workspace-host-export"), version: WORKSPACE_HOST_EXPORT_VERSION }, hostInstanceId: id(hostInstanceId), snapshotSequence: `snapshot-${crypto.randomUUID()}`, endpoints });
   for (const item of value.endpoints) if (!within(scope.projectRoot, directory(item.cwd))) fail("Host endpoint is outside project.", "WORKSPACE_HOST_PROJECT_MISMATCH");
   const existing = read(scope.exportRoot, file, true);
   if (existing && existing.hostInstanceId === value.hostInstanceId && json(snapshot(existing).endpoints) === json(value.endpoints)) return existing;
   write(scope.exportRoot, file, value); return value;
 }
 const current = scope => snapshot(read(scope.exportRoot, paths(scope.exportRoot).current));
-export function createWorkspaceHostExportDriver({ exportRoot, projectRoot, caller, processProof } = {}) {
+export function createWorkspaceHostExportDriver({ exportRoot, projectRoot, caller, processProof, storage } = {}) {
   const scope = roots({ exportRoot, projectRoot }), proof = workspaceHostExportProcessProofHash(processProof);
   if (!caller) fail("Host caller is required.", "WORKSPACE_HOST_PROCESS_PROOF_MISMATCH");
   [caller.workspaceId, caller.tabId, caller.endpointId].forEach(id);
@@ -100,10 +101,10 @@ export function createWorkspaceHostExportDriver({ exportRoot, projectRoot, calle
     if (selected.length !== 1 || !crypto.timingSafeEqual(Buffer.from(selected[0].processProofHash, "hex"), Buffer.from(proof, "hex"))) fail("Host process does not own this endpoint.", "WORKSPACE_HOST_PROCESS_PROOF_MISMATCH");
     return value;
   };
-  const descriptor = { schemaVersion: 1, kind: "WorkspaceHostDriverDescriptor", protocol: { name: "head-agent-core-workspace-host-driver", version: WORKSPACE_HOST_COORDINATION_VERSION }, hostKind: "host-export", transport: "filesystem-snapshot", providerNeutral: true, tuiScraping: false, providerSessionIdentityPersisted: false, deliverySupported: false };
+  const descriptor = { schemaVersion: 1, kind: "WorkspaceHostDriverDescriptor", protocol: { name: formatForVerifiedOwner(storage).protocol("head-agent-core-workspace-host-driver"), version: WORKSPACE_HOST_COORDINATION_VERSION }, hostKind: "host-export", transport: "filesystem-snapshot", providerNeutral: true, tuiScraping: false, providerSessionIdentityPersisted: false, deliverySupported: false };
   return Object.freeze({
     describe() { return descriptor; },
-    snapshot() { const value = bound(); return { schemaVersion: 1, kind: "WorkspaceHostSnapshot", protocol: { name: "head-agent-core-workspace-host-snapshot", version: WORKSPACE_HOST_COORDINATION_VERSION }, hostKind: descriptor.hostKind, transport: descriptor.transport, hostInstanceId: value.hostInstanceId, snapshotSequence: value.snapshotSequence, endpoints: value.endpoints.map(item => ({ ...endpoint(item), ownershipId: item.processProofHash })) }; },
+    snapshot() { const value = bound(); return { schemaVersion: 1, kind: "WorkspaceHostSnapshot", protocol: { name: formatForVerifiedOwner(storage).protocol("head-agent-core-workspace-host-snapshot"), version: WORKSPACE_HOST_COORDINATION_VERSION }, hostKind: descriptor.hostKind, transport: descriptor.transport, hostInstanceId: value.hostInstanceId, snapshotSequence: value.snapshotSequence, endpoints: value.endpoints.map(item => ({ ...endpoint(item), ownershipId: item.processProofHash })) }; },
     send() { fail("Host export is attachment-only; use ordinary Host messaging.", "WORKSPACE_HOST_EXPORT_DELIVERY_UNSUPPORTED"); },
   });
 }

@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { formatForVerifiedOwner, relativeProjectArtifact, resolveProjectStorage } from "./project-storage-format.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { atomicWriteArtifact } from "./artifact-storage.mjs";
@@ -19,6 +20,9 @@ export const PROJECT_GRAPH_RECORD_DIRECTORIES = Object.freeze([
 ]);
 const singletonPaths = [".head/context/product-model.json", ".head/world-model/current.json",
   ".head/sessions/current.json", ".head/project-direction/current.json"];
+export const projectGraphIndexPath = owner => relativeProjectArtifact(owner, "graph-discovery", "index.json");
+export const projectGraphRecordDirectories = owner => PROJECT_GRAPH_RECORD_DIRECTORIES.map(relative => relativeProjectArtifact(owner, relative.slice(6)));
+const ownedPaths = (paths, owner) => paths.map(relative => relativeProjectArtifact(owner, relative.slice(6)));
 const MAX_RECORDS = 10000;
 const MAX_BYTES = 16 * 1024 * 1024;
 const MAX_INVENTORY_BYTES = 128 * 1024 * 1024;
@@ -53,11 +57,17 @@ export function safeGraphFile(root, relative) {
 
 export function readGraphProject(root) {
   const projectRoot = fs.realpathSync(path.resolve(root));
-  const file = safeGraphFile(projectRoot, ".head/project.json");
-  if (!fs.existsSync(file)) return { projectRoot, project: null };
+  const storage = resolveProjectStorage(projectRoot, { readLegacyProject() {
+    const legacyFile = safeGraphFile(projectRoot, ".head/project.json");
+    const project = JSON.parse(fs.readFileSync(legacyFile, "utf8"));
+    if (project.schemaVersion !== 1 || project.projectRoot !== projectRoot || !/^head-[a-f0-9]{20}$/.test(project.projectId || "")) fail("PROJECT_IDENTITY_MISMATCH");
+    return project;
+  } });
+  if (!storage) return { projectRoot, project: null, storage: null };
+  const file = safeGraphFile(projectRoot, relativeProjectArtifact(storage, "project.json"));
   const project = JSON.parse(fs.readFileSync(file, "utf8"));
-  if (project.schemaVersion !== 1 || project.projectRoot !== projectRoot || !/^head-[a-f0-9]{20}$/.test(project.projectId || "")) fail("PROJECT_IDENTITY_MISMATCH");
-  return { projectRoot, project };
+  if (project.schemaVersion !== 1 || project.projectRoot !== projectRoot || !new RegExp(`^${formatForVerifiedOwner(storage).projectPrefix}[a-f0-9]{20}$`).test(project.projectId || "")) fail("PROJECT_IDENTITY_MISMATCH");
+  return { projectRoot, project, storage };
 }
 
 export function readGraphRecord(root, relative, maximum = MAX_BYTES) {
@@ -92,7 +102,7 @@ function navigationRows(index) {
   return rows;
 }
 
-function buildSessionWorkNavigation(root, entries, context, bytesByPath = new Map()) {
+function buildSessionWorkNavigation(root, entries, context, bytesByPath = new Map(), storage = null) {
   const owners = new Map(), rows = [];
   for (const entry of entries) {
     const selector = sessionWorkPath(entry.path);
@@ -100,7 +110,7 @@ function buildSessionWorkNavigation(root, entries, context, bytesByPath = new Ma
     try {
       if (!owners.has(selector.statePath)) {
         try { owners.set(selector.statePath, verifySessionWorkEvidenceOwner({ root,
-          projectBytes: context.read(".head/project.json", MAX_REFERENCE_BYTES), stateBytes: context.read(selector.statePath, MAX_REFERENCE_BYTES) })); }
+          storage, projectBytes: context.read(relativeProjectArtifact(storage, "project.json"), MAX_REFERENCE_BYTES), stateBytes: context.read(selector.statePath, MAX_REFERENCE_BYTES) })); }
         catch { owners.set(selector.statePath, null); }
       }
       const owner = owners.get(selector.statePath);
@@ -119,7 +129,7 @@ function buildSessionWorkNavigation(root, entries, context, bytesByPath = new Ma
 // current originals. No inventory refresh, other Session reads or write/repair.
 export function readSessionWorkNavigationHints(owner, regularFileIds) {
   try {
-    const index = readGraphRecord(owner.root, PROJECT_GRAPH_INDEX_PATH).document;
+    const index = readGraphRecord(owner.root, projectGraphIndexPath(owner.storage)).document;
     if (index.kind !== "ProjectGraphRecordIndex" || index.version !== 1 || index.projectId !== owner.projectId
       || index.rootDigest !== hash(owner.root) || index.authority !== "P4-replaceable-record-inventory"
       || index.instructionAuthority !== false || index.promotionAuthority !== false || index.recoveryAuthority !== false
@@ -127,7 +137,7 @@ export function readSessionWorkNavigationHints(owner, regularFileIds) {
     verifyArtifactAuthorityBoundary("ProjectGraphRecordIndex", index.authorityBoundary);
     const paths = new Set();
     for (const entry of index.entries) {
-      if (typeof entry.path !== "string" || !entry.path.startsWith(".head/") || entry.path.includes("\\")
+      if (typeof entry.path !== "string" || !entry.path.startsWith(`${formatForVerifiedOwner(owner.storage).directory}/`) || entry.path.includes("\\")
         || entry.path.split("/").some(part => !part || part === "." || part === "..") || paths.has(entry.path)
         || !/^[a-f0-9]{64}$/.test(entry.sha256 || "") || !Number.isSafeInteger(entry.bytes) || entry.bytes < 0) return new Map();
       paths.add(entry.path);
@@ -143,7 +153,7 @@ export function readSessionWorkNavigationHints(owner, regularFileIds) {
 
 // Exact reader dependencies, not semantic nodes. Absence is an observation
 // whose later appearance invalidates a proof; malformed work stays local.
-function sessionWorkDependencies(root, entries, context) {
+function sessionWorkDependencies(root, entries, context, storage) {
   const dependencies = { version: 1, entries: [], layout: [], unavailable: [], complete: true };
   const seen = new Set(); let total = 0;
   const add = (relative, maximum = MAX_REFERENCE_BYTES) => {
@@ -163,7 +173,7 @@ function sessionWorkDependencies(root, entries, context) {
   for (const entry of entries) {
     const selector = sessionWorkPath(entry.path);
     if (!selector) continue;
-    add(selector.statePath); add(".head/sessions/current.json");
+    add(selector.statePath); add(relativeProjectArtifact(storage, "sessions/current.json"));
     try {
       const content = JSON.parse(context.read(entry.path, MAX_RECORD_BYTES)).content;
       const normalized = normalizeSessionWorkEvidence(Object.fromEntries(Object.entries(content || {}).filter(([, v]) => v !== null)));
@@ -173,7 +183,7 @@ function sessionWorkDependencies(root, entries, context) {
       for (const ref of normalized.references) {
         add(ref.path);
         const work = ref.kind === "artifact" && sessionWorkPath(ref.path);
-        if (work) { add(work.statePath); add(".head/sessions/current.json"); }
+        if (work) { add(work.statePath); add(relativeProjectArtifact(storage, "sessions/current.json")); }
       }
     } catch { /* Typed verifier reports this original only; its bytes remain in proof. */ }
   }
@@ -182,14 +192,14 @@ function sessionWorkDependencies(root, entries, context) {
 }
 
 export function collectProjectGraphInventory(root) {
-  const { projectRoot, project } = readGraphProject(root);
+  const { projectRoot, project, storage } = readGraphProject(root);
   if (!project) return { projectRoot, project, entries: [], unavailable: [], complete: false, recordsDigest: null };
-  const entries = [], unavailable = [], workContext = createSessionWorkReadContext(projectRoot);
+  const entries = [], unavailable = [], workContext = createSessionWorkReadContext(projectRoot, storage);
   let complete = true, examinedBytes = 0;
   const add = (relative) => {
-    if (relative.startsWith(".head/sessions/by-id/") && !/^\.head\/sessions\/by-id\/session-[a-fA-F0-9-]{36}\/current\.json$/.test(relative) && !sessionWorkPath(relative)) return;
-    if (relative.startsWith(".head/sessions/work-evidence/") && !sessionWorkPath(relative)) return;
-    if (relative.startsWith(".head/sessions/runs/") && !relative.endsWith("/run.json")) return;
+    if (relative.startsWith(relativeProjectArtifact(storage, "sessions/by-id/")) && !new RegExp(`^\\${formatForVerifiedOwner(storage).directory}/sessions/by-id/session-[a-fA-F0-9-]{36}/current\\.json$`).test(relative) && !sessionWorkPath(relative)) return;
+    if (relative.startsWith(relativeProjectArtifact(storage, "sessions/work-evidence/")) && !sessionWorkPath(relative)) return;
+    if (relative.startsWith(relativeProjectArtifact(storage, "sessions/runs/")) && !relative.endsWith("/run.json")) return;
     if (entries.length >= MAX_RECORDS) { complete = false; return; }
     try {
       const file = safeGraphFile(projectRoot, relative);
@@ -215,8 +225,8 @@ export function collectProjectGraphInventory(root) {
       }
     } catch (error) { unavailable.push({ path: relative, reasonCode: error.code || "PROJECT_GRAPH_DIRECTORY_UNAVAILABLE" }); }
   };
-  for (const directory of PROJECT_GRAPH_RECORD_DIRECTORIES) visit(directory);
-  for (const relative of singletonPaths) {
+  for (const directory of projectGraphRecordDirectories(storage)) visit(directory);
+  for (const relative of ownedPaths(singletonPaths, storage)) {
     try { if (fs.existsSync(safeGraphFile(projectRoot, relative))) add(relative); }
     catch (error) { unavailable.push({ path: relative, reasonCode: error.code }); }
   }
@@ -254,7 +264,7 @@ export function collectProjectGraphInventory(root) {
       }
     } catch (error) { dependencies.unavailable.push({ path: relative, reasonCode: error.code || "PROJECT_GRAPH_DEPENDENCY_UNAVAILABLE" }); }
   };
-  for (const directory of ONBOARDING_READER_DIRECTORIES) dependencyDirectory(directory);
+  for (const directory of ownedPaths(ONBOARDING_READER_DIRECTORIES, storage)) dependencyDirectory(directory);
   // A committed boundary also verifies exact retained World bytes. Read only
   // path references here; the authority-aware reader validates their meaning.
   for (const entry of [...dependencies.entries].filter((entry) => entry.path.endsWith("/boundary.json"))) {
@@ -266,9 +276,9 @@ export function collectProjectGraphInventory(root) {
     } catch { /* Malformed boundary is rejected by its original typed reader. */ }
   }
   for (const field of ["entries", "layout", "unavailable"]) dependencies[field].sort((a, b) => a.path.localeCompare(b.path));
-  const readerDependencies = { onboarding: dependencies, sessionWork: sessionWorkDependencies(projectRoot, entries, workContext) };
+  const readerDependencies = { onboarding: dependencies, sessionWork: sessionWorkDependencies(projectRoot, entries, workContext, storage) };
   const recordsDigest = projectGraphDigest({ projectId: project.projectId, projectRoot, entries, unavailable, complete, readerDependencies });
-  return { projectRoot, project, entries, unavailable, complete, readerDependencies, recordsDigest, workContext };
+  return { projectRoot, project, storage, entries, unavailable, complete, readerDependencies, recordsDigest, workContext };
 }
 
 export function refreshProjectGraphIndex({ root = "." } = {}) {
@@ -278,36 +288,37 @@ export function refreshProjectGraphIndex({ root = "." } = {}) {
     rootDigest: hash(inventory.projectRoot), recordsDigest: inventory.recordsDigest,
     entries: inventory.entries, unavailable: inventory.unavailable, complete: inventory.complete,
     readerDependencies: inventory.readerDependencies,
-    sessionWorkNavigation: buildSessionWorkNavigation(inventory.projectRoot, inventory.entries, inventory.workContext),
+    sessionWorkNavigation: buildSessionWorkNavigation(inventory.projectRoot, inventory.entries, inventory.workContext, new Map(), inventory.storage),
     authorityBoundary: artifactAuthorityBoundary("ProjectGraphRecordIndex"),
     authority: "P4-replaceable-record-inventory", instructionAuthority: false, promotionAuthority: false, recoveryAuthority: false };
-  return publishInventory(inventory.projectRoot, payload);
+  return publishInventory(inventory.projectRoot, payload, inventory.storage);
 }
 
-function publishInventory(root, payload) {
+function publishInventory(root, payload, storage) {
   const content = `${canonicalGraphJson(payload)}\n`;
-  const file = safeGraphFile(root, PROJECT_GRAPH_INDEX_PATH);
-  if (fs.existsSync(file) && fs.readFileSync(file, "utf8") === content) return { status: "reused", indexPath: PROJECT_GRAPH_INDEX_PATH, recordsDigest: payload.recordsDigest, recordCount: payload.entries.length, ordinaryWorkBlocked: false };
+  const indexPath = projectGraphIndexPath(storage);
+  const file = safeGraphFile(root, indexPath);
+  if (fs.existsSync(file) && fs.readFileSync(file, "utf8") === content) return { status: "reused", indexPath, recordsDigest: payload.recordsDigest, recordCount: payload.entries.length, ordinaryWorkBlocked: false };
   atomicWriteArtifact(file, content);
-  return { status: "indexed", indexPath: PROJECT_GRAPH_INDEX_PATH, recordsDigest: payload.recordsDigest, recordCount: payload.entries.length, ordinaryWorkBlocked: false };
+  return { status: "indexed", indexPath, recordsDigest: payload.recordsDigest, recordCount: payload.entries.length, ordinaryWorkBlocked: false };
 }
 
 function updateProjectGraphIndex(root, changedPaths) {
-  const { projectRoot, project } = readGraphProject(root);
+  const { projectRoot, project, storage } = readGraphProject(root);
   if (!project) return { status: "not-initialized", ordinaryWorkBlocked: false };
-  const indexFile = safeGraphFile(projectRoot, PROJECT_GRAPH_INDEX_PATH);
+  const indexFile = safeGraphFile(projectRoot, projectGraphIndexPath(storage));
   if (!fs.existsSync(indexFile)) return refreshProjectGraphIndex({ root });
   const previous = JSON.parse(fs.readFileSync(indexFile, "utf8"));
-  if (!previous.readerDependencies?.sessionWork?.version || changedPaths.some((relative) => relative.startsWith(".head/onboarding/")
-    || relative.startsWith(".head/world-model/snapshots/"))) return refreshProjectGraphIndex({ root });
+  if (!previous.readerDependencies?.sessionWork?.version || changedPaths.some((relative) => relative.startsWith(relativeProjectArtifact(storage, "onboarding/"))
+    || relative.startsWith(relativeProjectArtifact(storage, "world-model/snapshots/")))) return refreshProjectGraphIndex({ root });
   if (previous.kind !== "ProjectGraphRecordIndex" || previous.version !== 1 || previous.projectId !== project.projectId
     || previous.rootDigest !== hash(projectRoot) || !Array.isArray(previous.entries) || previous.entries.length > MAX_RECORDS
     || !Array.isArray(previous.unavailable) || previous.authority !== "P4-replaceable-record-inventory"
     || previous.instructionAuthority !== false || previous.promotionAuthority !== false || previous.recoveryAuthority !== false
-    || previous.entries.some((entry) => typeof entry.path !== "string" || entry.path.includes("..") || !entry.path.startsWith(".head/")
+    || previous.entries.some((entry) => typeof entry.path !== "string" || entry.path.includes("..") || !entry.path.startsWith(`${formatForVerifiedOwner(storage).directory}/`)
       || !/^[a-f0-9]{64}$/.test(entry.sha256 || "") || !Number.isSafeInteger(entry.bytes) || entry.bytes < 0)) return refreshProjectGraphIndex({ root });
   const entries = new Map(previous.entries.map((entry) => [entry.path, entry]));
-  const changedBytes = new Map(), workContext = createSessionWorkReadContext(projectRoot);
+  const changedBytes = new Map(), workContext = createSessionWorkReadContext(projectRoot, storage);
   const unavailable = previous.unavailable.filter((entry) => !changedPaths.includes(entry.path));
   for (const relative of changedPaths) {
     const target = safeGraphFile(projectRoot, relative);
@@ -324,7 +335,7 @@ function updateProjectGraphIndex(root, changedPaths) {
   const readerDependencies = { ...previous.readerDependencies };
   const changedWork = boundedEntries.filter(entry => changedPaths.includes(entry.path) && sessionWorkPath(entry.path));
   if (changedWork.length) {
-    const added = sessionWorkDependencies(projectRoot, changedWork, workContext);
+    const added = sessionWorkDependencies(projectRoot, changedWork, workContext, storage);
     const retained = previous.readerDependencies.sessionWork;
     const combine = field => [...new Map([...retained[field], ...added[field]].map(entry => [entry.path, entry])).values()].sort((a, b) => a.path.localeCompare(b.path));
     const repaired = new Set([...added.entries, ...added.layout].map(entry => entry.path));
@@ -335,9 +346,9 @@ function updateProjectGraphIndex(root, changedPaths) {
     readerDependencies });
   const retainedRows = navigationRows({ ...previous, entries: boundedEntries }).values();
   const sessionWorkNavigation = { version: 1, rows: [...retainedRows].filter(row => !changedPaths.includes(row.path))
-    .concat(buildSessionWorkNavigation(projectRoot, changedWork, workContext, changedBytes).rows).sort((a, b) => a.path.localeCompare(b.path)) };
+    .concat(buildSessionWorkNavigation(projectRoot, changedWork, workContext, changedBytes, storage).rows).sort((a, b) => a.path.localeCompare(b.path)) };
   return publishInventory(projectRoot, { ...previous, authorityBoundary: artifactAuthorityBoundary("ProjectGraphRecordIndex"),
-    entries: boundedEntries, unavailable, complete, recordsDigest, readerDependencies, sessionWorkNavigation });
+    entries: boundedEntries, unavailable, complete, recordsDigest, readerDependencies, sessionWorkNavigation }, storage);
 }
 
 // Writers already verified/persisted their evidence. Index failure is a loss

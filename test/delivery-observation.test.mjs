@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { initializeProject } from "../scripts/lib/head-core.mjs";
+import { initializeProject, inspectProject } from "../scripts/lib/head-core.mjs";
 import { deliveryObservationDescriptor, inspectDeliveryState, recordDeliveryObservation } from "../scripts/lib/delivery-observation.mjs";
 import { loadObservationArtifacts, recordCollectedObservation } from "../scripts/lib/observation-store.mjs";
 import { verifyTemporalProvenanceGraph } from "../scripts/lib/temporal-provenance.mjs";
@@ -30,6 +30,7 @@ async function fixture(t) {
   const root = fs.mkdtempSync(path.join(testParent, "head-agent-delivery-observation-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const layout = inspectProject(root).storage;
   fs.mkdirSync(path.join(root, "revisions"), { recursive: true });
   fs.writeFileSync(path.join(root, "revisions", "v1.txt"), "public fixture revision one\n");
   fs.writeFileSync(path.join(root, "revisions", "v2.txt"), "public fixture revision two\n");
@@ -37,7 +38,7 @@ async function fixture(t) {
   const revisions = new Map(built.snapshot.temporalProvenanceGraph.nodes
     .filter((node) => node.kind === "FileRevision")
     .map((node) => [node.path, node]));
-  return { root, initialWorld: built.snapshot, v1: revisions.get("revisions/v1.txt"), v2: revisions.get("revisions/v2.txt") };
+  return { root, layout, initialWorld: built.snapshot, v1: revisions.get("revisions/v1.txt"), v2: revisions.get("revisions/v2.txt") };
 }
 
 function input({ targetKey, revision, revisionKey, suffix, sequence = 0, outcome = "applied", predecessorObservationId = null, rollbackTargetObservationId = null, environmentKey = "environment-a", artifactKey = "service.public-api", worldModelId, exact = true, observedAt = "2026-09-01T00:00:00.000Z" }) {
@@ -65,9 +66,9 @@ function input({ targetKey, revision, revisionKey, suffix, sequence = 0, outcome
 }
 
 test("delivery history derives mixed, failed, and rollback state without authority amplification", async (t) => {
-  const { root, initialWorld, v1, v2 } = await fixture(t);
-  const canonFile = path.join(root, ".head", "context", "product-model.json");
-  const sessionFile = path.join(root, ".head", "sessions", "current.json");
+  const { root, layout, initialWorld, v1, v2 } = await fixture(t);
+  const canonFile = path.join(root, layout.directory, "context", "product-model.json");
+  const sessionFile = path.join(root, layout.directory, "sessions", "current.json");
   const canonBefore = fs.readFileSync(canonFile, "utf8");
   const sessionBefore = fs.readFileSync(sessionFile, "utf8");
   const worldModelId = initialWorld.worldModelId;
@@ -123,7 +124,7 @@ test("delivery history derives mixed, failed, and rollback state without authori
 });
 
 test("delivery order conflicts remain unknown and never select newest receipt time", async (t) => {
-  const { root, initialWorld, v1, v2 } = await fixture(t);
+  const { root, layout, initialWorld, v1, v2 } = await fixture(t);
   const first = await recordDeliveryObservation({ root, ...input({ targetKey: "target-conflict", revision: v1, revisionKey: "v1", suffix: "conflict-0", worldModelId: initialWorld.worldModelId, observedAt: "2026-09-03T00:00:00.000Z" }) });
   await recordDeliveryObservation({ root, ...input({
     targetKey: "target-conflict", revision: v2, revisionKey: "v2", suffix: "conflict-2", sequence: 2,
@@ -139,7 +140,7 @@ test("delivery order conflicts remain unknown and never select newest receipt ti
 });
 
 test("independent artifacts on one target keep independent order and do not manufacture mixed versions", async (t) => {
-  const { root, initialWorld, v1, v2 } = await fixture(t);
+  const { root, layout, initialWorld, v1, v2 } = await fixture(t);
   await recordDeliveryObservation({ root, ...input({
     targetKey: "shared-target", artifactKey: "service.api", revision: v1, revisionKey: "v1", suffix: "artifact-api", worldModelId: initialWorld.worldModelId,
   }) });
@@ -155,7 +156,7 @@ test("independent artifacts on one target keep independent order and do not manu
 });
 
 test("declared revisions remain disclosed while invalid exact bindings fail before persistence", async (t) => {
-  const { root, initialWorld, v1 } = await fixture(t);
+  const { root, layout, initialWorld, v1 } = await fixture(t);
   const before = loadObservationArtifacts({ projectRoot: root, projectId: initialWorld.projectId }).observations.length;
   await assert.rejects(() => recordDeliveryObservation({ root, ...input({
     targetKey: "invalid", revision: v1, revisionKey: "v1", suffix: "invalid", worldModelId: initialWorld.worldModelId,
@@ -177,7 +178,7 @@ test("declared revisions remain disclosed while invalid exact bindings fail befo
 });
 
 test("generic Observation ingest cannot self-assert Core delivery revision proof", async (t) => {
-  const { root, initialWorld, v1 } = await fixture(t);
+  const { root, layout, initialWorld, v1 } = await fixture(t);
   const before = loadObservationArtifacts({ projectRoot: root, projectId: initialWorld.projectId }).observations.length;
   const descriptor = deliveryObservationDescriptor();
   const genericInput = {
@@ -272,7 +273,7 @@ test("generic Observation ingest cannot self-assert Core delivery revision proof
 });
 
 test("verified historical source revisions remain connected through a derived RevisionReference", async (t) => {
-  const { root, initialWorld, v1 } = await fixture(t);
+  const { root, layout, initialWorld, v1 } = await fixture(t);
   fs.unlinkSync(path.join(root, "revisions", "v1.txt"));
   await buildWorldModel({ root, persist: true });
   const observed = await recordDeliveryObservation({ root, ...input({
@@ -288,7 +289,7 @@ test("verified historical source revisions remain connected through a derived Re
 });
 
 test("delivery observation replay is exact and CLI and typed MCP agree on bounded status", async (t) => {
-  const { root, initialWorld, v1 } = await fixture(t);
+  const { root, layout, initialWorld, v1 } = await fixture(t);
   const firstInput = input({ targetKey: "target-one", revision: v1, revisionKey: "v1", suffix: "replay", worldModelId: initialWorld.worldModelId });
   const first = await recordDeliveryObservation({ root, ...firstInput });
   const replay = await recordDeliveryObservation({ root, ...firstInput });
@@ -296,8 +297,8 @@ test("delivery observation replay is exact and CLI and typed MCP agree on bounde
   assert.equal(replay.observation.observationId, first.observation.observationId);
   await assert.rejects(() => recordDeliveryObservation({ root, ...firstInput, outcome: "failed" }), { code: "DIVERGENT_OBSERVATION_REPLAY" });
 
-  assert.ok(tools.some((tool) => tool.name === "head_delivery_observe"));
-  assert.ok(tools.some((tool) => tool.name === "head_delivery_status"));
+  assert.ok(tools.some((tool) => tool.name === "lode_delivery_observe"));
+  assert.ok(tools.some((tool) => tool.name === "lode_delivery_status"));
   const cli = await runCommand(["delivery-status", root, "--environment", "environment-a", "--history-limit", "1"]);
   const mcp = await dispatch({ jsonrpc: "2.0", id: "delivery-status", method: "tools/call", params: { name: "head_delivery_status", arguments: {
     project_root: root, environment_key: "environment-a", history_limit: 1,

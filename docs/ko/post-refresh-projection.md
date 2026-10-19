@@ -62,10 +62,10 @@ exclusive project World Model writer lease
 ## 영속성
 
 ```text
-.head/document-projection/post-refresh/current-policy.json
-.head/document-projection/post-refresh/policies/post-refresh-projection-policy-<digest>.json
-.head/document-projection/post-refresh/current.json
-.head/document-projection/post-refresh/receipts/post-refresh-projection-receipt-<digest>.json
+.lode/document-projection/post-refresh/current-policy.json
+.lode/document-projection/post-refresh/policies/post-refresh-projection-policy-<digest>.json
+.lode/document-projection/post-refresh/current.json
+.lode/document-projection/post-refresh/receipts/post-refresh-projection-receipt-<digest>.json
 ```
 
 타임스탬프, PID, 어댑터 경로, 공급자 세션, Git 객체, GraphDB 레코드 또는 문서 공급자 페이지 ID는 정책이나 영수증 식별자에 관여하지 않습니다.
@@ -73,20 +73,20 @@ exclusive project World Model writer lease
 ## CLI
 
 ```text
-node scripts/head.mjs world-docs-policy-set <project> --input <policy.json>
-node scripts/head.mjs world-docs-policy-status <project>
-node scripts/head.mjs world-docs-refresh-status <project>
-node scripts/head.mjs world-docs-refresh-read <project> --receipt <post-refresh-projection-receipt-id>
+node scripts/lode.mjs world-docs-policy-set <project> --input <policy.json>
+node scripts/lode.mjs world-docs-policy-status <project>
+node scripts/lode.mjs world-docs-refresh-status <project>
+node scripts/lode.mjs world-docs-refresh-read <project> --receipt <post-refresh-projection-receipt-id>
 ```
 
 설정 명령은 `mode: manual|automatic`만 받습니다. 상태 및 영수증 명령은 읽기 전용입니다. 기존의 명시적 `world-docs-build`, `world-docs-status`, `world-docs-capture` 및 candidate-read 명령은 계속 사용할 수 있습니다.
 
 읽기 전용 MCP는 다음을 노출합니다.
 
-- `head_post_refresh_projection_status`;
-- `head_post_refresh_projection_receipt`.
+- `lode_post_refresh_projection_status`;
+- `lode_post_refresh_projection_receipt`.
 
-MCP는 갱신 후 정책을 변경하거나, 갱신을 트리거하거나, 문서 변경 후보를 검토하거나, 결정을 적용하거나, Canon을 변경할 수 없습니다. 별도로 타입이 지정된 `head_markdown_projection_build` 작업은 자동 갱신 후 정책 밖에서 명시적인 결정적 문서 빌드를 수행할 수 있습니다. 읽기 전용 문서 검토 MCP 도구는 상태와 불변 아티팩트를 검사합니다.
+MCP는 갱신 후 정책을 변경하거나, 갱신을 트리거하거나, 문서 변경 후보를 검토하거나, 결정을 적용하거나, Canon을 변경할 수 없습니다. 별도로 타입이 지정된 `lode_markdown_projection_build` 작업은 자동 갱신 후 정책 밖에서 명시적인 결정적 문서 빌드를 수행할 수 있습니다. 읽기 전용 문서 검토 MCP 도구는 상태와 불변 아티팩트를 검사합니다.
 
 ## 권한 및 선택적 인프라
 

@@ -9,6 +9,7 @@ on:
     paths:
       - "native/**"
       - "scripts/**"
+      - "compat/**"
       - "test/**"
       - "benchmarks/**"
       - "skills/**"
@@ -28,6 +29,7 @@ on:
     paths:
       - "native/**"
       - "scripts/**"
+      - "compat/**"
       - "test/**"
       - "benchmarks/**"
       - "skills/**"
@@ -57,10 +59,10 @@ concurrency:
 
 env:
   NODE_VERSION: "24.18.0"
-  GO_WORKER_ROOT: native/head-agent-worker
-  GO_WORKER_COMMAND: ./cmd/head-agent-worker
-  GO_SUPERVISOR_COMMAND: ./cmd/head-agent-supervisor
-  GO_ARCADEDB_BRIDGE_COMMAND: ./cmd/head-agent-arcadedb-bridge
+  GO_WORKER_ROOT: native/lode-agent-worker
+  GO_WORKER_COMMAND: ./cmd/lode-agent-worker
+  GO_SUPERVISOR_COMMAND: ./cmd/lode-agent-supervisor
+  GO_ARCADEDB_BRIDGE_COMMAND: ./cmd/lode-agent-arcadedb-bridge
 
 jobs:
   prepare:
@@ -86,7 +88,7 @@ jobs:
         id: detect
         shell: bash
         run: |
-          if [[ -f "${GO_WORKER_ROOT}/go.mod" && -d "${GO_WORKER_ROOT}/cmd/head-agent-worker" && -d "${GO_WORKER_ROOT}/cmd/head-agent-supervisor" ]]; then
+          if [[ -f "${GO_WORKER_ROOT}/go.mod" && -d "${GO_WORKER_ROOT}/cmd/lode-agent-worker" && -d "${GO_WORKER_ROOT}/cmd/lode-agent-supervisor" ]]; then
             echo "enabled=true" >> "$GITHUB_OUTPUT"
           else
             echo "enabled=false" >> "$GITHUB_OUTPUT"
@@ -148,23 +150,23 @@ jobs:
       - name: Set up Go from the worker module
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
-          go-version-file: native/head-agent-worker/go.mod
-          cache-dependency-path: native/head-agent-worker/go.mod
+          go-version-file: native/lode-agent-worker/go.mod
+          cache-dependency-path: native/lode-agent-worker/go.mod
           check-latest: false
 
       - name: Prepare current-source supervisor fixture
         shell: bash
         run: |
-          HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT="${RUNNER_TEMP}/head-agent-test-native"
-          echo "HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT=${HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT}" >> "${GITHUB_ENV}"
+          LODE_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT="${RUNNER_TEMP}/head-agent-test-native"
+          echo "LODE_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT=${LODE_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT}" >> "${GITHUB_ENV}"
           version="$(node -p "JSON.parse(require('fs').readFileSync('package.json', 'utf8')).version")"
-          binary_root="${HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT}/dist/linux-x64"
+          binary_root="${LODE_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT}/dist/linux-x64"
           mkdir -p "${binary_root}"
-          (cd native/head-agent-worker && CGO_ENABLED=0 go build -trimpath -buildvcs=false \
+          (cd native/lode-agent-worker && CGO_ENABLED=0 go build -trimpath -buildvcs=false \
             -ldflags="-s -w -X main.version=${version} -X main.commit=${GITHUB_SHA}" \
-            -o "${binary_root}/head-agent-supervisor" ./cmd/head-agent-supervisor)
+            -o "${binary_root}/lode-agent-supervisor" ./cmd/lode-agent-supervisor)
           node scripts/generate-process-supervisor-manifest.mjs --platform linux --arch x64 \
-            --binary "${binary_root}/head-agent-supervisor" --output "${binary_root}/SUPERVISOR-MANIFEST.json"
+            --binary "${binary_root}/lode-agent-supervisor" --output "${binary_root}/SUPERVISOR-MANIFEST.json"
 
       - name: Run every JavaScript regression test
         run: npm test
@@ -194,8 +196,8 @@ jobs:
       - name: Set up Go from the worker module
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
-          go-version-file: native/head-agent-worker/go.mod
-          cache-dependency-path: native/head-agent-worker/go.mod
+          go-version-file: native/lode-agent-worker/go.mod
+          cache-dependency-path: native/lode-agent-worker/go.mod
           check-latest: false
 
       - name: Prepare current-source supervisor fixture
@@ -205,15 +207,15 @@ jobs:
           platform="$(node -p "process.platform")"
           arch="$(node -p "process.arch")"
           goos="$(go env GOOS)"
-          HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT="${RUNNER_TEMP}/head-agent-test-native"
-          echo "HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT=${HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT}" >> "${GITHUB_ENV}"
-          binary_root="${HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT}/dist/${goos}-${arch}"
-          executable="head-agent-supervisor"
+          LODE_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT="${RUNNER_TEMP}/head-agent-test-native"
+          echo "LODE_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT=${LODE_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT}" >> "${GITHUB_ENV}"
+          binary_root="${LODE_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT}/dist/${goos}-${arch}"
+          executable="lode-agent-supervisor"
           if [[ "${goos}" == "windows" ]]; then executable="${executable}.exe"; fi
           mkdir -p "${binary_root}"
-          (cd native/head-agent-worker && CGO_ENABLED=0 go build -trimpath -buildvcs=false \
+          (cd native/lode-agent-worker && CGO_ENABLED=0 go build -trimpath -buildvcs=false \
             -ldflags="-s -w -X main.version=${version} -X main.commit=${GITHUB_SHA}" \
-            -o "${binary_root}/${executable}" ./cmd/head-agent-supervisor)
+            -o "${binary_root}/${executable}" ./cmd/lode-agent-supervisor)
           node scripts/generate-process-supervisor-manifest.mjs --platform "${platform}" --arch "${arch}" \
             --binary "${binary_root}/${executable}" --output "${binary_root}/SUPERVISOR-MANIFEST.json"
 
@@ -238,8 +240,8 @@ jobs:
       - name: Set up Go from the worker module
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
-          go-version-file: native/head-agent-worker/go.mod
-          cache-dependency-path: native/head-agent-worker/go.mod
+          go-version-file: native/lode-agent-worker/go.mod
+          cache-dependency-path: native/lode-agent-worker/go.mod
           check-latest: false
 
       - name: Set up the tested Node runtime
@@ -249,15 +251,15 @@ jobs:
           package-manager-cache: false
 
       - name: Verify modules
-        working-directory: native/head-agent-worker
+        working-directory: native/lode-agent-worker
         run: go mod verify
 
       - name: Run tests
-        working-directory: native/head-agent-worker
+        working-directory: native/lode-agent-worker
         run: go test ./...
 
       - name: Run static analysis
-        working-directory: native/head-agent-worker
+        working-directory: native/lode-agent-worker
         run: go vet ./...
 
       - name: Verify onboarding authority and recovery contract
@@ -298,9 +300,9 @@ jobs:
 
       - name: Verify native stdio and JavaScript conformance
         shell: bash
-        working-directory: native/head-agent-worker
+        working-directory: native/lode-agent-worker
         env:
-          NATIVE_TEST_ROOT: ${{ runner.temp }}/head-agent-native-test
+          NATIVE_TEST_ROOT: ${{ runner.temp }}/lode-agent-native-test
         run: |
           binary_root="${NATIVE_TEST_ROOT}/dist/linux-x64"
           mkdir -p "${binary_root}"
@@ -308,48 +310,48 @@ jobs:
             -trimpath \
             -buildvcs=false \
             -ldflags="-s -w -X main.version=${{ needs.prepare.outputs.version }} -X main.commit=${GITHUB_SHA}" \
-            -o "${binary_root}/head-agent-worker" \
-            ./cmd/head-agent-worker
+            -o "${binary_root}/lode-agent-worker" \
+            ./cmd/lode-agent-worker
           CGO_ENABLED=0 go build \
             -trimpath \
             -buildvcs=false \
             -ldflags="-s -w -X main.version=${{ needs.prepare.outputs.version }} -X main.commit=${GITHUB_SHA}" \
-            -o "${binary_root}/head-agent-supervisor" \
-            ./cmd/head-agent-supervisor
+            -o "${binary_root}/lode-agent-supervisor" \
+            ./cmd/lode-agent-supervisor
           CGO_ENABLED=0 go build \
             -trimpath \
             -buildvcs=false \
             -ldflags="-s -w -X main.version=${{ needs.prepare.outputs.version }} -X main.commit=${GITHUB_SHA}" \
-            -o "${binary_root}/head-agent-arcadedb-bridge" \
-            ./cmd/head-agent-arcadedb-bridge
-          chmod 0755 "${binary_root}/head-agent-worker"
-          chmod 0755 "${binary_root}/head-agent-supervisor"
-          chmod 0755 "${binary_root}/head-agent-arcadedb-bridge"
+            -o "${binary_root}/lode-agent-arcadedb-bridge" \
+            ./cmd/lode-agent-arcadedb-bridge
+          chmod 0755 "${binary_root}/lode-agent-worker"
+          chmod 0755 "${binary_root}/lode-agent-supervisor"
+          chmod 0755 "${binary_root}/lode-agent-arcadedb-bridge"
           node ../../scripts/generate-go-worker-manifest.mjs \
             --platform linux \
             --arch x64 \
-            --binary "${binary_root}/head-agent-worker" \
+            --binary "${binary_root}/lode-agent-worker" \
             --output "${binary_root}/WORKER-MANIFEST.json" \
             --operations "worker.health.v1,worker.lifecycle.v1,repository.scan.v1"
           node ../../scripts/generate-process-supervisor-manifest.mjs \
             --platform linux \
             --arch x64 \
-            --binary "${binary_root}/head-agent-supervisor" \
+            --binary "${binary_root}/lode-agent-supervisor" \
             --output "${binary_root}/SUPERVISOR-MANIFEST.json"
           node ../../scripts/generate-arcadedb-native-bridge-manifest.mjs \
             --platform linux \
             --arch x64 \
-            --binary "${binary_root}/head-agent-arcadedb-bridge" \
+            --binary "${binary_root}/lode-agent-arcadedb-bridge" \
             --output "${binary_root}/ARCADEDB-BRIDGE-MANIFEST.json"
           node ../../scripts/benchmark-arcadedb-query-batch.mjs \
-            --native "${binary_root}/head-agent-arcadedb-bridge" \
+            --native "${binary_root}/lode-agent-arcadedb-bridge" \
             --iterations 10 \
             --require-activation-threshold
           node ../../scripts/verify-go-worker.mjs --plugin-root "${NATIVE_TEST_ROOT}"
           node ../../scripts/verify-process-supervisor.mjs --plugin-root "${NATIVE_TEST_ROOT}"
-          HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT="${NATIVE_TEST_ROOT}" \
+          LODE_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT="${NATIVE_TEST_ROOT}" \
             node ../../scripts/verify-runtime-invocation-lifecycle.mjs
-          HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT="${NATIVE_TEST_ROOT}" \
+          LODE_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT="${NATIVE_TEST_ROOT}" \
             node ../../scripts/verify-provider-replacement-recovery.mjs
 
   build:
@@ -369,46 +371,46 @@ jobs:
             runtime_platform: linux
             runtime_arch: x64
             runtime_dir: linux-x64
-            package: head-agent-worker-linux-amd64
-            executable: head-agent-worker
-            supervisor_executable: head-agent-supervisor
-            bridge_executable: head-agent-arcadedb-bridge
+            package: lode-agent-worker-linux-amd64
+            executable: lode-agent-worker
+            supervisor_executable: lode-agent-supervisor
+            bridge_executable: lode-agent-arcadedb-bridge
           - goos: linux
             goarch: arm64
             runtime_platform: linux
             runtime_arch: arm64
             runtime_dir: linux-arm64
-            package: head-agent-worker-linux-arm64
-            executable: head-agent-worker
-            supervisor_executable: head-agent-supervisor
-            bridge_executable: head-agent-arcadedb-bridge
+            package: lode-agent-worker-linux-arm64
+            executable: lode-agent-worker
+            supervisor_executable: lode-agent-supervisor
+            bridge_executable: lode-agent-arcadedb-bridge
           - goos: darwin
             goarch: amd64
             runtime_platform: darwin
             runtime_arch: x64
             runtime_dir: darwin-x64
-            package: head-agent-worker-darwin-amd64
-            executable: head-agent-worker
-            supervisor_executable: head-agent-supervisor
-            bridge_executable: head-agent-arcadedb-bridge
+            package: lode-agent-worker-darwin-amd64
+            executable: lode-agent-worker
+            supervisor_executable: lode-agent-supervisor
+            bridge_executable: lode-agent-arcadedb-bridge
           - goos: darwin
             goarch: arm64
             runtime_platform: darwin
             runtime_arch: arm64
             runtime_dir: darwin-arm64
-            package: head-agent-worker-darwin-arm64
-            executable: head-agent-worker
-            supervisor_executable: head-agent-supervisor
-            bridge_executable: head-agent-arcadedb-bridge
+            package: lode-agent-worker-darwin-arm64
+            executable: lode-agent-worker
+            supervisor_executable: lode-agent-supervisor
+            bridge_executable: lode-agent-arcadedb-bridge
           - goos: windows
             goarch: amd64
             runtime_platform: win32
             runtime_arch: x64
             runtime_dir: windows-x64
-            package: head-agent-worker-windows-amd64
-            executable: head-agent-worker.exe
-            supervisor_executable: head-agent-supervisor.exe
-            bridge_executable: head-agent-arcadedb-bridge.exe
+            package: lode-agent-worker-windows-amd64
+            executable: lode-agent-worker.exe
+            supervisor_executable: lode-agent-supervisor.exe
+            bridge_executable: lode-agent-arcadedb-bridge.exe
 
     steps:
       - name: Checkout source
@@ -419,8 +421,8 @@ jobs:
       - name: Set up Go from the worker module
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
-          go-version-file: native/head-agent-worker/go.mod
-          cache-dependency-path: native/head-agent-worker/go.mod
+          go-version-file: native/lode-agent-worker/go.mod
+          cache-dependency-path: native/lode-agent-worker/go.mod
           check-latest: false
 
       - name: Set up the tested Node runtime
@@ -431,7 +433,7 @@ jobs:
 
       - name: Build and package worker and supervisor
         shell: bash
-        working-directory: native/head-agent-worker
+        working-directory: native/lode-agent-worker
         env:
           BUILD_VERSION: ${{ needs.prepare.outputs.version }}
           TARGET_GOOS: ${{ matrix.goos }}
@@ -528,23 +530,23 @@ jobs:
       - name: Download every platform artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          pattern: head-agent-worker-*
+          pattern: lode-agent-worker-*
           path: release-assets
           merge-multiple: true
 
       - name: Generate release checksums
         shell: bash
         working-directory: release-assets
-        run: sha256sum head-agent-worker-* > SHA256SUMS
+        run: sha256sum lode-agent-worker-* > SHA256SUMS
 
       - name: Publish release once after all builds succeed
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
         with:
           tag_name: ${{ needs.prepare.outputs.release_tag }}
           target_commitish: ${{ github.sha }}
-          name: HEAD Agent Core ${{ needs.prepare.outputs.release_tag }}
+          name: Lode Agent Core ${{ needs.prepare.outputs.release_tag }}
           body: |
-            Beta release of the provider-neutral HEAD Agent Core plugin under the MIT License.
+            Beta release of the provider-neutral Lode Agent Core plugin under the MIT License.
 
             The beta scope covers the constitutional Core, recovery, Context Compiler, execution
             lineage, local projections, bounded workers, and verified Codex/Claude distribution.
@@ -561,7 +563,7 @@ jobs:
           prerelease: ${{ contains(needs.prepare.outputs.release_tag, '-') }}
           fail_on_unmatched_files: true
           files: |
-            release-assets/head-agent-worker-*
+            release-assets/lode-agent-worker-*
             release-assets/SHA256SUMS
 
   marketplace:
@@ -594,17 +596,17 @@ jobs:
       - name: Download every verified native platform artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          pattern: head-agent-worker-*
-          path: ${{ runner.temp }}/head-agent-native-artifacts
+          pattern: lode-agent-worker-*
+          path: ${{ runner.temp }}/lode-agent-native-artifacts
           merge-multiple: true
 
       - name: Assemble one integrity-verified native bundle
         shell: bash
         run: |
-          native_root="${RUNNER_TEMP}/head-agent-native-bundle"
+          native_root="${RUNNER_TEMP}/lode-agent-native-bundle"
           echo "NATIVE_ROOT=${native_root}" >> "${GITHUB_ENV}"
           node scripts/assemble-native-bundle.mjs \
-            --artifacts "${RUNNER_TEMP}/head-agent-native-artifacts" \
+            --artifacts "${RUNNER_TEMP}/lode-agent-native-artifacts" \
             --output "${native_root}" \
             --version "${{ needs.prepare.outputs.version }}" \
             --commit "${GITHUB_SHA}"
@@ -615,6 +617,7 @@ jobs:
           marketplace_root="${RUNNER_TEMP}/head-agent-codex-marketplace"
           echo "MARKETPLACE_ROOT=${marketplace_root}" >> "${GITHUB_ENV}"
           node scripts/build-codex-marketplace.mjs \
+            --marketplace-name "head-agent-plugin" \
             --output "${marketplace_root}" \
             --source-repository "${GITHUB_REPOSITORY}" \
             --source-commit "${GITHUB_SHA}" \
@@ -636,20 +639,26 @@ jobs:
             previous_root="${RUNNER_TEMP}/previous-head-agent-marketplace"
             mkdir -p "${previous_root}"
             git archive FETCH_HEAD | tar -x -C "${previous_root}"
+            # One exact predecessor published before the owner-approved repository rename.
+            # Verify its original repository and bytes, never rewrite historical markers.
+            previous_repository="${GITHUB_REPOSITORY}"
+            if [[ "${GITHUB_REPOSITORY}" == "binary1215/lode" && "${expected_sha}" == "d0b9b6bee9e6aaed5c76de1c881520067d61e985" ]]; then
+              previous_repository="binary1215/head-agent-plugin"
+            fi
             if ! node scripts/verify-codex-marketplace.mjs \
               --root "${previous_root}" \
-              --expected-repository "${GITHUB_REPOSITORY}" \
+              --expected-repository "${previous_repository}" \
               --expected-marketplace-name "head-agent-plugin"; then
               node scripts/verify-codex-marketplace.mjs \
                 --root "${previous_root}" \
-                --expected-repository "${GITHUB_REPOSITORY}" \
+                --expected-repository "${previous_repository}" \
                 --expected-marketplace-name "head-agent-plugin" \
                 --allow-legacy-byte-preservation \
                 --allow-legacy-interface-for-ownership || \
               node legacy/marketplace-ownership/verify.mjs \
                 --provider codex \
                 --root "${previous_root}" \
-                --expected-repository "${GITHUB_REPOSITORY}" \
+                --expected-repository "${previous_repository}" \
                 --expected-marketplace-name "head-agent-plugin" \
                 --expected-snapshot-commit "${expected_sha}"
             fi
@@ -706,17 +715,17 @@ jobs:
       - name: Download every verified native platform artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          pattern: head-agent-worker-*
-          path: ${{ runner.temp }}/head-agent-native-artifacts
+          pattern: lode-agent-worker-*
+          path: ${{ runner.temp }}/lode-agent-native-artifacts
           merge-multiple: true
 
       - name: Assemble one integrity-verified native bundle
         shell: bash
         run: |
-          native_root="${RUNNER_TEMP}/head-agent-native-bundle"
+          native_root="${RUNNER_TEMP}/lode-agent-native-bundle"
           echo "NATIVE_ROOT=${native_root}" >> "${GITHUB_ENV}"
           node scripts/assemble-native-bundle.mjs \
-            --artifacts "${RUNNER_TEMP}/head-agent-native-artifacts" \
+            --artifacts "${RUNNER_TEMP}/lode-agent-native-artifacts" \
             --output "${native_root}" \
             --version "${{ needs.prepare.outputs.version }}" \
             --commit "${GITHUB_SHA}"
@@ -727,6 +736,7 @@ jobs:
           marketplace_root="${RUNNER_TEMP}/head-agent-claude-marketplace"
           echo "MARKETPLACE_ROOT=${marketplace_root}" >> "${GITHUB_ENV}"
           node scripts/build-claude-marketplace.mjs \
+            --marketplace-name "head-agent-plugin" \
             --output "${marketplace_root}" \
             --source-repository "${GITHUB_REPOSITORY}" \
             --source-commit "${GITHUB_SHA}" \
@@ -749,14 +759,19 @@ jobs:
             previous_root="${RUNNER_TEMP}/previous-head-agent-claude-marketplace"
             mkdir -p "${previous_root}"
             git archive FETCH_HEAD | tar -x -C "${previous_root}"
+            # The exact old snapshot remains verified under its original repository.
+            previous_repository="${GITHUB_REPOSITORY}"
+            if [[ "${GITHUB_REPOSITORY}" == "binary1215/lode" && "${expected_sha}" == "d22c0e04a8bcaf83814f452fb69ae99a13de8f0a" ]]; then
+              previous_repository="binary1215/head-agent-plugin"
+            fi
             if ! node scripts/verify-claude-marketplace.mjs \
               --root "${previous_root}" \
-              --expected-repository "${GITHUB_REPOSITORY}" \
+              --expected-repository "${previous_repository}" \
               --expected-marketplace-name "head-agent-plugin"; then
               node legacy/marketplace-ownership/verify.mjs \
                 --provider claude \
                 --root "${previous_root}" \
-                --expected-repository "${GITHUB_REPOSITORY}" \
+                --expected-repository "${previous_repository}" \
                 --expected-marketplace-name "head-agent-plugin" \
                 --expected-snapshot-commit "${expected_sha}"
             fi

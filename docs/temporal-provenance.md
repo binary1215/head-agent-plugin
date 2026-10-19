@@ -11,7 +11,7 @@ The temporal provenance graph connects user-owned product intent, immutable onbo
 The graph builder consumes only provider-neutral inputs:
 
 - project identity;
-- normalized `.head/context/product-model.json` content and its evidence identity;
+- normalized `.lode/context/product-model.json` content and its evidence identity;
 - digest-verified onboarding artifacts, FeatureMappingCandidateSets and mapping ReviewDecisions, provider-neutral ChangeSets with change-impact review artifacts, Product Operating Loop artifacts, and optional immutable VCS evidence attachments;
 - normalized file paths, SHA-256 content digests, classifications, languages, and extracted symbols;
 - zero-or-more explicit parent `SourceSnapshot` identities;
@@ -77,7 +77,7 @@ The non-persisted graph-lineage trace may add a bounded currentness diagnostic f
 
 ## Deterministic bounded traversal
 
-`queryTemporalProvenanceGraph` first verifies the complete GraphSnapshot, then constructs temporal traversal protocol `0.3.0`. It has two mutually exclusive anchor modes: `lexical-discovery` for explicit search, and `exact-head-proposed` for semantic anchors supplied by HEAD. Exact mode requires one to 32 unique node IDs plus the current `expectedGraphSnapshotId`; every anchor must exist and satisfy the requested kind, authority, freshness, confidence, and candidate policy. The query records:
+`queryTemporalProvenanceGraph` first verifies the complete GraphSnapshot, then constructs temporal traversal protocol `0.3.0`. It has two mutually exclusive anchor modes: `lexical-discovery` for explicit search, and `exact-head-proposed` for semantic anchors supplied by Lode. Exact mode requires one to 32 unique node IDs plus the current `expectedGraphSnapshotId`; every anchor must exist and satisfy the requested kind, authority, freshness, confidence, and candidate policy. The query records:
 
 - node-kind, relation, authority-class, and freshness allowlists;
 - minimum confidence;
@@ -92,18 +92,18 @@ The result records graph, query, and result IDs and hashes; selected nodes and e
 ## CLI and MCP
 
 ```text
-node scripts/head.mjs world-index <project> --parent-snapshot <id,id>
-node scripts/head.mjs world-index <project> --revision-parents <json-file>
-node scripts/head.mjs world-temporal <project> --query <text> --kind File,FileRevision --relations HAS_REVISION,CURRENT_REVISION --depth 1 --limit 100 --edge-limit 200
-node scripts/head.mjs world-temporal <project> --anchor-ids <node-id,node-id> --graph-snapshot <graph-snapshot-id> --relations HAS_REVISION,CURRENT_REVISION --depth 1 --limit 100 --edge-limit 200
-node scripts/head.mjs world-temporal <project> --query <candidate-id> --kind FeatureMappingCandidate,FeatureMappingEvidence --include-candidates true --depth 1 --limit 100 --edge-limit 200
-node scripts/head.mjs world-temporal <project> --query <change-set-id> --relations CHANGES,IMPACTS,SUPERSEDES --depth 3 --limit 200 --edge-limit 400
-node scripts/head.mjs world-temporal <project> --query <change-set-id> --relations MATERIALIZED_AS,REFERENCES --depth 2 --limit 200 --edge-limit 400
+node scripts/lode.mjs world-index <project> --parent-snapshot <id,id>
+node scripts/lode.mjs world-index <project> --revision-parents <json-file>
+node scripts/lode.mjs world-temporal <project> --query <text> --kind File,FileRevision --relations HAS_REVISION,CURRENT_REVISION --depth 1 --limit 100 --edge-limit 200
+node scripts/lode.mjs world-temporal <project> --anchor-ids <node-id,node-id> --graph-snapshot <graph-snapshot-id> --relations HAS_REVISION,CURRENT_REVISION --depth 1 --limit 100 --edge-limit 200
+node scripts/lode.mjs world-temporal <project> --query <candidate-id> --kind FeatureMappingCandidate,FeatureMappingEvidence --include-candidates true --depth 1 --limit 100 --edge-limit 200
+node scripts/lode.mjs world-temporal <project> --query <change-set-id> --relations CHANGES,IMPACTS,SUPERSEDES --depth 3 --limit 200 --edge-limit 400
+node scripts/lode.mjs world-temporal <project> --query <change-set-id> --relations MATERIALIZED_AS,REFERENCES --depth 2 --limit 200 --edge-limit 400
 ```
 
-`--revision-parents` reads a JSON object whose keys are current logical entity IDs and whose values are arrays of parent Revision IDs. The read-only MCP tool `head_temporal_graph` exposes the same bounded traversal through `include_unreviewed_candidates`. Both reject a stale World Model. ReviewDecision and ProductModelRevision receipts remain visible under normal reviewed traversal; the unreviewed candidate surface requires explicit opt-in and still has no authority effect.
+`--revision-parents` reads a JSON object whose keys are current logical entity IDs and whose values are arrays of parent Revision IDs. The read-only MCP tool `lode_temporal_graph` exposes the same bounded traversal through `include_unreviewed_candidates`. Both reject a stale World Model. ReviewDecision and ProductModelRevision receipts remain visible under normal reviewed traversal; the unreviewed candidate surface requires explicit opt-in and still has no authority effect.
 
-The Context Compiler does not infer temporal anchors from task-token overlap. HEAD may attach an exact current `graphAnchor` to a `temporal-relation` EvidenceNeed; Core then emits a separate `GraphTraversalEvidence` carrier only after verifying Project, World Model, GraphSnapshot, node eligibility, relation allowlist, and traversal bounds. Local JSON, in-memory, and activated ArcadeDB adapters must return the exact reference result. Adapter identity remains outside Capsule identity. See [`graph-projection-adapter.md`](graph-projection-adapter.md).
+The Context Compiler does not infer temporal anchors from task-token overlap. Lode may attach an exact current `graphAnchor` to a `temporal-relation` EvidenceNeed; Core then emits a separate `GraphTraversalEvidence` carrier only after verifying Project, World Model, GraphSnapshot, node eligibility, relation allowlist, and traversal bounds. Local JSON, in-memory, and activated ArcadeDB adapters must return the exact reference result. Adapter identity remains outside Capsule identity. See [`graph-projection-adapter.md`](graph-projection-adapter.md).
 
 Reviewed execution changes bind `ChangeSet` records to exact before/after source revisions. A reviewed current product impact also binds its exact Feature or Capability revision with `AT_REVISION`; later drift keeps the historical receipt but removes the current-impact claim. Git refs alone never create `DeploymentResultObservation` or `ReleaseObservation`. Delivery lineage appears only after a Host submits separately approved, successful, exact-commit deployment evidence.
 

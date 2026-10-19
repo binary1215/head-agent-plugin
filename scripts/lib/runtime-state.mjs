@@ -1,3 +1,4 @@
+import { formatForVerifiedOwner, familyFormatForOriginal } from "./project-storage-format.mjs";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -130,7 +131,8 @@ function normalizedObservation(value, { projectRoot, observedAt }) {
 function normalizeExport(value, projectRoot) {
   if (!value || typeof value !== "object" || Array.isArray(value)) fail("Runtime state export must be an object.", "INVALID_RUNTIME_STATE_EXPORT");
   assertOnlyKeys(value, EXPORT_KEYS, "Runtime state export");
-  if (value.schemaVersion !== 1 || value.kind !== "HeadRuntimeStateExport") fail("Runtime state export schema is incompatible.", "INVALID_RUNTIME_STATE_EXPORT");
+  const format = familyFormatForOriginal({ kind: "HeadRuntimeStateExport" }, value);
+  if (!format || value.schemaVersion !== 1 || value.kind !== format.kind("HeadRuntimeStateExport")) fail("Runtime state export schema is incompatible.", "INVALID_RUNTIME_STATE_EXPORT");
   if (!Array.isArray(value.observations)) fail("Runtime state export observations must be an array.", "INVALID_RUNTIME_STATE_EXPORT");
   if (value.observations.length > MAX_OBSERVATIONS) fail(`Runtime state export exceeds ${MAX_OBSERVATIONS} observations.`, "RUNTIME_STATE_OBSERVATION_LIMIT");
   const observedAt = normalizedTimestamp(value.observedAt);
@@ -237,7 +239,7 @@ export function runtimeStateAdapterFromDescriptor(descriptor) {
   return new NoExternalRuntimeStateAdapter({ reasonCode: "runtime-state-adapter-instance-required" });
 }
 
-export function buildExternalRuntimeState({ projectRoot, adapter = null } = {}) {
+export function buildExternalRuntimeState({ projectRoot, adapter = null, storage } = {}) {
   const selected = createRuntimeStateAdapter(adapter);
   const observed = selected.readState({ projectRoot });
   if (observed && typeof observed.then === "function") fail("RuntimeStateAdapter readState() must return a materialized snapshot synchronously.", "ASYNC_RUNTIME_STATE_ADAPTER_UNSUPPORTED");
@@ -250,7 +252,7 @@ export function buildExternalRuntimeState({ projectRoot, adapter = null } = {}) 
   const runtimeNames = [...new Set(normalized.observations.map((item) => item.runtime))].sort();
   const payload = {
     kind: "ExternalRuntimeState",
-    protocol: { name: "head-agent-core-external-runtime-state", version: EXTERNAL_RUNTIME_STATE_VERSION },
+    protocol: { name: formatForVerifiedOwner(storage).protocol("head-agent-core-external-runtime-state"), version: EXTERNAL_RUNTIME_STATE_VERSION },
     status: effectiveStatus,
     coverage: effectiveStatus === "available" || effectiveStatus === "empty" ? "point-in-time-host-export" : "none",
     reasonCode,

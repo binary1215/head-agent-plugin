@@ -12,12 +12,12 @@ import { createProcessSupervisorManifest } from "../scripts/lib/runtime-process-
 
 const hash = (value) => crypto.createHash("sha256").update(value).digest("hex");
 function fixture(t) {
-  const root = fs.mkdtempSync(path.join(process.env.HEAD_AGENT_TEST_TMP || os.tmpdir(), "head-file-effect-bridge-"));
+  const root = fs.mkdtempSync(path.join(process.env.LODE_AGENT_TEST_TMP || process.env.HEAD_AGENT_TEST_TMP || os.tmpdir(), "head-file-effect-bridge-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const target = process.platform === "win32" ? "windows-x64" : `${process.platform}-${process.arch}`;
   const directory = path.join(root, "dist", target);
   fs.mkdirSync(directory, { recursive: true });
-  const binaryFile = path.join(directory, process.platform === "win32" ? "head-agent-supervisor.exe" : "head-agent-supervisor");
+  const binaryFile = path.join(directory, process.platform === "win32" ? "lode-agent-supervisor.exe" : "lode-agent-supervisor");
   fs.writeFileSync(binaryFile, "not executed: verified bridge mock fixture", { flag: "wx", mode: 0o755 });
   const manifest = createProcessSupervisorManifest({ platform: process.platform, arch: process.arch, binaryFile, manifestDirectory: directory });
   fs.writeFileSync(path.join(directory, "SUPERVISOR-MANIFEST.json"), JSON.stringify(manifest), { flag: "wx" });
@@ -369,7 +369,7 @@ test("unconfirmed termination reports cleanup uncertainty and never claims relea
 });
 
 test("real verified native bridge edits and inspects a synthetic file without replay", async (t) => {
-  const pluginRoot = process.env.HEAD_AGENT_FILE_EFFECT_FIXTURE_ROOT;
+  const pluginRoot = (process.env.LODE_AGENT_FILE_EFFECT_FIXTURE_ROOT || process.env.HEAD_AGENT_FILE_EFFECT_FIXTURE_ROOT);
   if (!pluginRoot || process.platform !== "win32") { t.skip("requires an explicitly selected verified Windows file-effect fixture"); return; }
   const { root } = fixture(t);
   const source = path.join(root, "source"); const journal = path.join(root, "journal");
@@ -396,7 +396,7 @@ test("real verified native bridge edits and inspects a synthetic file without re
 });
 
 test("real native no-write evidence permits only an exact linked retry after basis restoration", async (t) => {
-  const pluginRoot = process.env.HEAD_AGENT_FILE_EFFECT_FIXTURE_ROOT;
+  const pluginRoot = (process.env.LODE_AGENT_FILE_EFFECT_FIXTURE_ROOT || process.env.HEAD_AGENT_FILE_EFFECT_FIXTURE_ROOT);
   if (!pluginRoot || process.platform !== "win32") { t.skip("requires an explicitly selected verified Windows file-effect fixture"); return; }
   const { root } = fixture(t);
   const source = path.join(root, "source"); const journal = path.join(root, "journal");
@@ -427,7 +427,7 @@ test("real native no-write evidence permits only an exact linked retry after bas
 });
 
 test("real image bridge distinguishes create, edit, mode and delete with exact exit evidence", async (t) => {
-  const pluginRoot = process.env.HEAD_AGENT_FILE_EFFECT_FIXTURE_ROOT;
+  const pluginRoot = (process.env.LODE_AGENT_FILE_EFFECT_FIXTURE_ROOT || process.env.HEAD_AGENT_FILE_EFFECT_FIXTURE_ROOT);
   if (!pluginRoot || process.platform !== "win32") { t.skip("requires an explicitly selected verified Windows file-image fixture"); return; }
   const { root } = fixture(t);
   const source = path.join(root, "source"); const journal = path.join(root, "journal");
@@ -470,7 +470,7 @@ test("real image bridge distinguishes create, edit, mode and delete with exact e
 });
 
 test("real image preflight is nonmutating and a create conflict requires exact no-write retry evidence", async (t) => {
-  const pluginRoot = process.env.HEAD_AGENT_FILE_EFFECT_FIXTURE_ROOT;
+  const pluginRoot = (process.env.LODE_AGENT_FILE_EFFECT_FIXTURE_ROOT || process.env.HEAD_AGENT_FILE_EFFECT_FIXTURE_ROOT);
   if (!pluginRoot || process.platform !== "win32") { t.skip("requires an explicitly selected verified Windows file-image fixture"); return; }
   const { root } = fixture(t);
   const source = path.join(root, "source"); const journal = path.join(root, "journal");
@@ -508,7 +508,7 @@ test("real image preflight is nonmutating and a create conflict requires exact n
 });
 
 test("real initial prepublication proof binds the exact native request and never reclassifies an existing intent", async (t) => {
-  const pluginRoot = process.env.HEAD_AGENT_FILE_EFFECT_FIXTURE_ROOT;
+  const pluginRoot = (process.env.LODE_AGENT_FILE_EFFECT_FIXTURE_ROOT || process.env.HEAD_AGENT_FILE_EFFECT_FIXTURE_ROOT);
   if (!pluginRoot || process.platform !== "win32") { t.skip("requires an explicitly selected verified Windows prepublication fixture"); return; }
   const { root } = fixture(t);
   const source = path.join(root, "source&scope"); const journal = path.join(root, "journal");

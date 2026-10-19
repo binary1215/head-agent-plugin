@@ -11,6 +11,10 @@ export async function connectCodexWorkerHost({ root, executionRoot, authorizatio
   assert.equal(policy.evidenceMode, "protocol-fixture");
   const directory = path.dirname(root);
   const configuration = JSON.parse(fs.readFileSync(path.join(directory, "fixture-connection.json"), "utf8"));
+  const storage = configuration.storage;
+  assert.equal(storage.projectRoot, fs.realpathSync(root));
+  assert.equal(storage.projectId, authorization.projectId);
+  assert.equal(storage.directory, ".lode");
   const policyHost = createCodexWorkerPolicyHost({ evidenceMode: "protocol-fixture", withVerifiedPolicy: async request => {
     assert.equal(request.authorization.authorizationHash, authorization.authorizationHash);
     assert.equal(request.executionRoot, executionRoot);
@@ -48,7 +52,7 @@ export async function connectCodexWorkerHost({ root, executionRoot, authorizatio
   };
   const close = async () => {
     fs.writeFileSync(path.join(directory, "fixture-connection-closed.json"), JSON.stringify({
-      leaseFilesPresent: fs.existsSync(path.join(root, ".head", "runtime", "invocations", authorization.authorizationId)),
+      leaseFilesPresent: fs.existsSync(path.join(root, storage.directory, "runtime", "invocations", authorization.authorizationId)),
       actualProviderInvoked: false,
     }), { flag: "wx" });
     if (configuration.closeError) throw Object.assign(new Error("Synthetic close failure"), { code: "SYNTHETIC_CLOSE_FAILURE" });

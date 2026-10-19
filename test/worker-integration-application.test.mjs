@@ -1,3 +1,4 @@
+import { relativeProjectArtifact } from "../scripts/lib/project-storage-format.mjs";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
@@ -21,7 +22,7 @@ console.log(JSON.stringify({ event: "owned-worker-integration-application-test",
 const bytes = (root, relative) => fs.readFileSync(path.join(root, relative), "utf8");
 const appInput = f => ({ root: f.root, integrationId: f.integrationId });
 const current = f => readWorkerPatchApplication(appInput(f));
-const evidenceFile = (f, suffix) => path.join(f.root, ".head/runtime/worker-integrations", `${f.integrationId}${suffix}`);
+const evidenceFile = (f, suffix) => path.join(f.root, relativeProjectArtifact(f.storage, "runtime", "worker-integrations"), `${f.integrationId}${suffix}`);
 
 function rewriteSyntheticEvidence(file, change) {
   const value = JSON.parse(fs.readFileSync(file, "utf8"));
@@ -159,24 +160,26 @@ function preparedSyntheticHost(f, { first = "not-attempted", failures = 1, after
   return { host, calls, children, prepared, binaryFile, writes: () => calls.filter(call => ["image-apply", "image-retry"].includes(call.operation)) };
 }
 
-function protectedSnapshot(root) {
+function protectedSnapshot(f) {
+  const { root, storage } = f;
   const files = {};
   function walk(directory) {
     for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
       const file = path.join(directory, entry.name);
       const relative = path.relative(root, file).replaceAll("\\", "/");
-      if (relative === ".head/runtime/worker-integrations" || relative === ".head/.operations") continue;
+      if (relative === relativeProjectArtifact(storage, "runtime", "worker-integrations") || relative === relativeProjectArtifact(storage, ".operations")) continue;
       if (entry.isDirectory()) walk(file);
       else files[relative] = fs.readFileSync(file).toString("base64");
     }
   }
-  walk(path.join(root, ".head"));
+  walk(path.join(root, storage.directory));
+  assert.ok(Object.hasOwn(files, relativeProjectArtifact(storage, "project.json")), "Protected snapshot must contain the selected Project original");
   return files;
 }
 
 test("application preflights every effect, keeps P1/P2 unchanged and exact replay performs no effect", async t => {
   const f = await workerIntegrationFixture(t, { workers: [{ path: "a.txt", after: "new A" }, { path: "b.txt", after: "new B" }] });
-  const before = protectedSnapshot(f.root);
+  const before = protectedSnapshot(f);
   const native = syntheticHost();
   const applied = await applyWorkerPatchIntegration(appInput(f), native.host);
   assert.equal(applied.status, "applied");
@@ -189,13 +192,13 @@ test("application preflights every effect, keeps P1/P2 unchanged and exact repla
   assert.deepEqual(native.writes().map(call => call.path), ["a.txt", "b.txt"]);
   assert.equal(bytes(f.root, "a.txt"), "new A");
   assert.equal(bytes(f.root, "b.txt"), "new B");
-  assert.deepEqual(protectedSnapshot(f.root), before);
+  assert.deepEqual(protectedSnapshot(f), before);
   const callCount = native.calls.length;
   const replay = await applyWorkerPatchIntegration(appInput(f), native.host);
   assert.equal(replay.claim.recordId, applied.claim.recordId);
   assert.deepEqual(replay.effectResults, applied.effectResults);
   assert.equal(native.calls.length, callCount);
-  assert.deepEqual(protectedSnapshot(f.root), before);
+  assert.deepEqual(protectedSnapshot(f), before);
 });
 
 test("unsupported final effect prevents all writes and creates no durable reservation", async t => {
@@ -295,7 +298,7 @@ test("quiescent incomplete handoff closes only the reservation without making su
     options.closed();
     throw Object.assign(new Error("Unknown effect"), { code: "SYNTHETIC_UNKNOWN" });
   } });
-  const before = protectedSnapshot(f.root);
+  const before = protectedSnapshot(f);
   const initial = await applyWorkerPatchIntegration(appInput(f), native.host);
   const settlementInput = { ...appInput(f), basisDigest: initial.currentBasis.basisDigest,
     reason: "HEAD inspected current source and abandoned this incomplete attempt." };
@@ -309,7 +312,7 @@ test("quiescent incomplete handoff closes only the reservation without making su
   assert.equal(replay.settlement.recordId, settled.settlement.recordId);
   assert.equal((await settleIncompleteWorkerPatchIntegration(settlementInput)).settlement.recordId, settled.settlement.recordId);
   assert.equal(native.writes().length, 1);
-  assert.deepEqual(protectedSnapshot(f.root), before);
+  assert.deepEqual(protectedSnapshot(f), before);
   await assert.rejects(settleIncompleteWorkerPatchIntegration({ ...appInput(f), basisDigest: initial.currentBasis.basisDigest,
     reason: "Divergent settlement must not replace prior evidence." }), { code: "WORKER_INTEGRATION_APPLICATION_CONFLICT" });
 });
@@ -339,10 +342,10 @@ test("historical application evidence survives Session drift while a new applica
   await applyWorkerPatchIntegration(appInput(f), native.host);
   const session = JSON.parse(fs.readFileSync(f.sessionFile, "utf8"));
   fs.writeFileSync(f.sessionFile, JSON.stringify({ ...session, sessionId: "session-11111111-2222-4333-8444-555555555555" }));
-  const before = protectedSnapshot(f.root);
+  const before = protectedSnapshot(f);
   assert.equal(current(f).status, "applied");
   await assert.rejects(applyWorkerPatchIntegration(appInput(f), native.host), { code: "RUNTIME_INVOCATION_FENCE_MISMATCH" });
-  assert.deepEqual(protectedSnapshot(f.root), before);
+  assert.deepEqual(protectedSnapshot(f), before);
   assert.equal(native.writes().length, 1);
 });
 
@@ -374,7 +377,7 @@ test("effect overlap is exact/ancestor bounded and retains platform case semanti
 
 function nextRun(f, replaceSession = false) {
   finishRun({ root: f.root, outcome: "Synthetic integration attempt remains incomplete; preserve its unknown effect.",
-    evidence: [{ uri: ".head/runtime/worker-integrations", digest: f.intent.integrationHash, summary: "Durable incomplete attempt" }],
+    evidence: [{ uri: relativeProjectArtifact(f.storage, "runtime", "worker-integrations"), digest: f.intent.integrationHash, summary: "Durable incomplete attempt" }],
     verification: [{ check: "Synthetic fixture setup", status: "passed", evidence: "Unknown is not success" }],
     unknowns: ["Effect ownership is unresolved"] });
   reviewRun({ root: f.root, reviewContextId: getPendingReviewContext({ root: f.root }).review.reviewContextId,
@@ -410,11 +413,11 @@ test("outstanding unknown paths block overlap across Run/Session changes but not
     assert.equal(collisions.conflicts[0].integrationId, f.integrationId);
     assert.equal(collisions.conflicts[0].runId, f.run.runId);
     const native = syntheticHost();
-    const protectedBefore = protectedSnapshot(f.root);
+    const protectedBefore = protectedSnapshot(f);
     const blocked = await applyWorkerPatchIntegration(overlapInput, native.host);
     assert.equal(blocked.action, "reconcile-overlapping-effects");
     assert.deepEqual(native.calls, []);
-    assert.deepEqual(protectedSnapshot(f.root), protectedBefore);
+    assert.deepEqual(protectedSnapshot(f), protectedBefore);
     assert.equal(fs.existsSync(journal), false);
     // A dependency read by the old worker is not a claimed write path.
     const unrelated = await f.addIntegration({ workers: [{ path: "read-only.txt", after: "new independent value" }] });
@@ -451,14 +454,14 @@ test("quiescent incomplete settlement permits a new inspected integration withou
 
 test("no-op ownership makes no path reservation or native call", async t => {
   const f = await workerIntegrationFixture(t);
-  const before = protectedSnapshot(f.root);
+  const before = protectedSnapshot(f);
   const native = syntheticHost();
   const noop = await applyWorkerPatchIntegration(appInput(f), native.host);
   assert.equal(noop.status, "applied");
   assert.deepEqual(noop.claim.effects, []);
   assert.deepEqual(native.calls, []);
   assert.equal(fs.existsSync(path.join(f.operational, "worker-integrations")), false);
-  assert.deepEqual(protectedSnapshot(f.root), before);
+  assert.deepEqual(protectedSnapshot(f), before);
   const next = await f.addIntegration({ workers: [{ path: "a.txt", after: "independent A" }] });
   assert.equal(readOutstandingWorkerEffects({ root: f.root, integrationId: next.integrationId }).hasConflicts, false);
 });
@@ -489,7 +492,7 @@ test("a postimage without receipt stays unknown until exact retained native comp
   // Model the publication gap after the native effect finished, without
   // deleting the claim/attempt that forbids executing the effect again.
   fs.unlinkSync(evidenceFile(f, ".effect-0.receipt.json"));
-  const before = protectedSnapshot(f.root);
+  const before = protectedSnapshot(f);
   assert.equal(current(f).effectResults[0].status, "unknown");
   assert.equal(current(f).allEffectsCompleted, false);
   assert.equal(current(f).currentBasis.dependencies[0].expectedPostimagePresent, true);
@@ -502,13 +505,13 @@ test("a postimage without receipt stays unknown until exact retained native comp
   assert.equal(recovered.status, "applied");
   assert.equal(recovered.effectResults[0].receipt.nativeIntentId, "synthetic-native-intent");
   assert.deepEqual(completedNative.writes(), []);
-  assert.deepEqual(protectedSnapshot(f.root), before);
+  assert.deepEqual(protectedSnapshot(f), before);
 });
 
 test("competing application callers converge under one effect claim and independent P5 lock", async t => {
   const f = await workerIntegrationFixture(t, { workers: [{ path: "a.txt", after: "new A" }] });
   const native = syntheticHost({ preflight: () => new Promise(resolve => setTimeout(resolve, 5)) });
-  const before = protectedSnapshot(f.root);
+  const before = protectedSnapshot(f);
   const [left, right] = await Promise.all([
     applyWorkerPatchIntegration(appInput(f), native.host), applyWorkerPatchIntegration(appInput(f), native.host),
   ]);
@@ -516,8 +519,8 @@ test("competing application callers converge under one effect claim and independ
   assert.equal(right.status, "applied");
   assert.equal(left.claim.recordId, right.claim.recordId);
   assert.equal(native.writes().length, 1);
-  assert.deepEqual(protectedSnapshot(f.root), before);
-  assert.deepEqual(fs.readdirSync(path.join(f.root, ".head/.operations")), []);
+  assert.deepEqual(protectedSnapshot(f), before);
+  assert.deepEqual(fs.readdirSync(path.join(f.root, relativeProjectArtifact(f.storage, ".operations"))), []);
 });
 
 test("Session changes during awaited capability probing reject before publishing a claim", async t => {
@@ -651,7 +654,7 @@ test("late exact native completion adds evidence without rewriting an original u
   await assert.rejects(reconcileWorkerPatchIntegration(appInput(f), wrongEffect.host), { code: "WORKER_INTEGRATION_APPLICATION_CONFLICT" });
   assert.equal(fs.existsSync(evidenceFile(f, ".effect-0.reconciled.receipt.json")), false);
   fs.writeFileSync(path.join(f.root, "a.txt"), "user's later edit");
-  const protectedBefore = protectedSnapshot(f.root);
+  const protectedBefore = protectedSnapshot(f);
   const completed = syntheticHost({ inspect: () => ({ status: "ok", result: {
     completionRecorded: true, status: "postimage-observed", intentId: initial.effectResults[0].receipt.nativeIntentId } }) });
   const recovered = await reconcileWorkerPatchIntegration(appInput(f), completed.host);
@@ -665,7 +668,7 @@ test("late exact native completion adds evidence without rewriting an original u
   assert.equal(attempt.receipt.status, "applied");
   assert.deepEqual(fs.readFileSync(evidenceFile(f, ".effect-0.receipt.json")), originalReceipt);
   assert.equal(bytes(f.root, "a.txt"), "user's later edit");
-  assert.deepEqual(protectedSnapshot(f.root), protectedBefore);
+  assert.deepEqual(protectedSnapshot(f), protectedBefore);
   const calls = completed.calls.length;
   const replay = await reconcileWorkerPatchIntegration(appInput(f), completed.host);
   assert.equal(replay.effectResults[0].receipt.recordId, attempt.receipt.recordId);
@@ -681,7 +684,7 @@ test("late exact native completion adds evidence without rewriting an original u
 test("dependency drift between effects pauses only remaining work until fresh HEAD reassessment", async t => {
   const f = await workerIntegrationFixture(t, { workers: [{ path: "a.txt", after: "new A" }, { path: "b.txt", after: "new B" }],
     readDependencies: ["config.txt"] });
-  const before = protectedSnapshot(f.root);
+  const before = protectedSnapshot(f);
   const native = syntheticHost({ apply: request => {
     if (request.payload.effect.path === "a.txt") fs.writeFileSync(path.join(f.root, "config.txt"), "changed during first effect");
   } });
@@ -694,12 +697,12 @@ test("dependency drift between effects pauses only remaining work until fresh HE
   assert.equal(assessed.status, "applied");
   assert.deepEqual(native.writes().map(call => call.path), ["a.txt", "b.txt"]);
   assert.equal(bytes(f.root, "config.txt"), "changed during first effect");
-  assert.deepEqual(protectedSnapshot(f.root), before);
+  assert.deepEqual(protectedSnapshot(f), before);
 });
 
 test("prepared not-published proof permits explicit same-intent reoffers with immutable P3 history", async t => {
   const f = await workerIntegrationFixture(t, { workers: [{ path: "a.txt", after: "new A" }] });
-  const protectedBefore = protectedSnapshot(f.root);
+  const protectedBefore = protectedSnapshot(f);
   const native = preparedSyntheticHost(f, { failures: 2 });
   const first = await applyWorkerPatchIntegration(appInput(f), native.host);
   assert.equal(first.effectResults[0].status, "not-started", JSON.stringify(first));
@@ -732,7 +735,7 @@ test("prepared not-published proof permits explicit same-intent reoffers with im
   assert.deepEqual(fs.readFileSync(evidenceFile(f, ".effect-0.receipt.json")), originalBytes);
   assert.deepEqual(fs.readFileSync(evidenceFile(f, ".effect-0.attempt-1.receipt.json")), secondBytes);
   assert.equal(bytes(f.root, "a.txt"), "new A");
-  assert.deepEqual(protectedSnapshot(f.root), protectedBefore);
+  assert.deepEqual(protectedSnapshot(f), protectedBefore);
   assert.ok(native.children.every(child => child.closed));
 });
 
@@ -823,7 +826,7 @@ test("prepared not-published retry cannot switch to an already-created journal u
 test("prepared valid but mismatched request or journal binding is rejected before dispatch", async t => {
   for (const mismatch of ["request-id", "journal"]) await t.test(mismatch, async t => {
     const f = await workerIntegrationFixture(t, { workers: [{ path: "a.txt", after: "new A" }] });
-    const protectedBefore = protectedSnapshot(f.root);
+    const protectedBefore = protectedSnapshot(f);
     const native = preparedSyntheticHost(f);
     const prepare = native.host.prepareFileEffect;
     native.host.prepareFileEffect = (request, options) => prepare(mismatch === "request-id"
@@ -833,7 +836,7 @@ test("prepared valid but mismatched request or journal binding is rejected befor
       ? { code: "INVALID_WORKER_FILE_EFFECT_RESPONSE" } : { code: "WORKER_INTEGRATION_APPLICATION_CONFLICT" });
     assert.equal(current(f).effectResults[0].attempts.length, 0);
     assert.equal(native.writes().length, 0);
-    assert.deepEqual(protectedSnapshot(f.root), protectedBefore);
+    assert.deepEqual(protectedSnapshot(f), protectedBefore);
   });
 });
 
@@ -883,7 +886,7 @@ test("prepared proof cannot replace an earlier unknown or survive nested proof t
   rewriteSyntheticEvidence(evidenceFile(f, ".effect-0.receipt.json"), receipt => { receipt.terminalProof = fresh.effectResults[0].receipt.terminalProof; });
   assert.throws(() => current(f), /Terminal evidence lacks its pre-dispatch binding/);
   fs.writeFileSync(evidenceFile(f, ".effect-0.receipt.json"), original);
-  const otherReceiptFile = path.join(f.root, ".head/runtime/worker-integrations", `${other.integrationId}.effect-0.receipt.json`);
+  const otherReceiptFile = path.join(f.root, relativeProjectArtifact(f.storage, "runtime", "worker-integrations"), `${other.integrationId}.effect-0.receipt.json`);
   rewriteSyntheticEvidence(otherReceiptFile, receipt => { receipt.terminalProof.nativeResponse.result.intentPublication = "published"; });
   assert.throws(() => readWorkerPatchApplication(otherInput), { code: "INVALID_WORKER_FILE_EFFECT_RESPONSE" });
 });

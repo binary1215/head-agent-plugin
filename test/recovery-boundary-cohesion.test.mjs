@@ -12,6 +12,49 @@ import { inspectRecoveryCheckpointBasis, syncRecoveryCheckpoint } from "../scrip
 import { updateProjectDirection, assertProjectActionsCurrent } from "../scripts/lib/project-direction.mjs";
 import { dispatch } from "../scripts/mcp-server.mjs";
 
+import { initialOnboardingDocuments } from "../scripts/lib/onboarding-contract.mjs";
+import { emptyProductModelDocument, normalizeProductModelDocument } from "../scripts/lib/product-model.mjs";
+import { formatForVerifiedOwner } from "../scripts/lib/project-storage-format.mjs";
+
+// Synthetic legacy contract seed only; genuine old-producer interoperability is verified separately.
+function seedLegacyProject(root) {
+  root = fs.realpathSync(root);
+  const createdAt = "2026-09-22T00:00:00.000Z";
+  const project = { schemaVersion: 1, projectId: `head-${crypto.createHash("sha256").update(root).digest("hex").slice(0, 20)}`,
+    projectRoot: root, createdAt, runtimes: ["claude", "codex", "opencode"], integrations: {},
+    authority: { head: "ordinary investigation, strategy, integration, and completion judgment",
+      user: "material product, policy, architecture, cost, workflow, and consequential external actions" } };
+  const sessionState = { schemaVersion: 1, sessionId: `session-${crypto.randomUUID()}`, mode: "session",
+    currentWholePlanId: null, activeRunId: null, activeExecutionContractId: null, lastResultPacketId: null,
+    pendingReview: null, lastReviewDecisionId: null, requiredPlanAction: null, latestCheckpoint: null, updatedAt: createdAt };
+  const product = emptyProductModelDocument();
+  const onboarding = initialOnboardingDocuments({ project, sessionState,
+    productModelId: normalizeProductModelDocument(product).productModelId, updatedAt: createdAt });
+  const records = new Map([
+    [".head/project.json", project], [".head/sessions/current.json", sessionState],
+    [".head/context/knowledge.json", { schemaVersion: 1, evidence: [], claims: [], decisions: [], unknowns: [] }],
+    [".head/context/product-model.json", product], [".head/onboarding/current.json", onboarding.state],
+    [`.head/sessions/records/${onboarding.sessionRecord.sessionId}.json`, onboarding.sessionRecord],
+    [`.head/onboarding/storage-selections/${onboarding.storageSelection.storageSelectionId}.json`, onboarding.storageSelection],
+  ]);
+  for (const [relative, value] of records) {
+    const file = path.join(root, relative); fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`, { flag: "wx" });
+  }
+  fs.mkdirSync(path.join(root, ".head/instructions"), { recursive: true });
+  fs.writeFileSync(path.join(root, ".head/instructions/project.md"), "# Project-specific HEAD context\n\nRecord project identity, canonical sources, repository boundaries, and fixed constraints here.\n", { flag: "wx" });
+  const immutable = [...records.keys()].filter(relative => relative === ".head/project.json"
+    || relative.startsWith(".head/sessions/records/") || relative.startsWith(".head/onboarding/storage-selections/"));
+  const manifest = { schemaVersion: 1, generatedAt: createdAt, pluginRoot,
+    packageVersion: JSON.parse(fs.readFileSync(path.join(pluginRoot, "package.json"))).version,
+    managed: immutable.map(relative => ({ path: relative, sha256: crypto.createHash("sha256").update(fs.readFileSync(path.join(root, relative))).digest("hex") })) };
+  fs.mkdirSync(path.join(root, ".head/generated"), { recursive: true });
+  fs.writeFileSync(path.join(root, ".head/generated/manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, { flag: "wx" });
+  const inspected = inspectProject(root); assert.equal(inspected.status, "ready");
+  assert.equal(inspected.storage.directory, ".head");
+  return { project };
+}
+
 const pluginRoot = path.resolve(import.meta.dirname, "..");
 const sha = value => crypto.createHash("sha256").update(value).digest("hex");
 function snapshot(directory) {
@@ -31,6 +74,7 @@ function fixture(t, { checkpoint = true } = {}) {
     fs.rmSync(base, { recursive: true, force: true });
   });
   initializeProject({ root, pluginRoot, runtimes: ["codex", "claude", "opencode"] });
+  const storage = inspectProject(root).storage, directory = formatForVerifiedOwner(storage).directory;
   const selected = createHeadSession({ root, purpose: "Independent synthetic design investigation" }).sessionId;
   updateProjectDirection({ root, input: { goal: "Explain an exact-comparison tradeoff", constraints: ["Read only"], cancelledActions: ["deploy"] } });
   withSessionRoute(root, selected, () => {
@@ -38,7 +82,7 @@ function fixture(t, { checkpoint = true } = {}) {
     if (checkpoint) syncRecoveryCheckpoint({ root, expectedRecoveryBasisId: inspectRecoveryCheckpointBasis({ root }).basis.basisId,
       purpose: "Compare designs", approvedDecisions: ["Read-only evaluation"], currentPosition: "Evidence retained", nextExpectedResult: "Explain the tradeoff" });
   });
-  return { base, root, selected, operational, environment: { HEAD_AGENT_OPERATIONAL_STATE_ROOT: operational } };
+  return { base, root, storage, directory, selected, operational, environment: { HEAD_AGENT_OPERATIONAL_STATE_ROOT: operational } };
 }
 const call = (root, name, session, options = {}) => dispatch({ jsonrpc: "2.0", id: "cohesion-fixture", method: "tools/call",
   params: { name, arguments: { project_root: root, ...(session ? { session_id: session } : {}) } } }, options);
@@ -69,10 +113,10 @@ async function readAll(f, { checkpoint = true, host = null } = {}) {
 
 for (const [name,relative,remove] of [
   ["edited instructions", "AGENTS.md", false], ["deleted instructions", "AGENTS.md", true],
-  ["generated instructions", ".head/generated/head-instructions.md", false],
-  ["generated role", ".head/roles/head.md", false], ["provider configuration", ".mcp.json", false],
+  ["generated instructions", ["generated", "lode-instructions.md"], false],
+  ["generated role", ["roles", "lode.md"], false], ["provider configuration", ".mcp.json", false],
 ]) test(`projection-only ${name} preserves original recovery and evidence`, async t => {
-  const f = fixture(t), file = path.join(f.root, relative);
+  const f = fixture(t), file = Array.isArray(relative) ? path.join(f.root, f.directory, ...relative) : path.join(f.root, relative);
   if (remove) fs.unlinkSync(file); else fs.appendFileSync(file, "\nUser-owned local variation.\n");
   assert.equal(inspectProject(f.root).status, "drifted");
   const entry = await readAll(f);
@@ -119,7 +163,7 @@ test("Host context, retained binding and selection preflight isolate default dam
   const attempt=host.prepareSelection({root:f.root,sessionId:f.selected});assert.equal(attempt.prepared,true);
   assert.equal(host.settleSelection({ticket:attempt.ticket,outcome:"succeeded"}).retained,true);
   await readAll(f,{host});
-  fs.writeFileSync(path.join(f.root,".head/sessions/by-id",f.selected,"current.json"),"null");
+  fs.writeFileSync(path.join(f.root,f.directory,"sessions/by-id",f.selected,"current.json"),"null");
   const failed=await call(f.root,"head_conversation_enter",null,{resolveSessionContext:host.resolveSessionContext});
   assert.ok(failed.error || failed.result?.structuredContent?.status==="session_selection_unresolved");
 });
@@ -135,7 +179,11 @@ test("failed selection cannot guess an unreadable absent default predecessor", t
 });
 
 test("legacy default without projectId stays usable without migration", async t => {
-  const f=fixture(t),file=defaultSessionStatePath(f.root),state=JSON.parse(fs.readFileSync(file));
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), "head-cohesion-legacy-"));
+  const root = fs.realpathSync(base);
+  t.after(() => fs.rmSync(base, { recursive: true, force: true }));
+  seedLegacyProject(root);
+  const f = { base, root }, file = defaultSessionStatePath(root), state = JSON.parse(fs.readFileSync(file));
   delete state.projectId;fs.writeFileSync(file,JSON.stringify(state));
   const before=snapshot(f.base),reply=await call(f.root,"head_conversation_enter",state.sessionId);
   assert.equal(reply.error,undefined);assert.equal(reply.result.structuredContent.status,"conversation_ready");
@@ -154,19 +202,19 @@ test("null or foreign default predecessor cannot block exact new Host selection"
 
 for (const kind of ["project bytes","unknown managed path","manifest JSON","selected Session","duplicate identity","selected owner","checkpoint digest"]) {
   test(`actual ${kind} damage is not projection-only eligibility`, async t => {
-    const f=fixture(t),named=path.join(f.root,".head/sessions/by-id",f.selected,"current.json");
-    if(kind==="project bytes")fs.appendFileSync(path.join(f.root,".head/project.json"),"\n");
-    if(kind==="manifest JSON")fs.writeFileSync(path.join(f.root,".head/generated/manifest.json"),"{broken");
+    const f=fixture(t),named=path.join(f.root,f.directory,"sessions/by-id",f.selected,"current.json");
+    if(kind==="project bytes")fs.appendFileSync(path.join(f.root,f.directory,"project.json"),"\n");
+    if(kind==="manifest JSON")fs.writeFileSync(path.join(f.root,f.directory,"generated/manifest.json"),"{broken");
     if(kind==="unknown managed path"){
-      const manifestFile=path.join(f.root,".head/generated/manifest.json"),manifest=JSON.parse(fs.readFileSync(manifestFile));
-      manifest.managed.push({path:".head/unclassified-original.json",sha256:sha("trusted")});
-      fs.writeFileSync(path.join(f.root,".head/unclassified-original.json"),"different");fs.writeFileSync(manifestFile,JSON.stringify(manifest));
+      const manifestFile=path.join(f.root,f.directory,"generated/manifest.json"),manifest=JSON.parse(fs.readFileSync(manifestFile));
+      manifest.managed.push({path:`${f.directory}/unclassified-original.json`,sha256:sha("trusted")});
+      fs.writeFileSync(path.join(f.root,f.directory,"unclassified-original.json"),"different");fs.writeFileSync(manifestFile,JSON.stringify(manifest));
     }
     if(kind==="selected Session")fs.writeFileSync(named,"null");
     if(kind==="selected owner"){const state=JSON.parse(fs.readFileSync(named));state.projectId="head-00000000000000000000";fs.writeFileSync(named,JSON.stringify(state));}
     if(kind==="duplicate identity"){const state=JSON.parse(fs.readFileSync(defaultSessionStatePath(f.root)));state.sessionId=f.selected;fs.writeFileSync(defaultSessionStatePath(f.root),JSON.stringify(state));}
     if(kind==="checkpoint digest"){
-      const state=JSON.parse(fs.readFileSync(named)),file=path.join(f.root,".head/sessions/ledger",`${state.latestCheckpoint}.json`);
+      const state=JSON.parse(fs.readFileSync(named)),file=path.join(f.root,f.directory,"sessions/ledger",`${state.latestCheckpoint}.json`);
       const value=JSON.parse(fs.readFileSync(file));value.purpose="untrusted replacement";fs.writeFileSync(file,JSON.stringify(value));
     }
     const before=snapshot(f.base),restore=await call(f.root,"head_session_restore",f.selected);
@@ -178,7 +226,7 @@ for (const kind of ["project bytes","unknown managed path","manifest JSON","sele
 }
 
 test("generated and Skill guidance preserve native boundaries without repeated implementation paragraphs", t => {
-  const f=fixture(t),skill=fs.readFileSync(path.join(pluginRoot,"skills/head-agent-core/SKILL.md"),"utf8");
+  const f=fixture(t),skill=fs.readFileSync(path.join(pluginRoot,"skills/lode-agent-core/SKILL.md"),"utf8");
   const generated=fs.readFileSync(path.join(f.root,"AGENTS.md"),"utf8").replace(/`/g,"").replace(/\s+/g," ");
   for(const guidance of[generated,skill.replace(/\s+/g," ")]){
     assert.match(guidance,/verified (?:Host selection|explicit route)/i);
@@ -204,6 +252,6 @@ test("new dependency leaves cannot transitively reach World or runtime orchestra
   }
   for(const leaf of ["session-paths.mjs","product-policy-records.mjs","runtime-invocation-storage.mjs","worker-patch-proposal-contract.mjs"]){
     const seen=new Set(),queue=[leaf];while(queue.length){const node=queue.pop();if(seen.has(node))continue;seen.add(node);queue.push(...(graph.get(node)||[]));}
-    for(const forbidden of ["world-model.mjs","incremental-refresh.mjs","runtime-invocation-lifecycle.mjs","runtime-invocation-record.mjs","head-core.mjs"])assert.equal(seen.has(forbidden),false,`${leaf} reaches ${forbidden}`);
+    for(const forbidden of ["world-model.mjs","incremental-refresh.mjs","runtime-invocation-lifecycle.mjs","runtime-invocation-record.mjs","head-core.mjs","lode-core.mjs"])assert.equal(seen.has(forbidden),false,`${leaf} reaches ${forbidden}`);
   }
 });

@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { initializeProject, inspectProject } from "../scripts/lib/head-core.mjs";
+import { initializeProject, inspectProject } from "../scripts/lib/lode-core.mjs";
 import { buildRuntimeVersionEvidence } from "../scripts/lib/runtime-machine-execution.mjs";
 import { buildRuntimeProjectBinding, buildRuntimeProtocolEvidence } from "../scripts/lib/runtime-protocol-evidence.mjs";
 import { buildRuntimeInvocationAuthorization, prepareRuntimeInvocationExecution } from "../scripts/lib/runtime-invocation-lifecycle.mjs";
@@ -48,7 +48,7 @@ function capabilitySpawn(_command, args) {
 }
 
 async function fixture(t, options = {}) {
-  const parent = fs.realpathSync(process.env.HEAD_AGENT_TEST_TMP || os.tmpdir());
+  const parent = fs.realpathSync(process.env.LODE_AGENT_TEST_TMP || process.env.HEAD_AGENT_TEST_TMP || os.tmpdir());
   const container = fs.mkdtempSync(path.join(parent, "head-native-fork-"));
   const root = path.join(container, "project");
   const bin = path.join(container, "synthetic-capability");
@@ -64,6 +64,10 @@ async function fixture(t, options = {}) {
     fs.rmSync(container, { recursive: true, force: true });
   });
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const storage = inspectProject(root).storage;
+  assert.equal(storage.directory, ".lode");
+  assert.equal(fs.existsSync(path.resolve(root, ".lode/project.json")), true);
+  assert.equal(fs.existsSync(path.resolve(root, ".head/project.json")), false);
   fs.writeFileSync(path.join(root, "selected.txt"), "Synthetic selected source\n");
   const executablePath = path.join(bin, process.platform === "win32" ? "codex.exe" : "codex");
   fs.writeFileSync(executablePath, "Synthetic non-executable provider fixture\n");
@@ -72,7 +76,7 @@ async function fixture(t, options = {}) {
   const versionEvidence = await buildRuntimeVersionEvidence({ runtimes: ["codex"], environment, spawnImplementation: capabilitySpawn });
   const protocolEvidence = await buildRuntimeProtocolEvidence({ runtimes: ["codex"], environment, versionEvidence, spawnImplementation: capabilitySpawn });
   const inspected = inspectProject(root);
-  const projectBinding = buildRuntimeProjectBinding({ projectId: inspected.project.projectId, headSessionId: inspected.state.sessionId,
+  const projectBinding = buildRuntimeProjectBinding({ storage, projectId: inspected.project.projectId, headSessionId: inspected.state.sessionId,
     projectRoot: fs.realpathSync(root), projectStatus: "ready", versionEvidence, protocolEvidence });
   const policy = buildCodexWorkerPolicyPlan({ executablePath, executableDigest: hash(fs.readFileSync(executablePath)),
     model: "synthetic-provider/synthetic-model", wireModel: "synthetic-model", wireModelProvider: "synthetic-provider", mode: "native-fork",
@@ -148,7 +152,7 @@ async function fixture(t, options = {}) {
   const execute = extra => executeCodexRuntimeInvocation({ root, authorization, protocolEvidence, projectBinding, environment,
     evidenceMode: "protocol-fixture", supervisorSelection: { manifest: { manifestHash: hash("synthetic-unused-supervisor") } },
     spawnImplementation: () => { throw new Error("Native contract tests cannot launch a process"); }, ...extra }, { workerPolicyCapability, nativeForkHost: host });
-  return { root, operational, authorization, policy, state, host, hostOptions, execute, initialGoal, prepared };
+  return { storage, root, operational, authorization, policy, state, host, hostOptions, execute, initialGoal, prepared };
 }
 
 test("completed cutoff binds the exact prefix and excludes later history", () => {
@@ -173,7 +177,7 @@ test("completed cutoff binds the exact prefix and excludes later history", () =>
 
 test("native fork uses the existing selected authorization, one lease, spool and result route", async t => {
   const f = await fixture(t);
-  const sessionFile = path.join(f.root, ".head/sessions/current.json");
+  const sessionFile = path.join(f.root, f.storage.directory, "sessions/current.json");
   const before = fs.readFileSync(sessionFile);
   const completed = await f.execute();
   assert.equal(completed.receipt.status, "completed");
@@ -183,7 +187,7 @@ test("native fork uses the existing selected authorization, one lease, spool and
   assert.deepEqual(completed.draft.providerResult, result);
   assert.equal(completed.executionLease.release.consumptionId, completed.executionLease.consumption.consumptionId);
   assert.equal(completed.executionLease.release.lifecycleReceiptId, completed.receipt.receiptId);
-  assert.equal(readRuntimeInvocationRecord({ root: f.root, authorizationId: f.authorization.authorizationId }).draft.draftId, completed.draft.draftId);
+  assert.equal(readRuntimeInvocationRecord({ root: f.root, storage: f.storage, authorizationId: f.authorization.authorizationId }).draft.draftId, completed.draft.draftId);
   const spool = readRuntimeOutputSpool({ operationalRoot: f.operational, authorization: f.authorization });
   assert.equal(spool.status, "terminal-recorded");
   assert.equal(spool.recoveryAuthority, false);
@@ -240,14 +244,14 @@ test("child goal clearing failure prevents explicit turn and leaves source untou
 
 for (const mutation of ["Fork", "Turn"]) test(`uncertain ${mutation.toLowerCase()} is journaled exactly and never replayed`, async t => {
   const f = await fixture(t, { [`uncertain${mutation}`]: true });
-  const before = fs.readFileSync(path.join(f.root, ".head/sessions/current.json"));
+  const before = fs.readFileSync(path.join(f.root, f.storage.directory, "sessions/current.json"));
   assert.equal((await f.execute()).receipt.status, "failed");
   const method = mutation === "Fork" ? "thread/fork" : "turn/start";
   assert.equal(f.state.calls.filter(call => call.method === method).length, 1);
   const uncertain = f.state.journal.find(item => item.event === "request-error" && item.method === method);
   assert.equal(uncertain.state, "uncertain"); assert.ok(uncertain.requestId.includes(f.authorization.authorizationId));
   assert.equal(f.state.cleanups[0].requests.find(item => item.requestId === uncertain.requestId).state, "uncertain");
-  assert.deepEqual(fs.readFileSync(path.join(f.root, ".head/sessions/current.json")), before);
+  assert.deepEqual(fs.readFileSync(path.join(f.root, f.storage.directory, "sessions/current.json")), before);
   assert.deepEqual(f.state.sourceGoal, f.initialGoal);
   await assert.rejects(f.execute());
   assert.equal(f.state.calls.filter(call => call.method === method).length, 1);
@@ -399,7 +403,7 @@ test("final hydration cannot silently replace the completed result items", async
 
 test("supervisor handle provenance rejects JSON, copies, synthetic spawn and other invocation/source ownership", async t => {
   const f = await fixture(t);
-  const selection = resolveVerifiedProcessSupervisor({ pluginRoot: process.env.HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT || pluginRoot });
+  const selection = resolveVerifiedProcessSupervisor({ pluginRoot: (process.env.LODE_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT || process.env.HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT) || pluginRoot });
   const ownershipBinding = { authorizationHash: f.authorization.authorizationHash, consumptionId: "synthetic-consumption", policyDigest: hash(JSON.stringify(f.policy)),
     inputDigest: f.authorization.executionInput.digest, executionRootDigest: hash(f.root) };
   const expected = { ownershipBinding, executablePathDigest: hash(path.resolve(process.execPath)), executionRootDigest: hash(f.root),
@@ -428,7 +432,7 @@ test("supervisor handle provenance rejects JSON, copies, synthetic spawn and oth
 
 test("real native supervisor identity proof uses a model-free owned Node child", async t => {
   const f = await fixture(t);
-  const selection = resolveVerifiedProcessSupervisor({ pluginRoot: process.env.HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT || pluginRoot });
+  const selection = resolveVerifiedProcessSupervisor({ pluginRoot: (process.env.LODE_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT || process.env.HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT) || pluginRoot });
   const ownershipBinding = { authorizationHash: f.authorization.authorizationHash, consumptionId: "synthetic-native-identity",
     policyDigest: hash(JSON.stringify(f.policy)), inputDigest: f.authorization.executionInput.digest, executionRootDigest: hash(f.root) };
   const startedAt = Date.now();

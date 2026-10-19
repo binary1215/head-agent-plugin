@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { dispatch } from "./mcp-server.mjs";
+import { publicToolName } from "./lib/lode-artifact-composition.mjs";
 
 const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "head-agent-conversation-"));
 const projectRoot = path.join(temporaryRoot, "sample-project");
@@ -14,6 +15,7 @@ const discoveredTools = new Map();
 const routedToolNames = new Set();
 
 async function directToolResponse(name, args) {
+  name = publicToolName(name);
   const response = await dispatch({
     jsonrpc: "2.0",
     id: `${name}-${Date.now()}`,
@@ -25,6 +27,7 @@ async function directToolResponse(name, args) {
 }
 
 async function discoverTool(name) {
+  name = publicToolName(name);
   if (!discoveredTools.has(name)) {
     const discovery = (await directToolResponse("head_tools_discover", { name })).structuredContent;
     assert.equal(discovery.persisted, false);
@@ -32,13 +35,14 @@ async function discoverTool(name) {
     assert.equal(discovery.total, 1);
     assert.equal(discovery.tools[0].name, name);
     assert.equal(discovery.tools[0].invokeWith,
-      discovery.tools[0].annotations.readOnlyHint === true ? "head_tools_read" : "head_tools_call");
+      publicToolName(discovery.tools[0].annotations.readOnlyHint === true ? "head_tools_read" : "head_tools_call"));
     discoveredTools.set(name, discovery.tools[0]);
   }
   return discoveredTools.get(name);
 }
 
 async function toolResponse(name, args) {
+  name = publicToolName(name);
   if (defaultToolNames.has(name)) return directToolResponse(name, args);
   const discovered = await discoverTool(name);
   routedToolNames.add(name);
@@ -61,7 +65,7 @@ try {
 
   const listed = await dispatch({ jsonrpc: "2.0", id: "tools", method: "tools/list", params: {} });
   for (const entry of listed.result.tools) defaultToolNames.add(entry.name);
-  for (const name of ["head_tools_discover", "head_tools_read", "head_tools_call", "head_project_initialize_or_resume"]) {
+  for (const name of ["head_tools_discover", "head_tools_read", "head_tools_call", "head_project_initialize_or_resume"].map(publicToolName)) {
     assert(defaultToolNames.has(name), `Missing default MCP entry: ${name}`);
   }
   for (const name of [
@@ -72,11 +76,12 @@ try {
     "head_graphdb_connection_preflight",
     "head_graphdb_database_initialize",
     "head_graphdb_projection_activate",
-  ]) {
+  ].map(publicToolName)) {
     if (!defaultToolNames.has(name)) await discoverTool(name);
   }
-  assert.equal(defaultToolNames.has("head_onboarding_guide"), false);
+  assert.equal(defaultToolNames.has(publicToolName("head_onboarding_guide")), false);
   assert.equal(fs.existsSync(path.join(projectRoot, ".head")), false);
+  assert.equal(fs.existsSync(path.join(projectRoot, ".lode")), false);
   const graphDbActivateTool = await discoverTool("head_graphdb_projection_activate");
   assert.deepEqual(graphDbActivateTool.inputSchema.required, ["project_root", "confirm_remote_write"]);
   assert.equal(graphDbActivateTool.inputSchema.additionalProperties, false);

@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { formatForVerifiedOwner, familyFormatForOriginal } from "./project-storage-format.mjs";
 import {
   buildPreparedTraversalRequest,
   graphProjectionCanonicalJson,
@@ -40,11 +41,12 @@ function traversalOptions(query) {
   };
 }
 
-function evidencePayload({ graph, request }) {
+function evidencePayload({ graph, request, storage = null }) {
+  const format = formatForVerifiedOwner(storage);
   verifyTemporalProvenanceGraph(graph);
   const prepared = verifyPreparedTraversalRequest(request);
   const result = queryTemporalProvenanceGraph(graph, traversalOptions(prepared.traversalQuery));
-  const expected = buildPreparedTraversalRequest({ graph, result });
+  const expected = buildPreparedTraversalRequest({ graph, result, storage });
   if (graphProjectionCanonicalJson(prepared) !== graphProjectionCanonicalJson(expected)) {
     fail("Prepared traversal cost evidence requires the exact deterministic graph request.", "PREPARED_TRAVERSAL_COST_REQUEST_MISMATCH");
   }
@@ -78,7 +80,7 @@ function evidencePayload({ graph, request }) {
   return {
     schemaVersion: 1,
     kind: "PreparedTraversalCostEvidence",
-    protocol: { name: "head-agent-core-prepared-traversal-cost", version: PREPARED_TRAVERSAL_COST_VERSION },
+    protocol: { name: format.protocol("head-agent-core-prepared-traversal-cost"), version: PREPARED_TRAVERSAL_COST_VERSION },
     payloadModel: "normalized-utf8-canonical-json-response-components",
     projectId: prepared.projectId,
     graphSnapshotId: prepared.graphSnapshotId,
@@ -108,8 +110,8 @@ function evidencePayload({ graph, request }) {
   };
 }
 
-export function buildPreparedTraversalCostEvidence({ graph, request } = {}) {
-  const payload = evidencePayload({ graph, request });
+export function buildPreparedTraversalCostEvidence({ graph, request, storage = null } = {}) {
+  const payload = evidencePayload({ graph, request, storage });
   const evidenceHash = digest(graphProjectionCanonicalJson(payload));
   return verifyPreparedTraversalCostEvidence({
     ...payload,
@@ -119,6 +121,7 @@ export function buildPreparedTraversalCostEvidence({ graph, request } = {}) {
 }
 
 export function verifyPreparedTraversalCostEvidence(document, { graph = null, request = null } = {}) {
+  const format = familyFormatForOriginal("head-agent-core-prepared-traversal-cost", document);
   assertFields(document, [
     "schemaVersion", "kind", "protocol", "payloadModel", "projectId", "graphSnapshotId", "graphSnapshotHash",
     "sourceSnapshotId", "requestId", "requestHash", "queryId", "queryHash", "resultId", "resultHash",
@@ -136,7 +139,7 @@ export function verifyPreparedTraversalCostEvidence(document, { graph = null, re
     document.savedBytes, document.reductionBasisPoints,
   ];
   if (document.schemaVersion !== 1 || document.kind !== "PreparedTraversalCostEvidence"
-    || document.protocol?.name !== "head-agent-core-prepared-traversal-cost"
+    || !format
     || document.protocol?.version !== PREPARED_TRAVERSAL_COST_VERSION
     || document.payloadModel !== "normalized-utf8-canonical-json-response-components"
     || typeof document.projectId !== "string" || !document.projectId
@@ -176,7 +179,7 @@ export function verifyPreparedTraversalCostEvidence(document, { graph = null, re
   }
   if (graph || request) {
     if (!graph || !request) fail("Graph and request must be supplied together.", "INVALID_PREPARED_TRAVERSAL_COST_EXPECTATION");
-    const expected = buildPreparedTraversalCostEvidence({ graph, request });
+    const expected = buildPreparedTraversalCostEvidence({ graph, request, storage: format });
     if (graphProjectionCanonicalJson(document) !== graphProjectionCanonicalJson(expected)) {
       fail("Prepared traversal cost evidence differs from the deterministic expectation.", "PREPARED_TRAVERSAL_COST_EVIDENCE_MISMATCH");
     }

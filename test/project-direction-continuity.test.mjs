@@ -6,6 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import { EventEmitter } from "node:events";
 import { pathToFileURL } from "node:url";
+import { formatForVerifiedOwner } from "../scripts/lib/project-storage-format.mjs";
 
 // Optional source override runs these same synthetic cases against the frozen
 // pre-patch source; it never executes a real provider or changes that source.
@@ -21,16 +22,18 @@ const { buildRuntimeInvocationAuthorization, prepareRuntimeInvocationExecution }
 function project(t) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "head-direction-continuity-")));
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const storage = inspectProject(root).storage;
+  const layout = formatForVerifiedOwner(storage);
   t.after(() => {
     assert.equal(path.dirname(root), fs.realpathSync(os.tmpdir()));
     assert(path.basename(root).startsWith("head-direction-continuity-"));
     fs.rmSync(root, { recursive: true, force: true });
   });
-  return root;
+  return { root, storage, layout };
 }
-const pointer = (root) => path.join(root, ".head/project-direction/current.json");
-const store = (root) => path.dirname(pointer(root));
-const revisions = (root) => path.join(store(root), "revisions");
+const pointer = (root, layout) => path.join(root, layout.directory, "project-direction/current.json");
+const store = (root, layout) => path.dirname(pointer(root, layout));
+const revisions = (root, layout) => path.join(store(root, layout), "revisions");
 function snapshot(root) {
   const result = {};
   function walk(directory) {
@@ -52,12 +55,12 @@ const unavailable = { code: "PROJECT_DIRECTION_UNAVAILABLE" };
 
 for (const shape of ["absent", "empty-store", "empty-revisions", "unrelated-files"]) {
   test(`unused direction ${shape} preserves null and ordinary first publication`, (t) => {
-    const root = project(t);
-    if (shape !== "absent") fs.mkdirSync(shape === "empty-store" ? store(root) : revisions(root), { recursive: true });
+    const { root, layout } = project(t);
+    if (shape !== "absent") fs.mkdirSync(shape === "empty-store" ? store(root, layout) : revisions(root, layout), { recursive: true });
     if (shape === "unrelated-files") {
-      fs.writeFileSync(path.join(store(root), "notes.txt"), "Not a direction original");
-      fs.writeFileSync(path.join(revisions(root), "notes.json"), "{}");
-      fs.writeFileSync(path.join(store(root), ".current.json.not-a-uuid.tmp"), "{}");
+      fs.writeFileSync(path.join(store(root, layout), "notes.txt"), "Not a direction original");
+      fs.writeFileSync(path.join(revisions(root, layout), "notes.json"), "{}");
+      fs.writeFileSync(path.join(store(root, layout), ".current.json.not-a-uuid.tmp"), "{}");
     }
     readOnly(root, () => {
       assert.equal(readProjectDirection({ root }), null);
@@ -73,11 +76,11 @@ for (const shape of ["absent", "empty-store", "empty-revisions", "unrelated-file
 
 for (const count of [1, 2]) {
   test(`missing direction pointer with ${count} retained original(s) never guesses or rewrites current`, (t) => {
-    const root = project(t);
+    const { root, layout } = project(t);
     const first = updateProjectDirection({ root, input: { goal: "Explain only", cancelledActions: ["deploy"] } }).direction;
     const last = count === 1 ? first : updateProjectDirection({ root, expectedDirectionId: first.directionId,
       input: { goal: "Explain only", cancelledActions: ["deploy", "publish"] } }).direction;
-    fs.unlinkSync(pointer(root));
+    fs.unlinkSync(pointer(root, layout));
     readOnly(root, () => {
       assert.throws(() => readProjectDirection({ root }), unavailable);
       assert.throws(() => assertProjectActionsCurrent({ root, actions: ["deploy"] }), unavailable);
@@ -86,35 +89,35 @@ for (const count of [1, 2]) {
       assert.deepEqual(readProjectDirectionRevision({ root, directionId: first.directionId }), first);
       assert.throws(() => updateProjectDirection({ root, input: first.input }), unavailable);
     });
-    assert.equal(fs.existsSync(pointer(root)), false);
+    assert.equal(fs.existsSync(pointer(root, layout)), false);
   });
 }
 
 for (const trace of ["pointer-stage", "revision-stage", "damaged-original-name"]) {
   test(`missing direction pointer discloses ${trace} without selecting or deleting it`, (t) => {
-    const root = project(t);
-    fs.mkdirSync(revisions(root), { recursive: true });
+    const { root, layout } = project(t);
+    fs.mkdirSync(revisions(root, layout), { recursive: true });
     const nonce = "00000000-0000-4000-8000-000000000000";
-    const file = trace === "pointer-stage" ? path.join(store(root), `.current.json.${nonce}.tmp`)
-      : trace === "revision-stage" ? path.join(revisions(root), `.direction-${"a".repeat(24)}.json.${nonce}.tmp`)
-        : path.join(revisions(root), "direction-damaged.json");
+    const file = trace === "pointer-stage" ? path.join(store(root, layout), `.current.json.${nonce}.tmp`)
+      : trace === "revision-stage" ? path.join(revisions(root, layout), `.direction-${"a".repeat(24)}.json.${nonce}.tmp`)
+        : path.join(revisions(root, layout), "direction-damaged.json");
     fs.writeFileSync(file, "{");
     readOnly(root, () => assert.throws(() => readProjectDirection({ root }), unavailable));
-    assert.equal(fs.existsSync(pointer(root)), false);
+    assert.equal(fs.existsSync(pointer(root, layout)), false);
   });
 }
 
 test("interrupted first pointer publication retains its exact orphan original and cannot authorize empty basis", (t) => {
-  const root = project(t);
+  const { root, layout } = project(t);
   const rename = fs.renameSync;
   fs.renameSync = (source, destination) => {
-    if (destination === pointer(root)) throw Object.assign(new Error("Synthetic interrupted pointer publication"), { code: "SYNTHETIC_POINTER_WRITE" });
+    if (destination === pointer(root, layout)) throw Object.assign(new Error("Synthetic interrupted pointer publication"), { code: "SYNTHETIC_POINTER_WRITE" });
     return rename(source, destination);
   };
   try { assert.throws(() => updateProjectDirection({ root, input: { goal: "Local only", cancelledActions: ["deploy"] } }), { code: "SYNTHETIC_POINTER_WRITE" }); }
   finally { fs.renameSync = rename; }
-  assert.equal(fs.readdirSync(revisions(root)).length, 1);
-  assert.equal(fs.existsSync(pointer(root)), false);
+  assert.equal(fs.readdirSync(revisions(root, layout)).length, 1);
+  assert.equal(fs.existsSync(pointer(root, layout)), false);
   readOnly(root, () => {
     assert.throws(() => readProjectDirection({ root }), unavailable);
     assert.throws(() => assertAuthorizationProjectDirection(root, {}), unavailable);
@@ -122,8 +125,8 @@ test("interrupted first pointer publication retains its exact orphan original an
 });
 
 test("normal cancellation and direction drift remain strict without altering retained unknown effects", (t) => {
-  const root = project(t);
-  const sessionFile = path.join(root, ".head/sessions/current.json");
+  const { root, layout } = project(t);
+  const sessionFile = path.join(root, layout.directory, "sessions/current.json");
   const session = JSON.parse(fs.readFileSync(sessionFile, "utf8"));
   fs.writeFileSync(sessionFile, JSON.stringify({ ...session, externalEffect: { status: "unknown", replayAllowed: false } }));
   const first = updateProjectDirection({ root, input: { goal: "Build" } }).direction;
@@ -138,23 +141,23 @@ test("normal cancellation and direction drift remain strict without altering ret
 });
 
 test("corrupt pointers and original digests retain their existing integrity errors", (t) => {
-  const root = project(t);
+  const { root, layout } = project(t);
   const record = updateProjectDirection({ root, input: { goal: "Synthetic work" } }).direction;
-  const bytes = fs.readFileSync(pointer(root));
+  const bytes = fs.readFileSync(pointer(root, layout));
   for (const content of ["{", JSON.stringify({ directionId: "not-a-direction" })]) {
-    fs.writeFileSync(pointer(root), content);
+    fs.writeFileSync(pointer(root, layout), content);
     readOnly(root, () => assert.throws(() => readProjectDirection({ root }), { code: "INVALID_PROJECT_DIRECTION" }));
   }
-  fs.writeFileSync(pointer(root), bytes);
-  const original = path.join(revisions(root), `${record.directionId}.json`);
+  fs.writeFileSync(pointer(root, layout), bytes);
+  const original = path.join(revisions(root, layout), `${record.directionId}.json`);
   fs.writeFileSync(original, JSON.stringify({ ...record, projectId: "foreign-project" }));
   readOnly(root, () => assert.throws(() => readProjectDirection({ root }), { code: "PROJECT_DIRECTION_INTEGRITY_FAILURE" }));
 });
 
 test("recognized direction symlink trace retains path confinement instead of becoming empty or guessed", (t) => {
-  const root = project(t);
-  fs.mkdirSync(revisions(root), { recursive: true });
-  const trace = path.join(revisions(root), `direction-${"a".repeat(24)}.json`);
+  const { root, layout } = project(t);
+  fs.mkdirSync(revisions(root, layout), { recursive: true });
+  const trace = path.join(revisions(root, layout), `direction-${"a".repeat(24)}.json`);
   fs.writeFileSync(trace, "{}");
   // A synchronous filesystem seam avoids requiring Windows symlink privileges.
   const lstat = fs.lstatSync;
@@ -177,7 +180,7 @@ function capabilityFixture(_command, args) {
 }
 
 test("real authorization builder and prepared execution fail closed for new and preexisting null/non-null bases", async (t) => {
-  const root = project(t);
+  const { root, layout } = project(t);
   const bin = path.join(root, "fixture-bin"); fs.mkdirSync(bin);
   const marker = path.join(bin, process.platform === "win32" ? "codex.exe" : "codex");
   fs.writeFileSync(marker, "Synthetic marker; never executed");
@@ -194,11 +197,11 @@ test("real authorization builder and prepared execution fail closed for new and 
   const current = updateProjectDirection({ root, input: { goal: "Local only", cancelledActions: ["deploy"] } }).direction;
   const nonNullBasis = buildRuntimeInvocationAuthorization(options).authorization;
   assert.equal(nonNullBasis.currentProjectDirectionId, current.directionId);
-  fs.unlinkSync(pointer(root));
+  fs.unlinkSync(pointer(root, layout));
   readOnly(root, () => {
     assert.throws(() => buildRuntimeInvocationAuthorization(options), unavailable);
     assert.throws(() => prepareRuntimeInvocationExecution({ root, authorization: nullBasis, sessionRequest: options.scope.request }), unavailable);
     assert.throws(() => prepareRuntimeInvocationExecution({ root, authorization: nonNullBasis, sessionRequest: options.scope.request }), unavailable);
   });
-  assert.equal(fs.existsSync(path.join(root, ".head/runtime/execution-authorizations")), false);
+  assert.equal(fs.existsSync(path.join(root, layout.directory, "runtime/execution-authorizations")), false);
 });

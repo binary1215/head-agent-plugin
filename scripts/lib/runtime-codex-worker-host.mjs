@@ -1,3 +1,9 @@
+import { formatForVerifiedOwner, familyFormatForOriginal } from "./project-storage-format.mjs";
+const sessionIdOf = record => {
+  const format = familyFormatForOriginal({ sessionIdentity: true }, record);
+  return format ? record?.[format.sessionIdField] : undefined;
+};
+const originalFormat = record => familyFormatForOriginal({ kind: record?.kind }, record);
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -60,12 +66,12 @@ function verifyConnection({ root, executionRoot, authorization, policy, workspac
     || fixed.workspaceMode !== "read-only" || fixed.executableIdentity.pathDigest !== hash(fs.realpathSync(process.execPath))
     || fixed.executableIdentity.contentDigest !== hash(fs.readFileSync(process.execPath))) fail();
   const prepared = prepareRuntimeInvocationExecution({ root, authorization });
-  verifyWorkerWorkspace({ binding: workspaceBinding, sourceBasis: authorization.workerInput.sourceBasis });
+  verifyWorkerWorkspace({ binding: workspaceBinding, sourceBasis: authorization.workerInput.sourceBasis, storage: originalFormat(authorization) });
   const protocol = verifyRuntimeProtocolEvidence(c.protocolEvidence);
   const project = verifyRuntimeProjectBinding(c.projectBinding);
   if (protocol.evidenceId !== authorization.runtimeProtocolEvidenceId || project.bindingId !== authorization.runtimeProjectBindingId
     || project.protocolEvidenceId !== protocol.evidenceId || project.projectId !== authorization.projectId
-    || project.headSessionId !== authorization.headSessionId || project.projectRootDigest !== hash(prepared.projectRoot)) fail();
+    || sessionIdOf(project) !== sessionIdOf(authorization) || project.projectRootDigest !== hash(prepared.projectRoot)) fail();
   const selection = resolveVerifiedProcessSupervisor({ pluginRoot: path.dirname(c.supervisorManifestPath), manifestFile: c.supervisorManifestPath });
   if (selection.manifest.manifestHash !== c.supervisorManifestDigest) fail();
   const rebuilt = buildCodexNativeForkHostConnection({ authorization, policy: fixed, workspaceBinding,
@@ -83,7 +89,7 @@ export async function connectCodexWorkerHost(options = {}) {
   const hostConnection = JSON.parse(json(options.hostConnection ?? null));
   const binding = { root, executionRoot, authorization, policy: options.policy, workspaceBinding, hostConnection };
   const { fixed, selection, target } = verifyConnection(binding);
-  const operational = resolveRuntimeOperationalStateRoot({ projectRoot: root, create: false });
+  const operational = resolveRuntimeOperationalStateRoot({ projectRoot: root, storage: originalFormat(authorization), create: false });
   const directory = path.join(operational, "worker-jobs", authorization.projectId, authorization.authorizationId);
   let journalFd = null;
   let transport;

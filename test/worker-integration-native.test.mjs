@@ -1,3 +1,4 @@
+import { relativeProjectArtifact } from "../scripts/lib/project-storage-format.mjs";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
@@ -56,7 +57,7 @@ test("actual native edit/create/delete/mode effects connect to one whole result 
   assert.equal(published.resultPacket.evidence[0].memberProvenance.length, 4);
   assert.equal(inspectProject(f.root).state.pendingReview.resultPacketId, published.resultPacket.resultPacketId);
   assert.equal(inspectProject(f.root).state.lastReviewDecisionId, null);
-  assert.equal(fs.readdirSync(path.join(f.root, ".head/lineage/result-packets")).length, 1);
+  assert.equal(fs.readdirSync(path.join(f.root, relativeProjectArtifact(f.storage, "lineage", "result-packets"))).length, 1);
 });
 
 test("native completion before P3 receipt crash reconciles without reapplying or overwriting later user edits", { skip }, async t => {
@@ -68,7 +69,7 @@ test("native completion before P3 receipt crash reconciles without reapplying or
   const originalLink = fs.linkSync;
   let crashed = false;
   fs.linkSync = (source, target) => {
-    if (!crashed && String(target).startsWith(path.join(f.root, ".head/runtime/worker-integrations"))
+    if (!crashed && String(target).startsWith(path.join(f.root, relativeProjectArtifact(f.storage, "runtime", "worker-integrations")))
       && /\.effect-0(?:\.[^.]+)*\.receipt\.json$/.test(String(target))) {
       crashed = true; throw Object.assign(new Error("Synthetic post-effect P3 publication crash"), { code: "EIO" });
     }
@@ -112,7 +113,7 @@ test("a later exact native completion preserves the initial unknown receipt and 
   assert.equal(recovered.allEffectsCompleted, true);
   assert.notEqual(recovered.effectResults[0].receipt.recordId, original.recordId);
   assert.equal(recovered.effectResults[0].receipt.previousReceiptId, original.recordId);
-  const directory = path.join(f.root, ".head/runtime/worker-integrations");
+  const directory = path.join(f.root, relativeProjectArtifact(f.storage, "runtime", "worker-integrations"));
   const retained = fs.readdirSync(directory).filter(name => name.endsWith(".json"))
     .map(name => JSON.parse(fs.readFileSync(path.join(directory, name), "utf8")));
   assert.deepEqual(retained.find(value => value.recordId === original.recordId), original);
@@ -165,7 +166,7 @@ test("an exact initial nonpublication proof permits an explicit linked attempt w
       // Core has already published the exact request binding and started P3
       // record. Move only this fixture-owned ancestor, then invoke the genuine
       // native transport. No synthetic response or proof is supplied.
-      const directory = path.join(f.root, ".head/runtime/worker-integrations");
+      const directory = path.join(f.root, relativeProjectArtifact(f.storage, "runtime", "worker-integrations"));
       assert.equal(fs.readdirSync(directory).filter(name => /\.started\.json$/.test(name)).length, 1);
       fs.renameSync(ancestor, displaced);
       try { return await invokePreparedWorkerFileEffect(capability); }
@@ -196,9 +197,9 @@ test("an exact initial nonpublication proof permits an explicit linked attempt w
   assert.equal(result.started.previousAttemptId, retainedAttempt.recordId);
   assert.equal(result.receipt.nativeIntentId, retainedReceipt.nativeIntentId);
   assert.notEqual(result.started.preDispatchBinding.requestIdDigest, retainedAttempt.preDispatchBinding.requestIdDigest);
-  const records = fs.readdirSync(path.join(f.root, ".head/runtime/worker-integrations"))
+  const records = fs.readdirSync(path.join(f.root, relativeProjectArtifact(f.storage, "runtime", "worker-integrations")))
     .filter(name => name.endsWith(".json"))
-    .map(name => JSON.parse(fs.readFileSync(path.join(f.root, ".head/runtime/worker-integrations", name), "utf8")));
+    .map(name => JSON.parse(fs.readFileSync(path.join(f.root, relativeProjectArtifact(f.storage, "runtime", "worker-integrations"), name), "utf8")));
   assert.deepEqual(records.find(record => record.recordId === retainedReceipt.recordId), retainedReceipt);
   assert.deepEqual(records.find(record => record.recordId === retainedAttempt.recordId), retainedAttempt);
   assert.equal(fs.readFileSync(path.join(ancestor, "edit.txt"), "utf8"), "after");
@@ -217,5 +218,5 @@ test("an exact initial nonpublication proof permits an explicit linked attempt w
   assert.deepEqual(publishedAttempts.map(attempt => attempt.status), ["not-started", "applied"]);
   assert.equal(inspectProject(f.root).state.pendingReview.resultPacketId, published.resultPacket.resultPacketId);
   assert.equal(inspectProject(f.root).state.lastReviewDecisionId, null);
-  assert.equal(fs.readdirSync(path.join(f.root, ".head/lineage/result-packets")).length, 1);
+  assert.equal(fs.readdirSync(path.join(f.root, relativeProjectArtifact(f.storage, "lineage", "result-packets"))).length, 1);
 });

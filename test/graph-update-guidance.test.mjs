@@ -24,10 +24,11 @@ function fixture(t, world = false) {
     fs.rmSync(root, { recursive: true, force: true });
   });
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const layout = inspectProject(root).storage;
   fs.mkdirSync(path.join(root, "src"));
   if (world) {
     // Synthetic existing Canon fixture, not a runtime promotion/approval.
-    write(root, ".head/context/product-model.json", JSON.stringify({
+    write(root, `${layout.directory}/context/product-model.json`, JSON.stringify({
       schemaVersion: 1,
       featureGroups: [{ key: "greeting", name: "Greeting", description: "Present a greeting." }],
       capabilities: [{ key: "formatting", name: "Formatting", description: "Format text." }],
@@ -36,7 +37,7 @@ function fixture(t, world = false) {
       requirements: [], constraints: [], decisions: [],
     }));
   }
-  return root;
+  return { root, layout };
 }
 
 function write(root, relative, text) {
@@ -45,7 +46,7 @@ function write(root, relative, text) {
   fs.writeFileSync(target, text);
 }
 
-function authorityBytes(root) {
+function authorityBytes(root, layout) {
   const result = {};
   function capture(relative) {
     const target = path.join(root, relative);
@@ -54,8 +55,10 @@ function authorityBytes(root) {
       for (const entry of fs.readdirSync(target).sort()) capture(`${relative}/${entry}`);
     } else result[relative] = fs.readFileSync(target).toString("base64");
   }
-  for (const relative of [".head/project.json", ".head/sessions", ".head/project-direction",
-    ".head/context/product-model.json", ".head/lineage", ".head/onboarding", ".head/product-policy"]) capture(relative);
+  for (const relative of [`${layout.directory}/project.json`, `${layout.directory}/sessions`, `${layout.directory}/project-direction`,
+    `${layout.directory}/context/product-model.json`, `${layout.directory}/lineage`, `${layout.directory}/onboarding`, `${layout.directory}/product-policy`]) capture(relative);
+  assert.ok(Object.hasOwn(result, `${layout.directory}/project.json`));
+  assert.ok(Object.hasOwn(result, `${layout.directory}/sessions/current.json`));
   return result;
 }
 
@@ -66,10 +69,10 @@ function relation(graph, type, fromPath, targetName) {
 }
 
 test("Core-only retained originals reuse indexing without World, Canon or recovery ceremony", async t => {
-  const root = fixture(t);
+  const { root, layout } = fixture(t);
   write(root, "src/greeting.mjs", "export function greeting() { return 'Hello'; }\n");
   write(root, "purpose.md", "Purpose: greet the reader. Proposed refinement, not approved Canon.\n");
-  const before = authorityBytes(root);
+  const before = authorityBytes(root, layout);
   const first = await prepareSourceContext({ root, task: "Inspect greeting and its purpose", retain: true,
     needs: [{ kind: "source", path: "src/greeting.mjs" }, { kind: "source", path: "purpose.md" }] });
   assert.equal(first.status, "observed");
@@ -82,8 +85,8 @@ test("Core-only retained originals reuse indexing without World, Canon or recove
     assert.equal(graph.authority[field], false);
   }
   write(root, "src/greeting.mjs", "export function greeting() { return 'Welcome'; }\n");
-  assert.throws(() => readSourceObservation(root, projectId, original.bundleKey), { code: "SOURCE_DRIFT" });
-  assert.equal(readSourceObservation(root, projectId, original.bundleKey, { requireCurrent: false }).observation.observationId,
+  assert.throws(() => readSourceObservation(root, projectId, original.bundleKey, { storage: layout }), { code: "SOURCE_DRIFT" });
+  assert.equal(readSourceObservation(root, projectId, original.bundleKey, { requireCurrent: false, storage: layout }).observation.observationId,
     original.observationId);
   const current = await prepareSourceContext({ root, task: "Inspect changed greeting", retain: true,
     needs: [{ kind: "source", path: "src/greeting.mjs" }] });
@@ -91,15 +94,15 @@ test("Core-only retained originals reuse indexing without World, Canon or recove
   assert.notEqual(current.results[0].sourceDigest, original.sourceDigest);
   assert.equal(indexProjectGraph({ root }).status, "reused");
   assert.throws(() => readWorldModel({ root }), { code: "WORLD_MODEL_NOT_BUILT" });
-  assert.deepEqual(authorityBytes(root), before);
+  assert.deepEqual(authorityBytes(root, layout), before);
 });
 
 test("HEAD refreshes integrated additions and changed code, reusing unchanged callers without inventing PASS or meaning", async t => {
-  const root = fixture(t, true);
+  const { root, layout } = fixture(t, true);
   write(root, "src/greeting.mjs", "export function greeting() { return 'Hello'; }\n");
   write(root, "src/app.mjs", "import { greeting } from './greeting.mjs';\nexport function render() { return greeting(); }\n");
   await buildWorldModel({ root });
-  const before = authorityBytes(root);
+  const before = authorityBytes(root, layout);
   // Two independently owned contributions reconciled by HEAD in one checkout.
   write(root, "src/greeting.mjs", "export function greeting() { return 'Welcome'; }\nexport function farewell() { return 'Bye'; }\n");
   write(root, "test/farewell.test.mjs", "import { farewell } from '../src/greeting.mjs';\nexport function verifiesFarewell() { return farewell() === 'Bye'; }\n");
@@ -117,7 +120,7 @@ test("HEAD refreshes integrated additions and changed code, reusing unchanged ca
   assert.ok(relation(graph, "CALLS", "test/farewell.test.mjs", "farewell"));
   assert.ok(graph.nodes.some(node => node.path === "test/farewell.test.mjs" && node.classification === "test"));
   // Discovering a test never executes it or creates approval/result/checkpoint records.
-  assert.deepEqual(authorityBytes(root), before);
+  assert.deepEqual(authorityBytes(root, layout), before);
   const check = await import(pathToFileURL(path.join(root, "test/farewell.test.mjs")).href);
   assert.equal(check.verifiesFarewell(), true);
   const basis = ["src/greeting.mjs", "test/farewell.test.mjs"].map(relative =>
@@ -135,15 +138,15 @@ test("HEAD refreshes integrated additions and changed code, reusing unchanged ca
     assert.equal(evidence.authority.promotionAuthority, false);
     assert.equal(evidence.authority.recoveryAuthority, false);
   }
-  assert.deepEqual(authorityBytes(root), before);
+  assert.deepEqual(authorityBytes(root, layout), before);
 });
 
 test("Rename/delete recomputes unchanged importers; failed refresh leaves source fallback and independent work usable", async t => {
-  const root = fixture(t, true);
+  const { root, layout } = fixture(t, true);
   write(root, "src/old.mjs", "export function greeting() { return 'Hello'; }\n");
   write(root, "src/app.mjs", "import { greeting } from './old.mjs';\nexport function render() { return greeting(); }\n");
   await buildWorldModel({ root });
-  const before = authorityBytes(root);
+  const before = authorityBytes(root, layout);
   const previous = readWorldModel({ root }).snapshot;
   fs.unlinkSync(path.join(root, "src/old.mjs"));
   write(root, "src/new.mjs", "export function salute() { return 'Hello'; }\n");
@@ -169,5 +172,5 @@ test("Rename/delete recomputes unchanged importers; failed refresh leaves source
   const recovered = await refreshWorldModel({ root });
   assert.equal(recovered.status, "refreshed");
   assert.ok(relation(readWorldModel({ root }).snapshot.semanticGraph, "CALLS", "src/app.mjs", "salute"));
-  assert.deepEqual(authorityBytes(root), before);
+  assert.deepEqual(authorityBytes(root, layout), before);
 });

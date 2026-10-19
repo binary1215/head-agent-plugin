@@ -3,7 +3,7 @@
 # Session 복원 및 검토된 result 통합
 
 이 계약은 숨겨진 공급자 대화를 재개하거나 Herdr 전용 process, pane, CLI, socket 또는
-TUI 동작을 내장하지 않으면서, 원래 HEAD Session 복원 및 worker-result 통합 흐름의
+TUI 동작을 내장하지 않으면서, 원래 Lode Session 복원 및 worker-result 통합 흐름의
 공급자 중립적 결과를 구현합니다.
 
 ## 원래 Feature 매핑
@@ -13,9 +13,9 @@ TUI 동작을 내장하지 않으면서, 원래 HEAD Session 복원 및 worker-r
 | Original Feature | 원래 결과 | 이 플러그인과의 관계 |
 |---|---|---|
 | HF-007 | context compaction을 거쳐 계속 진행 | 별도의 공급자 중립적 compaction recovery 계약으로 구현 |
-| HF-008 | 이전 HEAD OpenCode Session 복원 | artifact-only restore가 의미적 consumer input을 재현하며, 공급자 `ses_*` resume은 의도적으로 주장하지 않음 |
+| HF-008 | 이전 Lode OpenCode Session 복원 | artifact-only restore가 의미적 consumer input을 재현하며, 공급자 `ses_*` resume은 의도적으로 주장하지 않음 |
 | HF-009 | 독립적으로 소유할 수 있는 worker task dispatch | 별도의 bounded runtime/coordination vertical에 속하며, 이 통합 transaction은 dispatch가 아님 |
-| HF-010 | 완료된 worker branch 통합 | 수락된 ResultPacket review와 명시적인 HEAD 소유 checkpoint 통합으로 공급자 중립적으로 표현 |
+| HF-010 | 완료된 worker branch 통합 | 수락된 ResultPacket review와 명시적인 Lode 소유 checkpoint 통합으로 공급자 중립적으로 표현 |
 
 이 매핑은 동작의 동등성과 절차의 동일성을 구분합니다. 공급자 손실 연속성을 HF-010으로
 이름 바꾸거나, checkpoint transaction만으로 원래 dispatch/wait lifecycle이 완결된다고
@@ -26,7 +26,7 @@ TUI 동작을 내장하지 않으면서, 원래 HEAD Session 복원 및 worker-r
 | 아티팩트 | 평면 | 역할 |
 |---|---|---|
 | `WholePlanSnapshot`, `ExecutionContract`, `ContextCapsule`, `Run`, `SessionRunCheckpoint` | P2 | 복구 가능한 프로젝트 실행 계보 및 정확한 다음 방향 |
-| `ReviewDecision` | P1 | Fresh HEAD의 명시적 규범 판단 |
+| `ReviewDecision` | P1 | Fresh Lode의 명시적 규범 판단 |
 | `BoundedWorkerDispatch`, `ResultPacket` | P3 | worker 소유권과 result 증거; 과거 integration request/receipt 기록은 계속 읽을 수 있음 |
 | `SessionRestoreProjection` | P4 | 지속되지 않으며 재현 가능한 consumer view |
 | `ContinuationOutcome`, `BoundedWorkerWaitOutcome`, execution lease/process | P5 | 선택적인 live attachment 및 운영 진행일 뿐임 |
@@ -42,17 +42,17 @@ ResultPacket 어느 쪽도 이 fields를 작성할 수 없습니다.
 
 ## 독립 Session 라우팅과 현재 공통 방향
 
-하나의 정식 Project에서 여러 논리 HEAD Session을 독립적으로 라우팅합니다.
+하나의 정식 Project에서 여러 논리 Lode Session을 독립적으로 라우팅합니다.
 MCP `session_id` 또는 CLI `--session`은 요청 대상만 선택하며
-`.head/sessions/current.json`을 바꾸지 않습니다. 추가 기록은
-`.head/sessions/by-id/<session-id>/current.json`에 보존합니다. 기존 ID, 검토,
+`.lode/sessions/current.json`을 바꾸지 않습니다. 추가 기록은
+`.lode/sessions/by-id/<session-id>/current.json`에 보존합니다. 기존 ID, 검토,
 활성·불명 작업을 유지하고 로컬 목적·진행 변경은 다른 Session이나 공통 방향을
 덮어쓰지 않습니다.
 
 복구는 현재 공통 P2 기록의 `currentProjectDirection`도 반환합니다. goal,
 constraints, decisions, cancelledActions는 과거 checkpoint 필드와 구분합니다.
 과거 배포 단계가 더 최신인 공통 배포 취소를 되돌릴 수 없습니다.
-`head_project_direction_update`는 정확한 조회 `expected_direction_id`와 현재
+`lode_project_direction_update`는 정확한 조회 `expected_direction_id`와 현재
 사용자 방향을 요구하며 경합은 다시 읽고 조정합니다. 복구나 방향 기록은 실행
 authorization을 만들지 않습니다. 온전한 과거 자료는 탐색할 수 있지만 읽을 수
 있다는 이유만으로 현재 효과를 실행하지는 않습니다.
@@ -72,7 +72,7 @@ authorization을 만들지 않습니다. 온전한 과거 자료는 탐색할 �
 읽기 전용 프로젝트 경험은 동일한 검증을 실행해 `no-current-checkpoint`,
 `verified-current-checkpoint` 또는 `attention-required`를 보고할 수 있습니다.
 이 준비 상태 뷰는 복구 방향을 반환하거나 continuation token을 소비하거나 공급자를
-연결하지 않습니다. HEAD는 검증된 현재 체크포인트가 있을 때만 전체 복원 프로젝션을
+연결하지 않습니다. Lode는 검증된 현재 체크포인트가 있을 때만 전체 복원 프로젝션을
 읽습니다.
 
 projection 0.2는 checkpoint 의미와 현재 실행 사실을 분리합니다. 옛 위치·다음 결과는
@@ -81,29 +81,29 @@ projection 0.2는 checkpoint 의미와 현재 실행 사실을 분리합니다. 
 계보 유실은 관련 작업에 표시합니다. 공급자 ID·transcript·summary를 사용하거나
 resume/streaming을 활성화하지 않습니다. [상태 분리](recovery-state-separation.md)를 참조하세요.
 
-`head_conversation_enter`는 필요한 현재 진입 맥락이 아직 제공되지 않았을 때 같은
+`lode_conversation_enter`는 필요한 현재 진입 맥락이 아직 제공되지 않았을 때 같은
 읽기 전용 restore와 범위 제한 프로젝트 상태 사실을 구성합니다. Skill은 정확한
 Project와 선택된 논리 Session의 검증된 맥락이 충분하면 현재 공통 방향·취소 사항과
 함께 재사용하고, 관련 기준이 바뀌면 영향을 받는 현재 원본만 확인합니다. 사용자가
 recovery를 요청하거나 identity를 입력하거나 두 번째 status 호출을 수행하게 하지
 않습니다. 일반 진입의 World 상세 검사는 명시적으로 미검사이며 최신·오래됨·부재가
 아닙니다. 필요하면 전체 status/doctor 진단을 사용할 수 있지만 필수 후속 절차는
-아닙니다. 현재 checkpoint가 없으면 일반 작업을 계속하고, 검증 실패는 HEAD에
+아닙니다. 현재 checkpoint가 없으면 일반 작업을 계속하고, 검증 실패는 Lode에
 배정되어 recovery 의존 작업만 멈춥니다. 명시적 `session-restore`는 진단 및 adapter
 통합용으로 계속 제공됩니다.
 
 checkpoint 생성 후 P3 ResultPacket 증거가 삭제되었더라도 restore는 정확한 P2 방향을
-반환하고 증거를 `missing-evidence`로 표시합니다. Fresh HEAD review context를 만들어내지
+반환하고 증거를 `missing-evidence`로 표시합니다. Fresh Lode review context를 만들어내지
 않습니다. caller는 review 전에 필요한 증거를 복구하거나 재현해야 합니다.
 
 ## 읽기 전용 checkpoint 진단
 
-`head_checkpoint_diagnose`는 현재 pointer가 있을 때 프로젝트 준비도와 대화 진입이
+`lode_checkpoint_diagnose`는 현재 pointer가 있을 때 프로젝트 준비도와 대화 진입이
 공통으로 사용하고 typed MCP와 고급 CLI가 노출하는 읽기 전용 P4 진단입니다. 현재
 checkpoint pointer 또는 그 부재,
 artifact-only restore 검증, 기계적인 checkpoint-sync 가능 여부와 범위가 한정된 다음
-HEAD 동작 하나를 보고합니다. lock, cache, checkpoint, Session pointer, 승인 또는 Canon을
-쓰지 않습니다. 이를 읽는 것만으로 다른 provider HEAD나 model 평가를 호출하지 않습니다.
+Lode 동작 하나를 보고합니다. lock, cache, checkpoint, Session pointer, 승인 또는 Canon을
+쓰지 않습니다. 이를 읽는 것만으로 다른 provider Lode나 model 평가를 호출하지 않습니다.
 
 현재 pointer가 있으면 진단은 `basis B0 -> artifact restore -> basis B1` 순서를 수행합니다.
 정상 결과에는 동일한 basis identity와 Session hash, 그리고 restore tuple의 정확한 Project,
@@ -125,20 +125,20 @@ projection은 다음 사례를 구별합니다.
 선택적 ResultPacket 누락은 자체 완결적인 P2 방향을 무효화하지 않지만, review 의존 작업에는
 그 증거가 필요합니다. 필수 artifact 누락이나 integrity 실패를 선택적 누락, staleness 또는
 부재로 낮추지 않습니다. artifact 복구와 sync 가능 여부는 별도 축입니다. 안정적으로 관찰된
-pointer drift 때문에 기존 checkpoint를 복원할 수 없어도 새 HEAD-authored 방향은 기계적으로
+pointer drift 때문에 기존 checkpoint를 복원할 수 없어도 새 Lode-authored 방향은 기계적으로
 게시 가능할 수 있습니다. 어느 사실도 의미적 최신성을 증명하지 않습니다. ID, hash 또는
 basis byte가 같아도 자연어 방향이 최신 사용자 의도를 여전히 나타내는지는 알 수 없으며,
-checkpoint 작업이 실질적으로 필요할 때만 현재 provider HEAD가 이를 평가합니다.
+checkpoint 작업이 실질적으로 필요할 때만 현재 provider Lode가 이를 평가합니다.
 
 ## 최신성 gate를 적용한 checkpoint 동기화
 
-일반 provider HEAD 작업은 Session checkpoint를 무조건 다시 쓰지 않고 다음
+일반 provider Lode 작업은 Session checkpoint를 무조건 다시 쓰지 않고 다음
 read-derive-sync 순서를 사용합니다.
 
 ```text
-head_checkpoint_basis (read-only P4 comparison)
-  -> current provider HEAD derives direction from that exact basis
-  -> head_checkpoint_sync (locked P2 publish or exact reuse)
+lode_checkpoint_basis (read-only P4 comparison)
+  -> current provider Lode derives direction from that exact basis
+  -> lode_checkpoint_sync (locked P2 publish or exact reuse)
 ```
 
 비지속 basis는 정확한 Project와 Session, 현재 checkpoint, Session record hash,
@@ -164,7 +164,7 @@ entry 없이 수렴합니다. 동시에 들어온 동일 호출은 `created`와 
 동시에 들어온 다른 방향은 먼저 게시된 방향을 덮어쓸 수 없습니다.
 
 Core는 identity, lineage, transition state와 byte 동등성만 증명할 수 있습니다. 모델이
-실제로 자연어 방향을 다시 검토했는지는 증명할 수 없습니다. Provider HEAD는 반환된
+실제로 자연어 방향을 다시 검토했는지는 증명할 수 없습니다. Provider Lode는 반환된
 basis를 읽은 *뒤* 방향을 도출해야 하며, 이전 방향에서 `expectedRecoveryBasisId`만
 바꾸는 것은 caller 계약 위반입니다. 이 계약은 사용자 확인 단계를 만들지 않습니다.
 
@@ -179,7 +179,7 @@ review 게시에서는 그렇지 않습니다. sync는 정확한 기존 Run 작�
 만들지 않습니다. 신뢰할 수 있는 Host는 자연스러운 context-loss, handoff 또는 durable-Run
 boundary에서 이 순서를 호출할 수 있습니다. 기존 checkpoint에 사용자 objective/constraint
 변경, 검증된 단계 완료, failure/wait 전환 또는 전체 task 완료를 반영해야 할 때도 provider
-HEAD가 사용할 수 있습니다. 먼저 durable recovery direction을 실제로 게시할 필요가 있는지
+Lode가 사용할 수 있습니다. 먼저 durable recovery direction을 실제로 게시할 필요가 있는지
 판단하므로 매 turn의 필수 호출이 아닙니다. daemon, timer, turn마다 추가되는 model call 또는
 provider-session identity도 필요하지 않습니다.
 
@@ -197,30 +197,30 @@ checkpoint reader로 계속 읽을 수 있습니다. 그러나 immutable Session
 BoundedWorkerDispatch (P3)
   -> at-most-once lease / supervised provider / bounded wait (P5)
   -> ResultPacket (P3)
-  -> deterministic Fresh HEAD review projection
+  -> deterministic Fresh Lode review projection
   -> explicit accept ReviewDecision (P1)
-  -> explicit integration input owned by HEAD/user direction
+  -> explicit integration input owned by Lode/user direction
   -> SessionRunCheckpoint (P2)
 ```
 
-`worker-dispatch`는 등록된 non-HEAD role 하나를 정확한 현재 Run의
+`worker-dispatch`는 등록된 non-Lode role 하나를 정확한 현재 Run의
 `ExecutionAuthorization`에 바인딩합니다. 같은 role은 멱등적으로 retry할 수 있습니다.
 경쟁 role과는 충돌하며, 권한은 한 번만 소비할 수 있습니다. `worker-wait`는 지속되지
 않는 운영 outcome을 반환합니다. WholePlan을 변경하거나, recovery direction을
 제공하거나, ReviewDecision을 생성할 수 없습니다. `worker-apply`는 검증된 네이티브
-supervision을 갖춘 완료된 실제 공급자 result만 받아 ResultPacket과 Fresh HEAD review
+supervision을 갖춘 완료된 실제 공급자 result만 받아 ResultPacket과 Fresh Lode review
 context만 생성합니다. 명시적 review와 아래의 통합 transaction은 분리된 상태로 남습니다.
 
 여러 기존 dispatch는 공급자 중립적 wave 계약인
 [`bounded-worker-wave.md`](bounded-worker-wave.md)를 통해 볼 수 있습니다. wave seal은
 result acceptance가 아니라 start-evidence aggregation입니다. wave `completed`는 모든
 구성원이 운영상 성공했다는 뜻입니다. 각 구성원에는 여전히 자체 ResultPacket, Fresh
-HEAD ReviewDecision 및 명시적 HF-010 checkpoint 통합이 필요합니다.
+Lode ReviewDecision 및 명시적 HF-010 checkpoint 통합이 필요합니다.
 
 ## P2 우선의 선택적 live continuation
 
 `session-continue`는 공급자 또는 workspace host를 확인하기 전에 항상 artifact restore를
-호출합니다. 신뢰할 수 있는 host-injected adapter는 그 후 정확한 현재 HEAD attachment를
+호출합니다. 신뢰할 수 있는 host-injected adapter는 그 후 정확한 현재 Lode attachment를
 새로 검증할 수 있습니다. 이 adapter의 `ContinuationOutcome`은 P5이며 지속되지 않습니다.
 `attached` 또는 공개된 `fresh-logical-head` fallback 중 하나를 기록하고, 동일한 checkpoint와
 restore projection을 유지하며, 공급자 summary 또는 transcript를 읽지 않습니다. 공급자
@@ -229,12 +229,12 @@ HF-008 semantic recovery가 아니라 대화 편의성만 바꿉니다.
 
 `run-integrate-checkpoint`는 정확히 검토된 Run과 ReviewDecision을 요구합니다. Core는
 무엇이든 쓰기 전에 Run, ResultPacket, WholePlan, ExecutionContract, ContextCapsule,
-Fresh HEAD review identity, 현재 Session state 및 `accept` disposition을 다시 검증합니다.
+Fresh Lode review identity, 현재 Session state 및 `accept` disposition을 다시 검증합니다.
 `revise`, `expand`, `rollback`, `escalate`는 정상적인 next-plan 또는 user-direction 경로에
 남으며 result integration으로 잘못 표시될 수 없습니다.
 
 ReviewDecision 하나는 recovery checkpoint 하나에 결속됩니다.
-lock 안의 발행은 exact reviewed lineage와 HEAD가 명시적으로 작성한 방향을
+lock 안의 발행은 exact reviewed lineage와 Lode가 명시적으로 작성한 방향을
 checkpoint에 저장합니다. 동일 재시도는 재사용하고 다른 방향은 충돌합니다.
 ledger와 Session pointer 사이에서 중단되면 누락된 pointer 갱신만 완료합니다.
 뒤에 생성된 checkpoint를 재시도가 되돌리지 않습니다.
@@ -245,7 +245,7 @@ ledger와 Session pointer 사이에서 중단되면 누락된 pointer 갱신만 
 checkpoint는 재시도에서도 원래 identity를 유지합니다. 검증된 원본 request만
 남아 있으면 읽기는 `legacy_integration_pending`을 반환하고, integration은
 `RUN_RESULT_LEGACY_INTEGRATION_PENDING`을 보고하며 쓰거나 자동 완료하지 않습니다.
-원본 입력은 P3 참조 근거이며 복원된 P2 방향이 아닙니다. HEAD가 실제 상태와 현재
+원본 입력은 P3 참조 근거이며 복원된 P2 방향이 아닙니다. Lode가 실제 상태와 현재
 공통 방향을 살펴 여전히 적용할 수 있는 작업만 수동으로 이어갑니다. 추가 사용자
 승인이나 일반 작업 전체 차단은 없습니다. 손상된 원본은 해당 읽기·통합에만 영향을 줍니다.
 ResultPacket은 참조 증거로 남으며 나중에 없어져도 checkpoint의 자체 완결적인
@@ -256,7 +256,7 @@ ResultPacket은 참조 증거로 남으며 나중에 없어져도 checkpoint의 
 
 아래 worker 변경은 중단 복구, 소유권이나 효과 추적이 유용할 때 새로운
 관리형 작업에도 사용합니다. CLI `managed`, 또는 도구 발견 후
-`head_tools_call`의 `execution_mode: "managed"`로 호출합니다.
+`lode_tools_call`의 `execution_mode: "managed"`로 호출합니다.
 기존 `managed-maintenance` CLI/서버도 호환 진입점으로 유지합니다.
 라우팅은 기존 authorization, lease, lineage와 effect 검사를 보존하며 추가
 사용자 unlock은 필요하지 않습니다. 일반 read/status/wait와 정확한 소유 취소는
@@ -283,8 +283,8 @@ head run-integrate-checkpoint <project> --input <integration.json>
 head run-integration-read <project> --review <review-decision-id>
 ```
 
-Typed MCP는 `head_checkpoint_basis`, `head_checkpoint_diagnose`,
-`head_checkpoint_sync`, continuation,
+Typed MCP는 `lode_checkpoint_basis`, `lode_checkpoint_diagnose`,
+`lode_checkpoint_sync`, continuation,
 dispatch/status/wait/apply, restore 및 명시적 integration을 노출합니다. basis, restore,
 diagnosis, status 및 wait는 read-only입니다. checkpoint sync는 멱등적이며 공통 mutation lock 안에서
 정확한 basis를 다시 검증합니다. continuation은 주입된 host-local

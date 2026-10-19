@@ -1,3 +1,5 @@
+import { formatForVerifiedOwner, familyFormatForOriginal } from "./project-storage-format.mjs";
+const originalFormat = record => familyFormatForOriginal({ kind: record?.kind }, record);
 import crypto from "node:crypto";
 import fs from "node:fs";
 import { verifyCodexFreshProposalPolicyPlan, assertCodexFreshProposalRecipeCurrent,
@@ -47,7 +49,7 @@ export function assertCodexNativePrefixPolicy({ policy, root, authorization, wor
     || boundary.policyDigest !== hash(json(fixed)) || executablePath !== fixed.executablePath || codexHome !== fixed.codexHome
     || workspaceBinding?.canonicalRoot !== fs.realpathSync(root) || boundary.workspaceBindingDigest !== workspaceBinding.bindingDigest
     || boundary.executionRootDigest !== workspaceBinding.executionRootDigest) fail();
-  verifyWorkerWorkspace({ binding: workspaceBinding, sourceBasis: auth.workerInput.sourceBasis });
+  verifyWorkerWorkspace({ binding: workspaceBinding, sourceBasis: auth.workerInput.sourceBasis, storage: originalFormat(auth) });
   return { ...prepareRuntimeInvocationExecution({ root, authorization: auth, sessionRequest: auth.workerInput.sessionRequest || "" }),
     policy: fixed, executionRoot: workspaceBinding.executionRoot, inputDigest: auth.executionInput.digest };
 }

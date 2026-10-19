@@ -4,7 +4,7 @@
 
 검토일: 2026-08-27
 
-이 감사는 HEAD Agent Core가 사용자가 볼 수 있는 결과나 권한 경계를 보호하는 규칙만 유지하는지 확인합니다. 규칙은 범위가 좁고, 구현상의 강제 지점과 관찰 가능한 실패가 있으며, 범위를 좁히거나 제거할 수 있는 조건이 있을 때만 유지됩니다.
+이 감사는 Lode Agent Core가 사용자가 볼 수 있는 결과나 권한 경계를 보호하는 규칙만 유지하는지 확인합니다. 규칙은 범위가 좁고, 구현상의 강제 지점과 관찰 가능한 실패가 있으며, 범위를 좁히거나 제거할 수 있는 조건이 있을 때만 유지됩니다.
 
 ## 유지되는 보편적 불변조건
 
@@ -21,8 +21,8 @@
 | lane | 유지되는 규칙 | 의도적으로 두지 않은 규칙 |
 | --- | --- | --- |
 | Observe | 제한된 읽기, 최신성, 권한 공개 | 기본적으로 WholePlan, Capsule, Run, lease 또는 검토 없음 |
-| Session | 정확한 요청 다이제스트, 프로젝트/워크스페이스 범위, 되돌릴 수 있는 로컬 작업, 제한된 일회성 lease/result | ExecutionContract, 활성 Run, Product Canon 변경 또는 Fresh HEAD 검토 없음 |
-| Run | 수락된 WholePlan, ExecutionContract, ContextCapsule, 정확한 Run, 제한된 executor, ResultPacket, Fresh HEAD 검토 | 공급자 세션 식별자 또는 자동 Canon 승격 없음 |
+| Session | 정확한 요청 다이제스트, 프로젝트/워크스페이스 범위, 되돌릴 수 있는 로컬 작업, 제한된 일회성 lease/result | ExecutionContract, 활성 Run, Product Canon 변경 또는 Fresh Lode 검토 없음 |
+| Run | 수락된 WholePlan, ExecutionContract, ContextCapsule, 정확한 Run, 제한된 executor, ResultPacket, Fresh Lode 검토 | 공급자 세션 식별자 또는 자동 Canon 승격 없음 |
 | Authority | Run 제어와 영향받는 경계에서의 명시적인 사용자 소유 결정 | capability, 그래프 구체화, 문서 편집 또는 모델 출력에서 암시되는 승인 없음 |
 
 ## 서브시스템 및 어댑터 로컬 규칙
@@ -37,15 +37,15 @@
 
 ## 보류된 선택적 capability
 
-범용 공급자 세션 resume/stream, 더 광범위한 프로세스 호스트 제어, 자동 DAG 병합/충돌 해결, Obsidian/Notion 게시 및 OpenAI 범용 플러그인 디렉터리 게시는 선택 사항으로 남습니다. P2 우선의 정확한 선택적 HEAD attachment, 제한된 worker ownership/wait, 역할 메시징, WorkspaceHost 통합 및 정확히 소유된 일회성 interrupt/close는 보편적 전제 조건이 아니라 활성화된 범위 지정 capability입니다.
+범용 공급자 세션 resume/stream, 더 광범위한 프로세스 호스트 제어, 자동 DAG 병합/충돌 해결, Obsidian/Notion 게시 및 OpenAI 범용 플러그인 디렉터리 게시는 선택 사항으로 남습니다. P2 우선의 정확한 선택적 Lode attachment, 제한된 worker ownership/wait, 역할 메시징, WorkspaceHost 통합 및 정확히 소유된 일회성 interrupt/close는 보편적 전제 조건이 아니라 활성화된 범위 지정 capability입니다.
 이 기능들이 없어도 설치, 온보딩, 그래프 복구, Context, Session, Run, 공급자 교체 또는 Git/GraphDB 없는 Core 작동은 차단되지 않습니다.
 
 ## 제거되거나 범위가 축소된 규칙
 
-- 모든 작업을 WholePlan, Capsule, Run 및 Fresh HEAD를 통해 라우팅해야 한다는 요구를 제거했습니다. 이제 위험 비례 lane이 그 비용을 담당합니다.
+- 모든 작업을 WholePlan, Capsule, Run 및 Fresh Lode를 통해 라우팅해야 한다는 요구를 제거했습니다. 이제 위험 비례 lane이 그 비용을 담당합니다.
 - 보편적 초기화 경로에서 Product/World/Graph 온보딩을 제거했습니다. 선택적 product 프로필이 그 비용과 검토 게이트를 담당합니다.
 - 의미론적 식별자, 복구 및 온보딩 전제 조건에서 Git 커밋/결정 마커와 GraphDB 가용성을 제거했습니다.
-- HEAD Project, Session 및 Run 식별자에서 공급자 세션 식별자를 제거했습니다.
+- Lode Project, Session 및 Run 식별자에서 공급자 세션 식별자를 제거했습니다.
 - 어댑터가 소유하던 OpenCode OpenAI 호환 공급자 preset, endpoint 정규화 및 환경별 OpenAI/LiteLLM 가정을 제거했습니다. 대신 OpenCode는 사용자가 결정한 전역 설정을 읽습니다.
 - 고정된 모델 호출 횟수를 성공 기준에서 제거했습니다. 의도적인 opt-in과 제한된 리소스가 관련 제어로 남습니다.
 - 외부 보안 소프트웨어가 일으키는 Bun crash를 어댑터/모델/인증 실패 추론에서 제거했습니다.

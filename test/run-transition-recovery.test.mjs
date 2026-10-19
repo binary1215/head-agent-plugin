@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
-import { initializeProject, inspectProject } from "../scripts/lib/head-core.mjs";
+import { initializeProject, inspectProject } from "../scripts/lib/lode-core.mjs";
 import { compileContext } from "../scripts/lib/context-compiler.mjs";
 import { createWholePlanSnapshot, createNextWholePlanSnapshot, createExecutionContract } from "../scripts/lib/execution-lineage.mjs";
 import { finishRun, getPendingReviewContext, reviewRun, startRun } from "../scripts/lib/run-lineage.mjs";
@@ -17,7 +17,7 @@ const moduleUrl = pathToFileURL(path.join(pluginRoot, "scripts/lib/run-lineage.m
 console.log(JSON.stringify({ event: "owned-test-process", pid: process.pid, parentPid: process.ppid, command: process.execPath, args: process.argv.slice(1), cwd: process.cwd(), ports: [] }));
 
 function fixture(t) {
-  const parent = process.env.HEAD_AGENT_TEST_TMP || os.tmpdir();
+  const parent = process.env.LODE_AGENT_TEST_TMP || process.env.HEAD_AGENT_TEST_TMP || os.tmpdir();
   fs.mkdirSync(parent, { recursive: true });
   const root = fs.mkdtempSync(path.join(parent, "head-run-transition-"));
   t.after(() => {
@@ -26,12 +26,16 @@ function fixture(t) {
     fs.rmSync(root, { recursive: true, force: true });
   });
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const storage = inspectProject(root).storage;
+  assert.equal(storage.directory, ".lode");
+  assert.equal(fs.existsSync(path.resolve(root, ".lode/project.json")), true);
+  assert.equal(fs.existsSync(path.resolve(root, ".head/project.json")), false);
   const capsule = compileContext({ root, task: "Observe one local fixture fact", persist: true }).capsule;
   const plan = createWholePlanSnapshot({ root, objective: "Observe one local fixture fact", plan: [{ id: "observe", outcome: "Recorded fact" }] }).artifact;
   const contract = createExecutionContract({ root, wholePlanId: plan.wholePlanId, capsuleId: capsule.capsuleId, scope: "Observe one local fixture fact", acceptanceCriteria: ["Evidence is recorded"] }).artifact;
   const { run } = startRun({ root, executionContractId: contract.executionContractId });
   const finishInput = { root, outcome: "Observed fixture fact", evidence: [{ uri: "fixture-only", digest: "fixture-evidence" }], verification: [{ check: "local fact", status: "passed" }] };
-  return { root, run, contract, finishInput };
+  return { root, storage, run, contract, finishInput };
 }
 
 function reviewInput(root) {
@@ -103,11 +107,11 @@ for (const kind of ["finish", "review"]) {
   test(`${kind} converges before and after every durable boundary in a fresh process`, (t) => {
     for (const boundary of ["run", "artifact", "session"]) {
       for (const after of [false, true]) {
-        const { root, run, contract, finishInput } = fixture(t);
+        const { root, storage, run, contract, finishInput } = fixture(t);
         if (kind === "review") finishRun(finishInput);
         const input = kind === "finish" ? finishInput : reviewInput(root);
         const operation = kind === "finish" ? finishRun : reviewRun;
-        const canonBefore = fs.readFileSync(path.join(root, ".head/context/product-model.json"), "utf8");
+        const canonBefore = fs.readFileSync(path.join(root, storage.directory, "context/product-model.json"), "utf8");
         failAt(kind, boundary, after, () => operation(input));
         const beforeRead = snapshot(root);
         inspectProject(root);
@@ -121,7 +125,7 @@ for (const kind of ["finish", "review"]) {
         const { projectionUpdate: firstProjection, ...first } = result;
         assert.deepEqual(replayed, first, "completed retry must converge to exact canonical facts without derived publication");
         assert.deepEqual(snapshot(root), committed, "completed retry creates no artifacts or writes");
-        assert.equal(fs.readFileSync(path.join(root, ".head/context/product-model.json"), "utf8"), canonBefore);
+        assert.equal(fs.readFileSync(path.join(root, storage.directory, "context/product-model.json"), "utf8"), canonBefore);
         if (kind === "finish") {
           const pending = getPendingReviewContext({ root });
           assert.equal(pending.review.resultPacket.resultPacketId, result.resultPacket.resultPacketId);
@@ -137,7 +141,7 @@ for (const kind of ["finish", "review"]) {
 
 test("review convergence preserves every non-accept disposition and its existing next-work boundary", (t) => {
   for (const disposition of ["revise", "expand", "rollback", "escalate"]) {
-    const { root, contract, finishInput } = fixture(t);
+    const { root, storage, contract, finishInput } = fixture(t);
     finishRun(finishInput);
     const input = { ...reviewInput(root), disposition };
     failAt("review", "session", false, () => reviewRun(input));
@@ -155,12 +159,12 @@ test("review convergence preserves every non-accept disposition and its existing
 
 test("already-partial legacy Run records converge only through their exact stored result and decision", (t) => {
   for (const kind of ["finish", "review"]) {
-    const { root, run, finishInput } = fixture(t);
+    const { root, storage, run, finishInput } = fixture(t);
     if (kind === "review") finishRun(finishInput);
     const input = kind === "finish" ? finishInput : reviewInput(root);
     const operation = kind === "finish" ? finishRun : reviewRun;
     failAt(kind, "session", false, () => operation(input));
-    const file = path.join(root, ".head/sessions/runs", run.runId, "run.json");
+    const file = path.join(root, storage.directory, "sessions/runs", run.runId, "run.json");
     const legacy = JSON.parse(fs.readFileSync(file, "utf8"));
     delete legacy.sessionTransition;
     fs.writeFileSync(file, JSON.stringify(legacy));
@@ -176,12 +180,12 @@ test("already-partial legacy Run records converge only through their exact store
 
 for (const kind of ["finish", "review"]) {
   test(`${kind} incomplete transition cannot overwrite fields changed by intervening HEAD work`, (t) => {
-    const { root, finishInput } = fixture(t);
+    const { root, storage, finishInput } = fixture(t);
     if (kind === "review") finishRun(finishInput);
     const input = kind === "finish" ? finishInput : reviewInput(root);
     const operation = kind === "finish" ? finishRun : reviewRun;
     failAt(kind, "artifact", true, () => operation(input));
-    const sessionFile = path.join(root, ".head/sessions/current.json");
+    const sessionFile = path.join(root, storage.directory, "sessions/current.json");
     fs.writeFileSync(sessionFile, JSON.stringify({ ...inspectProject(root).state, mode: "paused-by-current-head" }));
     const unchanged = snapshot(root);
     assert.throws(() => operation(input), { code: "RUN_TRANSITION_SESSION_DRIFT" });
@@ -189,7 +193,7 @@ for (const kind of ["finish", "review"]) {
   });
 
   test(`${kind} completed replay preserves later checkpoint metadata but rejects changed operation pointers`, (t) => {
-    const { root, finishInput } = fixture(t);
+    const { root, storage, finishInput } = fixture(t);
     if (kind === "review") finishRun(finishInput);
     const input = kind === "finish" ? finishInput : reviewInput(root);
     const operation = kind === "finish" ? finishRun : reviewRun;
@@ -203,7 +207,7 @@ for (const kind of ["finish", "review"]) {
     assert.deepEqual(replay.state, session, "acknowledge using current Session, not historical state");
     assert.deepEqual(snapshot(root), withCheckpoint);
     assert.equal(restoreSessionFromArtifacts({ root }).status, "session_restored_from_artifacts");
-    const sessionFile = path.join(root, ".head/sessions/current.json");
+    const sessionFile = path.join(root, storage.directory, "sessions/current.json");
     fs.writeFileSync(sessionFile, JSON.stringify({ ...session, mode: "paused-by-current-head" }));
     const changedDirection = snapshot(root);
     assert.throws(() => operation(input), { code: "RUN_TRANSITION_SESSION_DRIFT" });
@@ -213,7 +217,7 @@ for (const kind of ["finish", "review"]) {
 
 for (const kind of ["finish", "review"]) {
   test(`${kind} rejects divergent retries, Session drift and tampered evidence without writes`, (t) => {
-    const { root, run, finishInput } = fixture(t);
+    const { root, storage, run, finishInput } = fixture(t);
     if (kind === "review") finishRun(finishInput);
     const input = kind === "finish" ? finishInput : reviewInput(root);
     const operation = kind === "finish" ? finishRun : reviewRun;
@@ -225,16 +229,16 @@ for (const kind of ["finish", "review"]) {
       assert.throws(() => finishRun(finishInput), { code: "RUN_TRANSITION_CONFLICT" });
     }
     assert.deepEqual(snapshot(root), prepared);
-    const sessionFile = path.join(root, ".head/sessions/current.json");
+    const sessionFile = path.join(root, storage.directory, "sessions/current.json");
     const sessionBytes = fs.readFileSync(sessionFile, "utf8");
     fs.writeFileSync(sessionFile, JSON.stringify({ ...JSON.parse(sessionBytes), mode: "intervening HEAD work" }));
     const drifted = snapshot(root);
     assert.throws(() => operation(input), { code: "RUN_TRANSITION_SESSION_DRIFT" });
     assert.deepEqual(snapshot(root), drifted);
     fs.writeFileSync(sessionFile, sessionBytes);
-    const storedRun = JSON.parse(fs.readFileSync(path.join(root, ".head/sessions/runs", run.runId, "run.json"), "utf8"));
+    const storedRun = JSON.parse(fs.readFileSync(path.join(root, storage.directory, "sessions/runs", run.runId, "run.json"), "utf8"));
     const directory = kind === "finish" ? "result-packets" : "review-decisions";
-    const artifactFile = path.join(root, ".head/lineage", directory, `${storedRun.sessionTransition.artifactId}.json`);
+    const artifactFile = path.join(root, storage.directory, "lineage", directory, `${storedRun.sessionTransition.artifactId}.json`);
     const bytes = fs.readFileSync(artifactFile, "utf8");
     fs.writeFileSync(artifactFile, bytes.replace('"artifactHash": "', '"artifactHash": "tampered'));
     const tampered = snapshot(root);

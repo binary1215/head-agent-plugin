@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
+import { publicToolName } from "./lode-artifact-composition.mjs";
 
-export const SESSION_HOST_REQUEST_HELPER = "head_session_host_request_prepare";
+export const SESSION_HOST_REQUEST_HELPER = publicToolName("head_session_host_request_prepare");
 const canonical = value => Array.isArray(value) ? `[${value.map(canonical).join(",")}]`
   : value && typeof value === "object" ? `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}` : JSON.stringify(value);
 export const hostRequestDigest = value => crypto.createHash("sha256").update(canonical(value)).digest("hex");

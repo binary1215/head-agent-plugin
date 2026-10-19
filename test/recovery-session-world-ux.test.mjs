@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { initializeProject, inspectProject } from "../scripts/lib/head-core.mjs";
+import { initializeProject, inspectProject } from "../scripts/lib/lode-core.mjs";
 import { compileContext } from "../scripts/lib/context-compiler.mjs";
 import { createWholePlanSnapshot, createExecutionContract } from "../scripts/lib/execution-lineage.mjs";
 import { startRun, finishRun, reviewRun, getPendingReviewContext } from "../scripts/lib/run-lineage.mjs";
@@ -13,16 +13,22 @@ import { restoreSessionFromArtifacts } from "../scripts/lib/session-recovery.mjs
 import { createHeadSession, createSessionCallContext, withSessionCallContext, withSessionRoute } from "../scripts/lib/session-routing.mjs";
 import { updateProjectDirection } from "../scripts/lib/project-direction.mjs";
 import { dispatch } from "../scripts/mcp-server.mjs";
-import { runCommand } from "../scripts/head.mjs";
+import { runCommand } from "../scripts/lode.mjs";
 import { formatCliResult, formatProjectStatus, formatSessionRestore, formatConversationRecovery } from "../scripts/lib/cli-presentation.mjs";
 
+// head_* request inputs below deliberately exercise compatibility dispatch;
+// generated catalog and Hook assertions use the canonical Lode vocabulary.
 const pluginRoot = path.resolve(import.meta.dirname, "..");
 const direction = { purpose: "Preserve the task", currentPosition: "Before bounded work", nextExpectedResult: "Historical step, not a new execution authorization" };
 function fixture(t) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "head-recovery-v2-")));
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const storage = inspectProject(root).storage;
+  assert.equal(storage.directory, ".lode");
+  assert.equal(fs.existsSync(path.resolve(root, ".lode/project.json")), true);
+  assert.equal(fs.existsSync(path.resolve(root, ".head/project.json")), false);
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  return root;
+  return { root, storage };
 }
 function contract(root) {
   const capsule = compileContext({ root, task: "Inspect a synthetic local library", persist: true }).capsule;
@@ -42,9 +48,9 @@ function bytes(root) {
 const call = (root, name, args = {}, options = {}) => dispatch({ jsonrpc: "2.0", id: "local-fixture", method: "tools/call", params: { name, arguments: { project_root: root, ...args } } }, options);
 
 test("checkpoint/start/finish/review restore current facts without rewriting meaning or replaying historical actions", async (t) => {
-  const root = fixture(t), c = contract(root);
+  const { root, storage } = fixture(t), c = contract(root);
   const checkpoint = createRecoveryCheckpoint({ root, ...direction }).checkpoint;
-  const ledger = path.join(root, ".head", "sessions", "ledger", `${checkpoint.checkpointId}.json`);
+  const ledger = path.join(root, storage.directory, "sessions", "ledger", `${checkpoint.checkpointId}.json`);
   const checkpointBytes = fs.readFileSync(ledger);
   const trace = [];
   trace.push("start");
@@ -79,7 +85,7 @@ test("checkpoint/start/finish/review restore current facts without rewriting mea
 });
 
 test("trusted caller contexts preserve A/B, sharing, explicit default and known loss without global selectors", async (t) => {
-  const root = fixture(t), original = inspectProject(root).state.sessionId;
+  const { root, storage } = fixture(t), original = inspectProject(root).state.sessionId;
   const a = createHeadSession({ root, purpose: "A" }), b = createHeadSession({ root, purpose: "B" });
   const first = createSessionCallContext(), second = createSessionCallContext();
   const selected = await Promise.all([
@@ -120,7 +126,7 @@ test("trusted caller contexts preserve A/B, sharing, explicit default and known 
 });
 
 test("CLI context and explicit routes agree; no checkpoint and unsupported binding remain nonblocking", (t) => {
-  const root = fixture(t), a = createHeadSession({ root, purpose: "A" }), context = createSessionCallContext();
+  const { root, storage } = fixture(t), a = createHeadSession({ root, purpose: "A" }), context = createSessionCallContext();
   const initial = runCommand(["conversation-enter", root]);
   assert.equal(initial.recoveryState, "no-current-checkpoint");
   assert.equal(initial.ordinaryWorkBlocked, false);
@@ -133,7 +139,7 @@ test("CLI context and explicit routes agree; no checkpoint and unsupported bindi
 });
 
 test("explicit MCP routing survives unavailable Host persistence without guessing or changing another caller", async (t) => {
-  const root = fixture(t), a = createHeadSession({ root, purpose: "Explicit route" }), b = createHeadSession({ root, purpose: "Other caller" });
+  const { root, storage } = fixture(t), a = createHeadSession({ root, purpose: "Explicit route" }), b = createHeadSession({ root, purpose: "Other caller" });
   withSessionRoute(root, a.sessionId, () => createRecoveryCheckpoint({ root, ...direction }));
   const other = createSessionCallContext(); other.select(root, b.sessionId);
   const otherBefore = other.read(root), before = bytes(root);
@@ -150,7 +156,7 @@ test("explicit MCP routing survives unavailable Host persistence without guessin
     assert.deepEqual(restored.result._meta.headSessionBinding, { status: "unavailable", reasonCode: "SYNTHETIC_BINDING_UNAVAILABLE", scope: "current-explicit-request-only", retainedForSubsequentCalls: false, persisted: false });
   }
   assert.equal((await call(root, "head_session_restore", {}, unavailable)).result.structuredContent.status, "session_selection_unresolved");
-  const foreign = createHeadSession({ root: fixture(t), purpose: "Foreign owner" });
+  const foreign = createHeadSession({ root: fixture(t).root, purpose: "Foreign owner" });
   for (const session_id of ["not-a-session", foreign.sessionId, null, undefined, 42]) {
     const rejected = await call(root, "head_session_restore", { session_id }, unavailable);
     assert(rejected.error, "resolver failure must not bypass explicit identity verification");
@@ -158,7 +164,7 @@ test("explicit MCP routing survives unavailable Host persistence without guessin
   }
   const explicitDefault = await call(root, "head_project_status", { session_id: "" }, unavailable);
   assert.equal(explicitDefault.result.structuredContent.project.sessionId, inspectProject(root).state.sessionId);
-  const selectedFile = path.join(root, ".head/sessions/by-id", a.sessionId, "current.json"), selectedBytes = fs.readFileSync(selectedFile);
+  const selectedFile = path.join(root, storage.directory, "sessions/by-id", a.sessionId, "current.json"), selectedBytes = fs.readFileSync(selectedFile);
   try {
     const state = JSON.parse(selectedBytes); state.projectId = "head-foreign";
     fs.writeFileSync(selectedFile, JSON.stringify(state));
@@ -169,7 +175,7 @@ test("explicit MCP routing survives unavailable Host persistence without guessin
 });
 
 test("lost caller binding never gates CLI information or Project evidence but still guards selected Session facts", async (t) => {
-  const root = fixture(t), selected = createHeadSession({ root, purpose: "Lost caller" }), context = createSessionCallContext();
+  const { root, storage } = fixture(t), selected = createHeadSession({ root, purpose: "Lost caller" }), context = createSessionCallContext();
   fs.writeFileSync(path.join(root, "independent.mjs"), "export const observed = true;\n");
   context.select(root, selected.sessionId); context.lose(root);
   const before = bytes(root), binding = context.read(root);
@@ -193,10 +199,10 @@ test("lost caller binding never gates CLI information or Project evidence but st
 });
 
 test("general meaning recovery cannot relax exact one-shot targets or consumed tokens", (t) => {
-  const badRoot = fixture(t);
+  const { root: badRoot, storage: badStorage } = fixture(t);
   const invalid = prepareCompaction({ root: badRoot, runtime: "codex", userTurnIdAtPrepare: 7, ...direction });
   assert.throws(() => verifyCompaction({ root: badRoot, epochId: invalid.epoch.epochId, checkpointDigest: "0".repeat(64), currentUserTurnId: 7, providerCompacted: true }));
-  const root = fixture(t);
+  const { root, storage } = fixture(t);
   const prepared = prepareCompaction({ root, runtime: "codex", userTurnIdAtPrepare: 7, ...direction });
   const epochId = prepared.epoch.epochId, checkpointDigest = prepared.checkpoint.checkpointDigest;
   verifyCompaction({ root, epochId, checkpointDigest, currentUserTurnId: 7, providerCompacted: true });
@@ -208,7 +214,7 @@ test("general meaning recovery cannot relax exact one-shot targets or consumed t
 });
 
 test("operational lock cleanup failure after commit never changes the original retry target", (t) => {
-  const root = fixture(t), c = contract(root), unlink = fs.unlinkSync;
+  const { root, storage } = fixture(t), c = contract(root), unlink = fs.unlinkSync;
   let result;
   fs.unlinkSync = function(file, ...args) {
     if (String(file).includes("session-recovery.lock") && path.basename(String(file)).startsWith("owner-")) throw Object.assign(new Error("Synthetic release failure"), { code: "EIO" });
@@ -223,32 +229,32 @@ test("operational lock cleanup failure after commit never changes the original r
 });
 
 test("a demonstrably default-owned historical active Run is not another Session's start gate", (t) => {
-  const root = fixture(t), c = contract(root);
+  const { root, storage } = fixture(t), c = contract(root);
   const original = startRun({ root, executionContractId: c.executionContractId });
-  const file = path.join(root, ".head/sessions/runs", original.run.runId, "run.json");
+  const file = path.join(root, storage.directory, "sessions/runs", original.run.runId, "run.json");
   const legacy = JSON.parse(fs.readFileSync(file));
   delete legacy.sessionId; delete legacy.startOperation; delete legacy.sessionTransition;
   fs.writeFileSync(file, JSON.stringify(legacy));
-  const defaultBytes = fs.readFileSync(path.join(root, ".head/sessions/current.json"));
+  const defaultBytes = fs.readFileSync(path.join(root, storage.directory, "sessions/current.json"));
   const second = createHeadSession({ root, purpose: "Independent bounded work" });
   const started = withSessionRoute(root, second.sessionId, () => startRun({ root, executionContractId: contract(root).executionContractId, startRequestId: "independent-session" }));
   assert.equal(started.run.sessionId, second.sessionId);
-  assert.deepEqual(fs.readFileSync(path.join(root, ".head/sessions/current.json")), defaultBytes);
+  assert.deepEqual(fs.readFileSync(path.join(root, storage.directory, "sessions/current.json")), defaultBytes);
 });
 
 test("partial availability: mixed reads expose only Project facts without fallback reads or writes", async (t) => {
-  const root = fixture(t), selected = createHeadSession({ root, purpose: "Not a fallback" });
+  const { root, storage } = fixture(t), selected = createHeadSession({ root, purpose: "Not a fallback" });
   const common = updateProjectDirection({ root, input: { goal: "Inspect synthetic code", constraints: ["Keep local"], cancelledActions: ["deploy"] } }).direction;
   const context = createSessionCallContext(); context.select(root, selected.sessionId); context.lose(root);
   // Even a damaged default cannot be consulted to fill an unselected response.
-  fs.writeFileSync(path.join(root, ".head/sessions/current.json"), "{damaged-default");
+  fs.writeFileSync(path.join(root, storage.directory, "sessions/current.json"), "{damaged-default");
   const before = bytes(root), binding = context.read(root), reads = [], writes = [];
   const original = Object.fromEntries(["readFileSync", "readdirSync", "writeFileSync", "appendFileSync", "mkdirSync", "renameSync", "unlinkSync"].map(key => [key, fs[key]]));
   const values = [];
   try {
     for (const key of ["readFileSync", "readdirSync"]) fs[key] = function(file, ...args) {
       const relative = path.relative(root, String(file)).replaceAll("\\", "/"); reads.push(relative);
-      if (relative.startsWith(".head/")) assert(relative === ".head/project.json" || relative.startsWith(".head/project-direction/"), `unexpected partial read: ${relative}`);
+      if (relative.startsWith(`${storage.directory}/`)) assert(relative === `${storage.directory}/project.json` || relative.startsWith(`${storage.directory}/project-direction/`), `unexpected partial read: ${relative}`);
       return original[key].call(this, file, ...args);
     };
     for (const key of ["writeFileSync", "appendFileSync", "mkdirSync", "renameSync", "unlinkSync"]) fs[key] = function(...args) { writes.push(key); throw new Error(`partial read attempted ${key}`); };
@@ -288,7 +294,7 @@ test("partial availability: mixed reads expose only Project facts without fallba
 });
 
 test("partial availability: unresolved CLI consumers never invent recovery, checkpoint or diagnostics", (t) => {
-  const root = fixture(t), context = createSessionCallContext(); context.lose(root);
+  const { root, storage } = fixture(t), context = createSessionCallContext(); context.lose(root);
   for (const command of ["status", "doctor", "conversation-enter", "session-restore", "init", "resume"]) {
     const value = runCommand([command, root], { sessionContext: context });
     assert.equal(value.status, "session_selection_unresolved");
@@ -307,11 +313,11 @@ test("partial availability: unresolved CLI consumers never invent recovery, chec
 });
 
 test("partial availability: missing direction is distinct from corrupt direction or Project identity", async (t) => {
-  const root = fixture(t), context = createSessionCallContext(); context.lose(root);
+  const { root, storage } = fixture(t), context = createSessionCallContext(); context.lose(root);
   const missing = (await call(root, "head_project_status", {}, { sessionContext: context })).result.structuredContent;
   assert.equal(missing.currentProjectDirection, null); assert.equal(missing.availability.currentProjectDirection, "not_recorded");
   const common = updateProjectDirection({ root, input: { goal: "Current cancellation", cancelledActions: ["deploy"] } }).direction;
-  const directionFile = path.join(root, ".head/project-direction/current.json"), directionBytes = fs.readFileSync(directionFile);
+  const directionFile = path.join(root, storage.directory, "project-direction/current.json"), directionBytes = fs.readFileSync(directionFile);
   fs.writeFileSync(directionFile, "{");
   try {
     for (const options of [{ sessionContext: context }, { resolveSessionContext() { throw new Error("offline"); } }]) {
@@ -320,12 +326,12 @@ test("partial availability: missing direction is distinct from corrupt direction
     assert.throws(() => runCommand(["status", root], { sessionContext: context }), { code: "INVALID_PROJECT_DIRECTION" });
   } finally { fs.writeFileSync(directionFile, directionBytes); }
   assert.equal((await call(root, "head_project_status", {}, { sessionContext: context })).result.structuredContent.currentProjectDirection.directionId, common.directionId);
-  const otherRoot = fixture(t), otherDirection = updateProjectDirection({ root: otherRoot, input: { goal: "Foreign direction" } }).direction;
-  const revisionFile = path.join(root, ".head/project-direction/revisions", `${common.directionId}.json`), revisionBytes = fs.readFileSync(revisionFile);
+  const { root: otherRoot, storage: otherStorage } = fixture(t), otherDirection = updateProjectDirection({ root: otherRoot, input: { goal: "Foreign direction" } }).direction;
+  const revisionFile = path.join(root, storage.directory, "project-direction/revisions", `${common.directionId}.json`), revisionBytes = fs.readFileSync(revisionFile);
   fs.writeFileSync(revisionFile, JSON.stringify(otherDirection));
   try { assert((await call(root, "head_project_status", {}, { sessionContext: context })).error); }
   finally { fs.writeFileSync(revisionFile, revisionBytes); }
-  const projectFile = path.join(root, ".head/project.json"), projectBytes = fs.readFileSync(projectFile), project = JSON.parse(projectBytes);
+  const projectFile = path.join(root, storage.directory, "project.json"), projectBytes = fs.readFileSync(projectFile), project = JSON.parse(projectBytes);
   try {
     for (const change of [{ projectRoot: "wrong-root" }, { schemaVersion: 99 }, { projectId: null }]) {
       fs.writeFileSync(projectFile, JSON.stringify({ ...project, ...change }));
@@ -339,7 +345,7 @@ test("partial availability: missing direction is distinct from corrupt direction
 });
 
 test("partial availability: healthy default/bound/explicit output and no-checkpoint meaning stay unchanged", async (t) => {
-  const root = fixture(t), context = createSessionCallContext();
+  const { root, storage } = fixture(t), context = createSessionCallContext();
   for (const name of ["head_project_status", "head_conversation_enter"]) {
     const ordinary = await call(root, name);
     assert.deepEqual((await call(root, name, {}, { sessionContext: context })).result, ordinary.result);
@@ -356,12 +362,12 @@ test("partial availability: healthy default/bound/explicit output and no-checkpo
 });
 
 test("partial availability: a changed Project identity cannot mix another valid direction into its facts", async (t) => {
-  const root = fixture(t), foreignRoot = fixture(t), context = createSessionCallContext(); context.lose(root);
+  const { root, storage } = fixture(t), { root: foreignRoot } = fixture(t), context = createSessionCallContext(); context.lose(root);
   const foreign = updateProjectDirection({ root: foreignRoot, input: { goal: "Other Project direction" } }).direction;
-  const directory = path.join(root, ".head/project-direction"); fs.mkdirSync(path.join(directory, "revisions"), { recursive: true });
+  const directory = path.join(root, storage.directory, "project-direction"); fs.mkdirSync(path.join(directory, "revisions"), { recursive: true });
   fs.writeFileSync(path.join(directory, "current.json"), JSON.stringify({ directionId: foreign.directionId }));
   fs.writeFileSync(path.join(directory, "revisions", `${foreign.directionId}.json`), JSON.stringify(foreign));
-  const projectFile = path.join(root, ".head/project.json"), project = JSON.parse(fs.readFileSync(projectFile));
+  const projectFile = path.join(root, storage.directory, "project.json"), project = JSON.parse(fs.readFileSync(projectFile));
   const originalRead = fs.readFileSync; let projectReads = 0;
   fs.readFileSync = function(file, ...args) {
     if (path.resolve(String(file)) === projectFile && ++projectReads > 1) return JSON.stringify({ ...project, projectId: foreign.projectId });

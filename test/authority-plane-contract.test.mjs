@@ -11,7 +11,7 @@ import {
   authorityPlaneContract,
   verifyArtifactAuthorityBoundary,
 } from "../scripts/lib/authority-plane-contract.mjs";
-import { initializeProject } from "../scripts/lib/head-core.mjs";
+import { initializeProject, inspectProject } from "../scripts/lib/head-core.mjs";
 import { InMemoryGraphProjectionAdapter } from "../scripts/lib/graph-projection-adapter.mjs";
 import { buildWorldModel } from "../scripts/lib/world-model.mjs";
 
@@ -124,7 +124,8 @@ test("fences actual graph materialization from Product Canon bytes", async (t) =
   fs.mkdirSync(path.join(root, "src"), { recursive: true });
   fs.writeFileSync(path.join(root, "src", "service.mjs"), "export const ready = true;\n");
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
-  const canonFile = path.join(root, ".head", "context", "product-model.json");
+  const layout = inspectProject(root).storage;
+  const canonFile = path.join(root, layout.directory, "context", "product-model.json");
   const canonBefore = fs.readFileSync(canonFile);
   const adapter = new InMemoryGraphProjectionAdapter({ adapterKind: "canon-mutating-projection-test" });
   const writeSnapshot = adapter.writeSnapshot.bind(adapter);

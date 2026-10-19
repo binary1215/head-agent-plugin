@@ -8,7 +8,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { recordChangeSet } from "../scripts/lib/change-set.mjs";
 import { compileContext } from "../scripts/lib/context-compiler.mjs";
 import { createExecutionContract, createWholePlanSnapshot } from "../scripts/lib/execution-lineage.mjs";
-import { initializeProject } from "../scripts/lib/head-core.mjs";
+import crypto from "node:crypto";
+import { initializeProject, inspectProject } from "../scripts/lib/head-core.mjs";
 import {
   buildHeadContinuitySnapshot,
   inspectProductOperatingLoop,
@@ -28,11 +29,54 @@ import { buildWorldModel, inspectWorldModel, queryWorldTemporalGraph } from "../
 import { dispatch as dispatchMcp } from "../scripts/mcp-server.mjs";
 import { runCommand } from "../scripts/head.mjs";
 
+import { initialOnboardingDocuments } from "../scripts/lib/onboarding-contract.mjs";
+import { emptyProductModelDocument, normalizeProductModelDocument } from "../scripts/lib/product-model.mjs";
+import { formatForVerifiedOwner } from "../scripts/lib/project-storage-format.mjs";
+
+// Synthetic legacy contract seed only; genuine old-producer interoperability is verified separately.
+function seedLegacyProject(root) {
+  root = fs.realpathSync(root);
+  const createdAt = "2026-09-22T00:00:00.000Z";
+  const project = { schemaVersion: 1, projectId: `head-${crypto.createHash("sha256").update(root).digest("hex").slice(0, 20)}`,
+    projectRoot: root, createdAt, runtimes: ["claude", "codex", "opencode"], integrations: {},
+    authority: { head: "ordinary investigation, strategy, integration, and completion judgment",
+      user: "material product, policy, architecture, cost, workflow, and consequential external actions" } };
+  const sessionState = { schemaVersion: 1, sessionId: `session-${crypto.randomUUID()}`, mode: "session",
+    currentWholePlanId: null, activeRunId: null, activeExecutionContractId: null, lastResultPacketId: null,
+    pendingReview: null, lastReviewDecisionId: null, requiredPlanAction: null, latestCheckpoint: null, updatedAt: createdAt };
+  const product = emptyProductModelDocument();
+  const onboarding = initialOnboardingDocuments({ project, sessionState,
+    productModelId: normalizeProductModelDocument(product).productModelId, updatedAt: createdAt });
+  const records = new Map([
+    [".head/project.json", project], [".head/sessions/current.json", sessionState],
+    [".head/context/knowledge.json", { schemaVersion: 1, evidence: [], claims: [], decisions: [], unknowns: [] }],
+    [".head/context/product-model.json", product], [".head/onboarding/current.json", onboarding.state],
+    [`.head/sessions/records/${onboarding.sessionRecord.sessionId}.json`, onboarding.sessionRecord],
+    [`.head/onboarding/storage-selections/${onboarding.storageSelection.storageSelectionId}.json`, onboarding.storageSelection],
+  ]);
+  for (const [relative, value] of records) {
+    const file = path.join(root, relative); fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`, { flag: "wx" });
+  }
+  fs.mkdirSync(path.join(root, ".head/instructions"), { recursive: true });
+  fs.writeFileSync(path.join(root, ".head/instructions/project.md"), "# Project-specific HEAD context\n\nRecord project identity, canonical sources, repository boundaries, and fixed constraints here.\n", { flag: "wx" });
+  const immutable = [...records.keys()].filter(relative => relative === ".head/project.json"
+    || relative.startsWith(".head/sessions/records/") || relative.startsWith(".head/onboarding/storage-selections/"));
+  const manifest = { schemaVersion: 1, generatedAt: createdAt, pluginRoot,
+    packageVersion: JSON.parse(fs.readFileSync(path.join(pluginRoot, "package.json"))).version,
+    managed: immutable.map(relative => ({ path: relative, sha256: crypto.createHash("sha256").update(fs.readFileSync(path.join(root, relative))).digest("hex") })) };
+  fs.mkdirSync(path.join(root, ".head/generated"), { recursive: true });
+  fs.writeFileSync(path.join(root, ".head/generated/manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, { flag: "wx" });
+  const inspected = inspectProject(root); assert.equal(inspected.status, "ready");
+  assert.equal(inspected.storage.directory, ".head");
+  return { project };
+}
+
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const testParent = process.env.HEAD_AGENT_TEST_TMP || os.tmpdir();
 
 test("new neutral hypotheses preserve historical support interpretation and exact immutable evidence", async (t) => {
-  const root = fixture();
+  const { root, directory, format } = fixture({ legacy: true });
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const signal = (await recordProductSignal({ root, statement: "A counterexample was observed." })).signal;
   const fresh = (await recordProductHypothesis({ root, statement: "This may contradict the claim.", rationale: "Counterevidence, not support.", signalIds: [signal.signalId] })).hypothesis;
@@ -42,9 +86,9 @@ test("new neutral hypotheses preserve historical support interpretation and exac
   delete legacyPayload.hypothesisId; delete legacyPayload.hypothesisHash; delete legacyPayload.referenceSemantics;
   legacyPayload.protocol.version = "0.4.0";
   const legacy = productArtifact(legacyPayload, "product-hypothesis", "hypothesisId", "hypothesisHash");
-  const oldPath = path.join(root, ".head/product-operations/hypotheses", `${legacy.hypothesisId}.json`);
+  const oldPath = path.join(root, directory, "product-operations/hypotheses", `${legacy.hypothesisId}.json`);
   fs.writeFileSync(oldPath, JSON.stringify(legacy));
-  const protectedPaths = [oldPath, path.join(root, ".head/context/product-model.json"), path.join(root, ".head/sessions/current.json")];
+  const protectedPaths = [oldPath, path.join(root, directory, "context/product-model.json"), path.join(root, directory, "sessions/current.json")];
   const before = protectedPaths.map(p => fs.readFileSync(p));
   assert.equal(verifyProductHypothesis(legacy).hypothesisId, legacy.hypothesisId);
   await buildWorldModel({ root });
@@ -57,10 +101,12 @@ test("new neutral hypotheses preserve historical support interpretation and exac
   protectedPaths.forEach((p, i) => assert.deepEqual(fs.readFileSync(p), before[i]));
 });
 
-function fixture() {
+function fixture({ legacy = false } = {}) {
   fs.mkdirSync(testParent, { recursive: true });
   const root = fs.mkdtempSync(path.join(testParent, "head-agent-product-loop-"));
-  initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  if (legacy) seedLegacyProject(root);
+  else initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const storage = inspectProject(root).storage, format = formatForVerifiedOwner(storage), directory = format.directory;
   const product = {
     schemaVersion: 1,
     featureGroups: [{ key: "coordination", name: "Coordination", description: "Whole outcome coordination" }],
@@ -68,16 +114,16 @@ function fixture() {
     features: [{ key: "head-continuity", name: "HEAD continuity", description: "Portable exact-reference continuity", featureGroupKeys: ["coordination"], capabilityKeys: ["continuity"], governedBy: [] }],
     requirements: [], constraints: [], decisions: [],
   };
-  fs.writeFileSync(path.join(root, ".head", "context", "product-model.json"), `${JSON.stringify(product, null, 2)}\n`);
+  fs.writeFileSync(path.join(root, directory, "context", "product-model.json"), `${JSON.stringify(product, null, 2)}\n`);
   fs.mkdirSync(path.join(root, "src"), { recursive: true });
   fs.writeFileSync(path.join(root, "src", "feature.mjs"), "export const continuity = true;\n");
-  return root;
+  return { root, storage, format, directory };
 }
 
 test("connects the minimal Product Operating Loop while keeping Product Canon and recovery authority separate", async (t) => {
-  const root = fixture();
+  const { root, directory, format } = fixture();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const productCanonFile = path.join(root, ".head", "context", "product-model.json");
+  const productCanonFile = path.join(root, directory, "context", "product-model.json");
   const canonBefore = fs.readFileSync(productCanonFile, "utf8");
 
   const signal = await recordProductSignal({ root, statement: "Operators lose the exact product decision context after a provider session is replaced.", source: "manual-observation", evidenceIds: ["evidence-session-replacement"] });
@@ -106,7 +152,7 @@ test("connects the minimal Product Operating Loop while keeping Product Canon an
     featureResolution: { kind: "candidate", feature: { key: "product-loop-view", name: "Product loop view", description: "Queryable product operations", capabilityKeys: ["continuity"] } },
   });
   assert.equal(candidateProposal.featureCandidate.authority, "candidate-not-product-canon");
-  const candidateFile = path.join(root, ".head", "product-operations", "initiative-candidates", `${candidateProposal.initiativeCandidate.initiativeCandidateId}.json`);
+  const candidateFile = path.join(root, directory, "product-operations", "initiative-candidates", `${candidateProposal.initiativeCandidate.initiativeCandidateId}.json`);
   const frozenCandidateBytes = fs.readFileSync(candidateFile, "utf8");
   const candidateReview = await reviewProductInitiative({ root, initiativeCandidateId: candidateProposal.initiativeCandidate.initiativeCandidateId, disposition: "accept", rationale: "The Feature proposal stays a candidate and the Initiative is separately reviewed." });
   assert.equal(fs.readFileSync(candidateFile, "utf8"), frozenCandidateBytes);
@@ -146,7 +192,7 @@ test("connects the minimal Product Operating Loop while keeping Product Canon an
   assert.equal(continuity.snapshot.recoveryAuthority, false);
   assert.equal(continuity.snapshot.reviewedProductInitiativeIds.includes(reviewed.reviewedInitiative.initiativeId), true);
   assert.deepEqual(continuity.snapshot.outcomeObservationIds, [observation.outcomeObservation.outcomeObservationId]);
-  assert.equal(fs.existsSync(path.join(root, ".head", "continuity")), false);
+  assert.equal(fs.existsSync(path.join(root, directory, "continuity")), false);
   assert.equal(runCommand(["product-operating-status", root]).authority.graph, "derived-projection");
   const mcp = await dispatchMcp({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "head_continuity_snapshot", arguments: { project_root: root } } });
   assert.equal(mcp.result.structuredContent.snapshot.snapshotId, continuity.snapshot.snapshotId);
@@ -154,15 +200,15 @@ test("connects the minimal Product Operating Loop while keeping Product Canon an
 });
 
 test("removes prose formatting, defers Feature resolution to review, and caches only verified reads", async (t) => {
-  const root = fixture();
+  const { root, directory, format } = fixture();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const productCanonFile = path.join(root, ".head", "context", "product-model.json");
+  const productCanonFile = path.join(root, directory, "context", "product-model.json");
   const canonBefore = fs.readFileSync(productCanonFile, "utf8");
   await buildWorldModel({ root, persist: true });
   assert.equal(productOperatingAPI.prepareProductLearningNote, undefined);
-  assert.equal(fs.existsSync(path.join(root, ".head", "product-operations")), false);
-  assert.equal(runCommand(["help"]).commands.includes("head product-signal-record <project> --input <signal.json>"), false);
-  assert.equal(runCommand(["help-all"]).commands.includes("head product-signal-record <project> --input <signal.json>"), true);
+  assert.equal(fs.existsSync(path.join(root, directory, "product-operations")), false);
+  assert.equal(runCommand(["help"]).commands.includes("lode product-signal-record <project> --input <signal.json>"), false);
+  assert.equal(runCommand(["help-all"]).commands.includes("lode product-signal-record <project> --input <signal.json>"), true);
 
   const proposed = await proposeProductInitiative({
     root,
@@ -173,9 +219,9 @@ test("removes prose formatting, defers Feature resolution to review, and caches 
   assert.deepEqual(proposed.initiativeCandidate.hypothesisIds, []);
   assert.equal(proposed.initiativeCandidate.featureResolution, null);
   assert.equal(proposed.featureCandidate, null);
-  const candidateFile = path.join(root, ".head", "product-operations", "initiative-candidates", `${proposed.initiativeCandidate.initiativeCandidateId}.json`);
+  const candidateFile = path.join(root, directory, "product-operations", "initiative-candidates", `${proposed.initiativeCandidate.initiativeCandidateId}.json`);
   const candidateBytes = fs.readFileSync(candidateFile, "utf8");
-  assert.equal(fs.existsSync(path.join(root, ".head", "product-operations", "feature-candidates")), false);
+  assert.equal(fs.existsSync(path.join(root, directory, "product-operations", "feature-candidates")), false);
 
   await assert.rejects(
     reviewProductInitiative({ root, initiativeCandidateId: proposed.initiativeCandidate.initiativeCandidateId, disposition: "accept", rationale: "Resolution is intentionally missing." }),
@@ -229,7 +275,7 @@ function productArtifact(payload, prefix, idField, hashField) {
 }
 
 test("recovers an exact accepted Initiative after decision publication fails and rejects divergent retries", async (t) => {
-  const root = fixture();
+  const { root, directory, format } = fixture();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const proposed = await proposeProductInitiative({ root, title: "Recover an accepted initiative", reasoning: "A durable user decision must remain replay-safe after a transient output failure." });
   const request = {
@@ -239,8 +285,8 @@ test("recovers an exact accepted Initiative after decision publication fails and
     rationale: "Accept this exact initiative and its explicit Feature gap.",
     featureResolution: { kind: "gap", reason: "The initiative spans more than one current Feature." },
   };
-  const reviewedDirectory = path.join(root, ".head", "product-operations", "reviewed-initiatives");
-  const reviewDirectory = path.join(root, ".head", "product-operations", "initiative-reviews");
+  const reviewedDirectory = path.join(root, directory, "product-operations", "reviewed-initiatives");
+  const reviewDirectory = path.join(root, directory, "product-operations", "initiative-reviews");
   const originalLink = fs.linkSync;
   let injected = 0;
   fs.linkSync = function (source, destination, ...rest) {
@@ -276,7 +322,7 @@ test("recovers an exact accepted Initiative after decision publication fails and
 });
 
 test("keeps completed legacy Initiative reviews readable but never guesses a missing legacy Feature selection", async (t) => {
-  const root = fixture();
+  const { root, directory, format } = fixture({ legacy: true });
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const proposed = await proposeProductInitiative({ root, title: "Legacy review compatibility", reasoning: "Older digest-valid records remain audit-readable." });
   const request = {
@@ -287,8 +333,8 @@ test("keeps completed legacy Initiative reviews readable but never guesses a mis
     featureResolution: { kind: "gap", reason: "No exact current Feature represents this test initiative." },
   };
   const completed = await reviewProductInitiative(request);
-  const reviewDirectory = path.join(root, ".head", "product-operations", "initiative-reviews");
-  const reviewedDirectory = path.join(root, ".head", "product-operations", "reviewed-initiatives");
+  const reviewDirectory = path.join(root, directory, "product-operations", "initiative-reviews");
+  const reviewedDirectory = path.join(root, directory, "product-operations", "reviewed-initiatives");
   const currentDecisionFile = path.join(reviewDirectory, `${completed.reviewDecision.reviewDecisionId}.json`);
   const currentReviewedFile = path.join(reviewedDirectory, `${completed.reviewedInitiative.initiativeId}.json`);
   const legacyDecisionPayload = structuredClone(completed.reviewDecision);
@@ -319,9 +365,9 @@ test("keeps completed legacy Initiative reviews readable but never guesses a mis
 });
 
 test("uses legacy frozen Feature evidence for review and missing-output recovery without another user gate", async (t) => {
-  const root = fixture();
+  const { root, directory, format } = fixture({ legacy: true });
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const project = JSON.parse(fs.readFileSync(path.join(root, ".head", "project.json"), "utf8"));
+  const project = JSON.parse(fs.readFileSync(path.join(root, directory, "project.json"), "utf8"));
   const candidateMeaning = { projectId: project.projectId, title: "Legacy frozen Feature candidate", description: "", hypothesisIds: [] };
   const legacySeed = productOperatingDigest(productOperatingCanonicalJson(candidateMeaning));
   const featureCandidatePayload = {
@@ -353,8 +399,8 @@ test("uses legacy frozen Feature evidence for review and missing-output recovery
     promotionAuthority: false,
   };
   const initiative = productArtifact(initiativePayload, "product-initiative-candidate", "initiativeCandidateId", "initiativeCandidateHash");
-  const featureDirectory = path.join(root, ".head", "product-operations", "feature-candidates");
-  const candidateDirectory = path.join(root, ".head", "product-operations", "initiative-candidates");
+  const featureDirectory = path.join(root, directory, "product-operations", "feature-candidates");
+  const candidateDirectory = path.join(root, directory, "product-operations", "initiative-candidates");
   fs.mkdirSync(featureDirectory, { recursive: true });
   fs.mkdirSync(candidateDirectory, { recursive: true });
   fs.writeFileSync(path.join(featureDirectory, `${featureCandidate.featureCandidateId}.json`), `${JSON.stringify(featureCandidate, null, 2)}\n`);
@@ -364,8 +410,8 @@ test("uses legacy frozen Feature evidence for review and missing-output recovery
   assert.equal(accepted.status, "initiative_accepted");
   assert.equal(accepted.reviewDecision.featureCandidate.featureCandidateId, featureCandidate.featureCandidateId);
 
-  const reviewDirectory = path.join(root, ".head", "product-operations", "initiative-reviews");
-  const reviewedDirectory = path.join(root, ".head", "product-operations", "reviewed-initiatives");
+  const reviewDirectory = path.join(root, directory, "product-operations", "initiative-reviews");
+  const reviewedDirectory = path.join(root, directory, "product-operations", "reviewed-initiatives");
   const legacyDecisionPayload = structuredClone(accepted.reviewDecision);
   delete legacyDecisionPayload.reviewDecisionId;
   delete legacyDecisionPayload.reviewDecisionHash;
@@ -383,7 +429,7 @@ test("uses legacy frozen Feature evidence for review and missing-output recovery
 });
 
 test("replays an exact legacy rejection without treating its frozen Feature proposal as approved", async (t) => {
-  const root = fixture();
+  const { root, directory, format } = fixture({ legacy: true });
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const proposed = await proposeProductInitiative({
     root,
@@ -398,7 +444,7 @@ test("replays an exact legacy rejection without treating its frozen Feature prop
     rationale: "Do not adopt this Product Initiative.",
   };
   const rejected = await reviewProductInitiative(request);
-  const reviewDirectory = path.join(root, ".head", "product-operations", "initiative-reviews");
+  const reviewDirectory = path.join(root, directory, "product-operations", "initiative-reviews");
   const currentDecisionFile = path.join(reviewDirectory, `${rejected.reviewDecision.reviewDecisionId}.json`);
   const legacyDecisionPayload = structuredClone(rejected.reviewDecision);
   delete legacyDecisionPayload.reviewDecisionId;
@@ -424,23 +470,23 @@ test("rejects Product Operating size, count, total-byte, and compound-output lim
   const roots = [];
   t.after(() => { for (const root of roots) fs.rmSync(root, { recursive: true, force: true }); });
 
-  const oversizedRoot = fixture(); roots.push(oversizedRoot);
-  const oversizedSignals = path.join(oversizedRoot, ".head", "product-operations", "signals");
+  const { root: oversizedRoot, directory: oversizedManagementDirectory, format: oversizedFormat } = fixture(); roots.push(oversizedRoot);
+  const oversizedSignals = path.join(oversizedRoot, oversizedManagementDirectory, "product-operations", "signals");
   await assert.rejects(() => recordProductSignal({ root: oversizedRoot, statement: "x".repeat(1024 * 1024) }), (error) => error.code === "PRODUCT_OPERATING_LIMIT");
   assert.equal(fs.existsSync(oversizedSignals), false);
   const laterSignal = await recordProductSignal({ root: oversizedRoot, statement: "A later bounded signal remains usable." });
   assert.equal(laterSignal.status, "recorded");
   assert.equal(inspectProductOperatingLoop({ root: oversizedRoot, fresh: true }).projection.signals.length, 1);
 
-  const countRoot = fixture(); roots.push(countRoot);
-  const countDirectory = path.join(countRoot, ".head", "product-operations", "signals");
+  const { root: countRoot, directory: countManagementDirectory, format: countFormat } = fixture(); roots.push(countRoot);
+  const countDirectory = path.join(countRoot, countManagementDirectory, "product-operations", "signals");
   fs.mkdirSync(countDirectory, { recursive: true });
   for (let index = 0; index < 512; index += 1) fs.writeFileSync(path.join(countDirectory, `count-${String(index).padStart(3, "0")}.json`), "{}\n");
   await assert.rejects(() => recordProductSignal({ root: countRoot, statement: "The 513th artifact must not be written." }), (error) => error.code === "PRODUCT_OPERATING_LIMIT");
   assert.equal(fs.readdirSync(countDirectory).filter((name) => name.endsWith(".json")).length, 512);
 
-  const totalRoot = fixture(); roots.push(totalRoot);
-  const totalDirectory = path.join(totalRoot, ".head", "product-operations", "signals");
+  const { root: totalRoot, directory: totalManagementDirectory, format: totalFormat } = fixture(); roots.push(totalRoot);
+  const totalDirectory = path.join(totalRoot, totalManagementDirectory, "product-operations", "signals");
   fs.mkdirSync(totalDirectory, { recursive: true });
   for (let index = 0; index < 32; index += 1) {
     const file = path.join(totalDirectory, `total-${String(index).padStart(2, "0")}.json`);
@@ -450,12 +496,12 @@ test("rejects Product Operating size, count, total-byte, and compound-output lim
   await assert.rejects(() => recordProductSignal({ root: totalRoot, statement: "A write beyond the existing total-byte bound must not persist." }), (error) => error.code === "PRODUCT_OPERATING_LIMIT");
   assert.equal(fs.readdirSync(totalDirectory).filter((name) => name.endsWith(".json")).length, 32);
 
-  const compoundRoot = fixture(); roots.push(compoundRoot);
-  const project = JSON.parse(fs.readFileSync(path.join(compoundRoot, ".head", "project.json"), "utf8"));
+  const { root: compoundRoot, directory: compoundManagementDirectory, format: compoundFormat } = fixture(); roots.push(compoundRoot);
+  const project = JSON.parse(fs.readFileSync(path.join(compoundRoot, compoundManagementDirectory, "project.json"), "utf8"));
   const baseCandidate = {
     schemaVersion: 1,
     kind: "ProductInitiativeCandidate",
-    protocol: { name: "head-agent-core-product-operating-loop", version: PRODUCT_OPERATING_LOOP_VERSION },
+    protocol: { name: compoundFormat.protocol("head-agent-core-product-operating-loop"), version: PRODUCT_OPERATING_LOOP_VERSION },
     projectId: project.projectId,
     title: "Bounded compound review output",
     description: "",
@@ -473,10 +519,10 @@ test("rejects Product Operating size, count, total-byte, and compound-output lim
   const nearLimitCandidate = productArtifact(baseCandidate, "product-initiative-candidate", "initiativeCandidateId", "initiativeCandidateHash");
   const candidateBytes = `${JSON.stringify(nearLimitCandidate, null, 2)}\n`;
   assert.equal(Buffer.byteLength(candidateBytes), 1024 * 1024 - 1);
-  const candidateDirectory = path.join(compoundRoot, ".head", "product-operations", "initiative-candidates");
+  const candidateDirectory = path.join(compoundRoot, compoundManagementDirectory, "product-operations", "initiative-candidates");
   fs.mkdirSync(candidateDirectory, { recursive: true });
   fs.writeFileSync(path.join(candidateDirectory, `${nearLimitCandidate.initiativeCandidateId}.json`), candidateBytes);
-  const decisionDirectory = path.join(compoundRoot, ".head", "product-operations", "initiative-reviews");
+  const decisionDirectory = path.join(compoundRoot, compoundManagementDirectory, "product-operations", "initiative-reviews");
   const boundedDecision = await reviewProductInitiative({
     root: compoundRoot,
     initiativeCandidateId: nearLimitCandidate.initiativeCandidateId,
@@ -486,12 +532,12 @@ test("rejects Product Operating size, count, total-byte, and compound-output lim
   });
   assert.equal(boundedDecision.status, "initiative_accepted");
   assert.equal(fs.readdirSync(decisionDirectory).filter((name) => name.endsWith(".json")).length, 1);
-  assert.equal(fs.existsSync(path.join(compoundRoot, ".head/product-operations/reviewed-initiatives")), false);
+  assert.equal(fs.existsSync(path.join(compoundRoot, compoundManagementDirectory, "product-operations/reviewed-initiatives")), false);
 });
 
 test("serializes Product Operating writers without turning review or capacity checks into user gates", async (t) => {
-  const reviewRoot = fixture();
-  const countRoot = fixture();
+  const { root: reviewRoot, directory: reviewManagementDirectory, format: reviewFormat } = fixture();
+  const { root: countRoot, directory: countManagementDirectory, format: countFormat } = fixture();
   t.after(() => {
     fs.rmSync(reviewRoot, { recursive: true, force: true });
     fs.rmSync(countRoot, { recursive: true, force: true });
@@ -523,14 +569,14 @@ test("serializes Product Operating writers without turning review or capacity ch
   const reviewProjection = inspectProductOperatingLoop({ root: reviewRoot, fresh: true }).projection;
   assert.equal(reviewProjection.initiativeReviews.filter((item) => item.initiativeCandidateId === competingCandidate.initiativeCandidate.initiativeCandidateId).length, 1);
 
-  const project = JSON.parse(fs.readFileSync(path.join(countRoot, ".head", "project.json"), "utf8"));
-  const signalsDirectory = path.join(countRoot, ".head", "product-operations", "signals");
+  const project = JSON.parse(fs.readFileSync(path.join(countRoot, countManagementDirectory, "project.json"), "utf8"));
+  const signalsDirectory = path.join(countRoot, countManagementDirectory, "product-operations", "signals");
   fs.mkdirSync(signalsDirectory, { recursive: true });
   for (let index = 0; index < 511; index += 1) {
     const payload = {
       schemaVersion: 1,
       kind: "ProductSignal",
-      protocol: { name: "head-agent-core-product-operating-loop", version: PRODUCT_OPERATING_LOOP_VERSION },
+      protocol: { name: countFormat.protocol("head-agent-core-product-operating-loop"), version: PRODUCT_OPERATING_LOOP_VERSION },
       projectId: project.projectId,
       statement: `Seed signal ${index}.`,
       observedAt: "2026-09-07T00:00:00.000Z",
@@ -555,8 +601,8 @@ test("serializes Product Operating writers without turning review or capacity ch
 });
 
 test("serializes competing Product decisions and capacity checks across independent Node writers", async (t) => {
-  const reviewRoot = fixture();
-  const countRoot = fixture();
+  const { root: reviewRoot, directory: reviewManagementDirectory, format: reviewFormat } = fixture();
+  const { root: countRoot, directory: countManagementDirectory, format: countFormat } = fixture();
   const children = [];
   t.after(() => {
     for (const child of children) if (child.exitCode == null && child.signalCode == null) child.kill();
@@ -624,14 +670,14 @@ test("serializes competing Product decisions and capacity checks across independ
   assert.equal(reviews.every((item) => item.signal === null && item.stderr === ""), true);
   assert.equal(inspectProductOperatingLoop({ root: reviewRoot, fresh: true }).projection.initiativeReviews.length, 1);
 
-  const project = JSON.parse(fs.readFileSync(path.join(countRoot, ".head", "project.json"), "utf8"));
-  const signalsDirectory = path.join(countRoot, ".head", "product-operations", "signals");
+  const project = JSON.parse(fs.readFileSync(path.join(countRoot, countManagementDirectory, "project.json"), "utf8"));
+  const signalsDirectory = path.join(countRoot, countManagementDirectory, "product-operations", "signals");
   fs.mkdirSync(signalsDirectory, { recursive: true });
   for (let index = 0; index < 511; index += 1) {
     const payload = {
       schemaVersion: 1,
       kind: "ProductSignal",
-      protocol: { name: "head-agent-core-product-operating-loop", version: PRODUCT_OPERATING_LOOP_VERSION },
+      protocol: { name: countFormat.protocol("head-agent-core-product-operating-loop"), version: PRODUCT_OPERATING_LOOP_VERSION },
       projectId: project.projectId,
       statement: `Process seed signal ${index}.`,
       observedAt: "2026-09-07T00:00:00.000Z",

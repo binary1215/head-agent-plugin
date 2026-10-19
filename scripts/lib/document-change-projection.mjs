@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { familyFormatForOriginal, formatForVerifiedOwner, relativeProjectArtifact } from "./project-storage-format.mjs";
 import { normalizeProductModelDocument } from "./product-model.mjs";
 
 export const DOCUMENT_CHANGE_GRAPH_PROJECTION_VERSION = "0.1.0";
@@ -87,10 +88,10 @@ function verifyContentIdentity(document, kind) {
   return document;
 }
 
-function verifyCandidateSet(document, projectId) {
+function verifyCandidateSet(document, projectId, storage) {
   verifyContentIdentity(document, "candidateSets");
   if (document.kind !== "DocumentChangeCandidateSet" || document.schemaVersion !== 1
-    || document.protocol?.name !== "head-agent-core-document-change-candidates" || document.protocol?.version !== "0.1.0"
+    || !familyFormatForOriginal("head-agent-core-document-change-candidates", document, storage) || document.protocol?.version !== "0.1.0"
     || document.projectId !== projectId || document.authority !== "unreviewed-candidate"
     || document.instructionAuthority !== false || document.promotionAuthority !== false || document.requiresReviewDecision !== true
     || !/^document-projection-[a-f0-9]{24}$/.test(document.documentProjectionId || "") || !/^[a-f0-9]{64}$/.test(document.documentProjectionHash || "")
@@ -125,10 +126,10 @@ function verifyCandidateSet(document, projectId) {
   return document;
 }
 
-function verifyReview(document, projectId) {
+function verifyReview(document, projectId, storage) {
   verifyContentIdentity(document, "reviewDecisions");
   if (document.kind !== "ReviewDecision" || document.schemaVersion !== 1
-    || document.protocol?.name !== "head-agent-core-document-change-review" || document.protocol?.version !== "0.1.0"
+    || !familyFormatForOriginal("head-agent-core-document-change-review", document, storage) || document.protocol?.version !== "0.1.0"
     || document.decisionScope !== "document-to-product-canon" || document.projectId !== projectId
     || document.authority !== "explicit-user-document-change-review" || document.instructionAuthority !== true
     || !["accept-all", "accept-selection", "reject"].includes(document.disposition)
@@ -139,22 +140,22 @@ function verifyReview(document, projectId) {
   return document;
 }
 
-function verifyProductRevision(document, projectId) {
+function verifyProductRevision(document, projectId, storage) {
   verifyContentIdentity(document, "productModelRevisions");
   if (document.kind !== "ProductModelRevision" || document.schemaVersion !== 1 || document.projectId !== projectId
-    || document.protocol?.name !== "head-agent-core-document-change-product-revision" || document.protocol?.version !== "0.1.0"
+    || !familyFormatForOriginal("head-agent-core-document-change-product-revision", document, storage) || document.protocol?.version !== "0.1.0"
     || document.authority !== "explicit-user-reviewed-product-canon-revision" || document.instructionAuthority !== true || document.promotionAuthority !== true) {
     fail("Document-change ProductModelRevision fields or authority are invalid.", "INVALID_DOCUMENT_CHANGE_PROJECTION_PRODUCT_REVISION");
   }
-  const model = normalizeProductModelDocument(document.document);
+  const model = normalizeProductModelDocument(document.document, familyFormatForOriginal("head-agent-core-document-change-product-revision", document, storage));
   if (model.productModelId !== document.productModelId || model.productModelHash !== document.productModelHash) fail("Document-change ProductModelRevision does not match its Product Model.", "INVALID_DOCUMENT_CHANGE_PROJECTION_PRODUCT_REVISION");
   return document;
 }
 
-function verifyApplication(document, projectId) {
+function verifyApplication(document, projectId, storage) {
   verifyContentIdentity(document, "applicationReceipts");
   if (document.kind !== "DocumentCanonApplicationReceipt" || document.schemaVersion !== 1
-    || document.protocol?.name !== "head-agent-core-document-change-application" || document.protocol?.version !== "0.1.0"
+    || !familyFormatForOriginal("head-agent-core-document-change-application", document, storage) || document.protocol?.version !== "0.1.0"
     || document.projectId !== projectId || document.authority !== "application-evidence-not-independent-authority"
     || document.instructionAuthority !== false || document.promotionAuthority !== false
     || !/^world-model-[a-f0-9]{24}$/.test(document.before?.worldModelId || "") || !/^world-model-[a-f0-9]{24}$/.test(document.after?.worldModelId || "")
@@ -165,8 +166,8 @@ function verifyApplication(document, projectId) {
   return document;
 }
 
-function readKind(projectRoot, projectId, kind, verify) {
-  const directory = safeDirectory(projectRoot, DIRECTORIES[kind]);
+function readKind(projectRoot, projectId, kind, verify, storage) {
+  const directory = safeDirectory(projectRoot, relativeProjectArtifact(storage, ...DIRECTORIES[kind].split("/").slice(1)));
   if (!fs.existsSync(directory)) return { documents: [], totalBytes: 0 };
   if (!fs.statSync(directory).isDirectory()) fail("Document-change projection source is not a directory.", "INVALID_DOCUMENT_CHANGE_PROJECTION_PATH");
   const entries = fs.readdirSync(directory, { withFileTypes: true }).filter((entry) => entry.name.endsWith(".json")).sort((a, b) => a.name.localeCompare(b.name));
@@ -183,13 +184,13 @@ function readKind(projectRoot, projectId, kind, verify) {
     let document;
     try { document = JSON.parse(fs.readFileSync(file, "utf8")); } catch (error) { fail(`Document-change projection JSON is invalid: ${error.message}`, "INVALID_DOCUMENT_CHANGE_PROJECTION_JSON"); }
     if (document[ID_FIELDS[kind]] !== id) fail("Document-change projection filename does not match its identity.", "DOCUMENT_CHANGE_PROJECTION_IDENTITY_MISMATCH");
-    return verify(document, projectId);
+    return verify(document, projectId, storage);
   });
   return { documents, totalBytes };
 }
 
-export function verifyDocumentChangeProjectionInput(input) {
-  if (!input || input.kind !== "DocumentChangeGraphProjectionInput" || input.protocol?.name !== "head-agent-core-document-change-graph-projection"
+export function verifyDocumentChangeProjectionInput(input, storage = undefined) {
+  if (!input || input.kind !== "DocumentChangeGraphProjectionInput" || !familyFormatForOriginal("head-agent-core-document-change-graph-projection", input, storage)
     || input.protocol?.version !== DOCUMENT_CHANGE_GRAPH_PROJECTION_VERSION || typeof input.projectId !== "string" || !input.projectId
     || input.authority !== "derived-projection-input-not-document-authority" || input.instructionAuthority !== false || input.promotionAuthority !== false) {
     fail("Document-change graph projection input is invalid.", "INVALID_DOCUMENT_CHANGE_PROJECTION_INPUT");
@@ -202,11 +203,11 @@ export function verifyDocumentChangeProjectionInput(input) {
   return input;
 }
 
-export function loadDocumentChangeProjection({ projectRoot, projectId } = {}) {
-  const candidateSets = readKind(projectRoot, projectId, "candidateSets", verifyCandidateSet);
-  const reviewDecisions = readKind(projectRoot, projectId, "reviewDecisions", verifyReview);
-  const productModelRevisions = readKind(projectRoot, projectId, "productModelRevisions", verifyProductRevision);
-  const applicationReceipts = readKind(projectRoot, projectId, "applicationReceipts", verifyApplication);
+export function loadDocumentChangeProjection({ projectRoot, projectId, storage } = {}) {
+  const candidateSets = readKind(projectRoot, projectId, "candidateSets", verifyCandidateSet, storage);
+  const reviewDecisions = readKind(projectRoot, projectId, "reviewDecisions", verifyReview, storage);
+  const productModelRevisions = readKind(projectRoot, projectId, "productModelRevisions", verifyProductRevision, storage);
+  const applicationReceipts = readKind(projectRoot, projectId, "applicationReceipts", verifyApplication, storage);
   const candidatesBySet = new Map(candidateSets.documents.map((item) => [item.candidateSetId, item]));
   const reviewsById = new Map(reviewDecisions.documents.map((item) => [item.reviewDecisionId, item]));
   const revisionsByModelId = new Map(productModelRevisions.documents.map((item) => [item.productModelId, item]));
@@ -235,7 +236,7 @@ export function loadDocumentChangeProjection({ projectRoot, projectId } = {}) {
   }
   const payload = {
     kind: "DocumentChangeGraphProjectionInput",
-    protocol: { name: "head-agent-core-document-change-graph-projection", version: DOCUMENT_CHANGE_GRAPH_PROJECTION_VERSION },
+    protocol: { name: formatForVerifiedOwner(storage).protocol("head-agent-core-document-change-graph-projection"), version: DOCUMENT_CHANGE_GRAPH_PROJECTION_VERSION },
     projectId,
     candidateSets: candidateSets.documents,
     reviewDecisions: reviewDecisions.documents,
@@ -246,5 +247,5 @@ export function loadDocumentChangeProjection({ projectRoot, projectId } = {}) {
     promotionAuthority: false,
   };
   const projectionInputHash = digest(canonicalJson(payload));
-  return verifyDocumentChangeProjectionInput({ ...payload, projectionInputId: `document-change-projection-${projectionInputHash.slice(0, 24)}`, projectionInputHash });
+  return verifyDocumentChangeProjectionInput({ ...payload, projectionInputId: `document-change-projection-${projectionInputHash.slice(0, 24)}`, projectionInputHash }, storage);
 }

@@ -1,3 +1,4 @@
+import { formatForVerifiedOwner, familyFormatForOriginal } from "./project-storage-format.mjs";
 import crypto from "node:crypto";
 
 export const RUNTIME_ADAPTER_CONTRACT_VERSION = "0.1.0";
@@ -79,7 +80,8 @@ function normalizePlatform(value) {
   return platform;
 }
 
-function agentDescriptor(runtime) {
+function agentDescriptor(runtime, storage) {
+  const format = formatForVerifiedOwner(storage);
   return {
     contractVersion: RUNTIME_ADAPTER_CONTRACT_VERSION,
     adapterKind: `${runtime}-projection-only`,
@@ -90,7 +92,7 @@ function agentDescriptor(runtime) {
     disabledOperations: [...AGENT_RUNTIME_CONTROL_OPERATIONS],
     tuiScraping: false,
     providerSessionIdentity: "external-reference-only",
-    headSessionIdentity: "canonical-project-session",
+    [format.value("headSessionIdentity")]: "canonical-project-session",
     capabilityAuthority: "none",
     executionContractRequired: true,
     controlOperationsEnabled: false,
@@ -162,12 +164,12 @@ export function verifiedWorkspaceHostDescriptor({ deliverySupported = true } = {
   };
 }
 
-function probeFromDescriptor(kind, descriptor) {
+function probeFromDescriptor(kind, descriptor, storage) {
   const activeWorkspaceHost = kind === "WorkspaceHostProbe" && descriptor.adapterKind === "verified-host-endpoint";
   const payload = {
     schemaVersion: 1,
     kind,
-    protocol: { name: "head-agent-core-runtime-adapter-probe", version: RUNTIME_ADAPTER_CONTRACT_VERSION },
+    protocol: { name: formatForVerifiedOwner(storage).protocol("head-agent-core-runtime-adapter-probe"), version: RUNTIME_ADAPTER_CONTRACT_VERSION },
     descriptor,
     status: activeWorkspaceHost ? "active" : "contract-only",
     availability: activeWorkspaceHost ? "configured" : "not-activated",
@@ -178,14 +180,16 @@ function probeFromDescriptor(kind, descriptor) {
   return identify(payload, prefix, "probeId", "probeHash");
 }
 
-function validateAgentDescriptor(descriptor) {
+function validateAgentDescriptor(descriptor, selectedFormat) {
+  const format = selectedFormat || (Object.hasOwn(descriptor || {}, "lodeSessionIdentity")
+    ? formatForVerifiedOwner({ dialect: "lode", directory: ".lode" }) : formatForVerifiedOwner());
   assertFields(descriptor, [
     "contractVersion", "adapterKind", "runtime", "interfaceMode", "machineInterface", "supportedOperations",
-    "disabledOperations", "tuiScraping", "providerSessionIdentity", "headSessionIdentity", "capabilityAuthority",
+    "disabledOperations", "tuiScraping", "providerSessionIdentity", format.value("headSessionIdentity"), "capabilityAuthority",
     "executionContractRequired", "controlOperationsEnabled", "instructionAuthority", "promotionAuthority",
     "controlAuthority", "mutatesCanon",
   ], "AgentRuntimeAdapter descriptor");
-  const expected = agentDescriptor(normalizeRuntime(descriptor.runtime));
+  const expected = agentDescriptor(normalizeRuntime(descriptor.runtime), format);
   if (canonicalJson(descriptor) !== canonicalJson(expected)) {
     fail("AgentRuntimeAdapter descriptor violates the projection-only authority boundary.", "INVALID_AGENT_RUNTIME_ADAPTER");
   }
@@ -222,10 +226,11 @@ function validateHostDescriptor(descriptor) {
 function validateProbe(document, { kind, descriptorValidator, prefix }) {
   assertFields(document, ["schemaVersion", "kind", "protocol", "descriptor", "status", "availability", "authorityEffect", "probeId", "probeHash"], kind);
   assertFields(document.protocol, ["name", "version"], `${kind} protocol`);
-  descriptorValidator(document.descriptor);
+  const format = familyFormatForOriginal("head-agent-core-runtime-adapter-probe", document);
+  descriptorValidator(document.descriptor, format);
   const activeWorkspaceHost = kind === "WorkspaceHostProbe" && document.descriptor.adapterKind === "verified-host-endpoint";
   if (document.schemaVersion !== 1 || document.kind !== kind
-    || document.protocol.name !== "head-agent-core-runtime-adapter-probe"
+    || !format || document.protocol.name !== format.protocol("head-agent-core-runtime-adapter-probe")
     || document.protocol.version !== RUNTIME_ADAPTER_CONTRACT_VERSION
     || document.status !== (activeWorkspaceHost ? "active" : "contract-only")
     || document.availability !== (activeWorkspaceHost ? "configured" : "not-activated")
@@ -250,9 +255,9 @@ export function validateWorkspaceHostProbe(document) {
   return validateProbe(document, { kind: "WorkspaceHostProbe", descriptorValidator: validateHostDescriptor, prefix: "workspace-host-probe" });
 }
 
-export function buildWorkspaceHostProbe(descriptor = hostDescriptor()) {
+export function buildWorkspaceHostProbe(descriptor = hostDescriptor(), storage) {
   validateHostDescriptor(descriptor);
-  return validateWorkspaceHostProbe(probeFromDescriptor("WorkspaceHostProbe", descriptor));
+  return validateWorkspaceHostProbe(probeFromDescriptor("WorkspaceHostProbe", descriptor, storage));
 }
 
 export function validateAgentRuntimeAdapter(adapter) {
@@ -289,9 +294,9 @@ export function validateWorkspaceHostAdapter(adapter) {
 }
 
 export class ProjectionOnlyAgentRuntimeAdapter {
-  constructor({ runtime } = {}) { this.runtime = normalizeRuntime(runtime); }
-  describe() { return agentDescriptor(this.runtime); }
-  probe() { return validateAgentRuntimeProbe(probeFromDescriptor("AgentRuntimeProbe", this.describe())); }
+  constructor({ runtime, storage } = {}) { this.runtime = normalizeRuntime(runtime); this.storage = storage; }
+  describe() { return agentDescriptor(this.runtime, this.storage); }
+  probe() { return validateAgentRuntimeProbe(probeFromDescriptor("AgentRuntimeProbe", this.describe(), this.storage)); }
   start() { return disabledOperation("AgentRuntimeAdapter", "start"); }
   resume() { return disabledOperation("AgentRuntimeAdapter", "resume"); }
   stream() { return disabledOperation("AgentRuntimeAdapter", "stream"); }
@@ -300,9 +305,9 @@ export class ProjectionOnlyAgentRuntimeAdapter {
 }
 
 export class ContractOnlyPlatformAdapter {
-  constructor({ platform = process.platform } = {}) { this.platform = normalizePlatform(platform); }
+  constructor({ platform = process.platform, storage } = {}) { this.platform = normalizePlatform(platform); this.storage = storage; }
   describe() { return platformDescriptor(this.platform); }
-  probe() { return validatePlatformProbe(probeFromDescriptor("PlatformProbe", this.describe())); }
+  probe() { return validatePlatformProbe(probeFromDescriptor("PlatformProbe", this.describe(), this.storage)); }
   resolveExecutable() { return disabledOperation("PlatformAdapter", "resolve-executable"); }
   spawnOwned() { return disabledOperation("PlatformAdapter", "spawn-owned"); }
   inspectOwned() { return disabledOperation("PlatformAdapter", "inspect-owned"); }
@@ -310,15 +315,16 @@ export class ContractOnlyPlatformAdapter {
 }
 
 export class ContractOnlyWorkspaceHostAdapter {
+  constructor({ storage } = {}) { this.storage = storage; }
   describe() { return hostDescriptor(); }
-  probe() { return validateWorkspaceHostProbe(probeFromDescriptor("WorkspaceHostProbe", this.describe())); }
+  probe() { return validateWorkspaceHostProbe(probeFromDescriptor("WorkspaceHostProbe", this.describe(), this.storage)); }
   attach() { return disabledOperation("WorkspaceHostAdapter", "attach"); }
   send() { return disabledOperation("WorkspaceHostAdapter", "send"); }
   receive() { return disabledOperation("WorkspaceHostAdapter", "receive"); }
   detach() { return disabledOperation("WorkspaceHostAdapter", "detach"); }
 }
 
-function activationBoundaryFor(workspaceHostProbe) {
+function activationBoundaryFor(workspaceHostProbe, storage) {
   const workspaceHostMessagingEnabled = workspaceHostProbe.descriptor.adapterKind === "verified-host-endpoint" && workspaceHostProbe.descriptor.supportedOperations.includes("send");
   return {
     phase: workspaceHostMessagingEnabled ? "host-messaging-active" : workspaceHostProbe.descriptor.adapterKind === "verified-host-endpoint" ? "host-attachment-active" : "contract-only",
@@ -327,7 +333,7 @@ function activationBoundaryFor(workspaceHostProbe) {
     workspaceHostMessagingEnabled,
     capabilityDoesNotGrantAuthorization: true,
     executionContractRequired: true,
-    headSessionIdentityIndependent: true,
+    [formatForVerifiedOwner(storage).value("headSessionIdentityIndependent")]: true,
     providerSessionReferencesOperationalOnly: true,
     tuiScrapingAllowed: false,
   };
@@ -347,12 +353,13 @@ export function buildRuntimeAdapterComposition({
   platform = process.platform,
   runtimeAdapters = null,
   platformAdapter = null,
-  workspaceHostAdapter = null,
+  workspaceHostAdapter = null, storage,
 } = {}) {
+  const format = formatForVerifiedOwner(storage);
   const selectedRuntimes = normalizedRuntimes(runtimes);
-  const selectedPlatform = platformAdapter || new ContractOnlyPlatformAdapter({ platform });
-  const selectedHost = workspaceHostAdapter || new ContractOnlyWorkspaceHostAdapter();
-  const selectedRuntimeAdapters = runtimeAdapters || selectedRuntimes.map((runtime) => new ProjectionOnlyAgentRuntimeAdapter({ runtime }));
+  const selectedPlatform = platformAdapter || new ContractOnlyPlatformAdapter({ platform, storage });
+  const selectedHost = workspaceHostAdapter || new ContractOnlyWorkspaceHostAdapter({ storage });
+  const selectedRuntimeAdapters = runtimeAdapters || selectedRuntimes.map((runtime) => new ProjectionOnlyAgentRuntimeAdapter({ runtime, storage }));
   if (!Array.isArray(selectedRuntimeAdapters) || selectedRuntimeAdapters.length !== selectedRuntimes.length) {
     fail("Runtime adapter composition must provide exactly one adapter per selected runtime.", "INVALID_RUNTIME_ADAPTER_COMPOSITION");
   }
@@ -369,12 +376,12 @@ export function buildRuntimeAdapterComposition({
   const payload = {
     schemaVersion: 1,
     kind: "RuntimeAdapterComposition",
-    protocol: { name: "head-agent-core-runtime-adapter-composition", version: RUNTIME_ADAPTER_CONTRACT_VERSION },
+    protocol: { name: format.protocol("head-agent-core-runtime-adapter-composition"), version: RUNTIME_ADAPTER_CONTRACT_VERSION },
     selectedRuntimes,
     platformProbe: selectedPlatform.probe(),
     workspaceHostProbe,
     agentRuntimeProbes: agentProbes,
-    activationBoundary: activationBoundaryFor(workspaceHostProbe),
+    activationBoundary: activationBoundaryFor(workspaceHostProbe, storage),
     authority: "operational-capability-contract-only",
     instructionAuthority: false,
     promotionAuthority: false,
@@ -385,6 +392,7 @@ export function buildRuntimeAdapterComposition({
 }
 
 export function verifyRuntimeAdapterComposition(document) {
+  const format = familyFormatForOriginal("head-agent-core-runtime-adapter-composition", document);
   assertFields(document, [
     "schemaVersion", "kind", "protocol", "selectedRuntimes", "platformProbe", "workspaceHostProbe",
     "agentRuntimeProbes", "activationBoundary", "authority", "instructionAuthority", "promotionAuthority",
@@ -393,7 +401,7 @@ export function verifyRuntimeAdapterComposition(document) {
   assertFields(document.protocol, ["name", "version"], "Runtime adapter composition protocol");
   assertFields(document.activationBoundary, [
     "phase", "machineInterfacesVerified", "runtimeControlEnabled", "workspaceHostMessagingEnabled", "capabilityDoesNotGrantAuthorization",
-    "executionContractRequired", "headSessionIdentityIndependent", "providerSessionReferencesOperationalOnly",
+    "executionContractRequired", (format?.value("headSessionIdentityIndependent") || "headSessionIdentityIndependent"), "providerSessionReferencesOperationalOnly",
     "tuiScrapingAllowed",
   ], "Runtime adapter activation boundary");
   const runtimes = normalizedRuntimes(document.selectedRuntimes);
@@ -404,10 +412,11 @@ export function verifyRuntimeAdapterComposition(document) {
   validateWorkspaceHostProbe(document.workspaceHostProbe);
   const probes = document.agentRuntimeProbes.map(validateAgentRuntimeProbe);
   if (canonicalJson(probes.map((probe) => probe.descriptor.runtime)) !== canonicalJson(runtimes)
+    || [document.platformProbe, document.workspaceHostProbe, ...probes].some(probe => !format || probe.protocol.name !== format.protocol("head-agent-core-runtime-adapter-probe"))
     || document.schemaVersion !== 1 || document.kind !== "RuntimeAdapterComposition"
-    || document.protocol.name !== "head-agent-core-runtime-adapter-composition"
+    || !format || document.protocol.name !== format.protocol("head-agent-core-runtime-adapter-composition")
     || document.protocol.version !== RUNTIME_ADAPTER_CONTRACT_VERSION
-    || canonicalJson(document.activationBoundary) !== canonicalJson(activationBoundaryFor(document.workspaceHostProbe))
+    || canonicalJson(document.activationBoundary) !== canonicalJson(activationBoundaryFor(document.workspaceHostProbe, format))
     || document.authority !== "operational-capability-contract-only"
     || document.instructionAuthority !== false || document.promotionAuthority !== false
     || document.controlAuthority !== false || document.mutatesCanon !== false
@@ -487,10 +496,10 @@ export function verifyRuntimeAdapterContractMatrix(document) {
   return document;
 }
 
-export function inspectRuntimeAdapterContracts({ runtimes, platform = process.platform } = {}) {
+export function inspectRuntimeAdapterContracts({ runtimes, platform = process.platform, storage } = {}) {
   return {
     status: "contract-only",
-    composition: buildRuntimeAdapterComposition({ runtimes, platform }),
+    composition: buildRuntimeAdapterComposition({ runtimes, platform, storage }),
     contractMatrix: buildRuntimeAdapterContractMatrix(),
     runtimeControlEnabled: false,
     nextGate: "machine-interface-probe-process-ownership-and-lifecycle-conformance",

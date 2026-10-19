@@ -6,18 +6,19 @@ import {
   readCommittedHistoricalArtifactBoundary,
 } from "./historical-artifact-boundary-store.mjs";
 
+import { formatForVerifiedOwner, familyFormatForOriginal, relativeProjectArtifact } from "./project-storage-format.mjs";
+
 export const HISTORICAL_CONTINUITY_PROTOCOL_VERSION = "0.1.0";
-const DIRECTORY = ".head/onboarding/historical-continuity";
 
 function fail(message, code = "HISTORICAL_CONTINUITY_ERROR") {
   throw Object.assign(new Error(message), { code });
 }
 
-function document(input) {
+function document(input, storage) {
   const payload = {
     schemaVersion: 1,
     kind: "HistoricalContinuityReceipt",
-    protocol: { name: "head-agent-core-historical-continuity", version: HISTORICAL_CONTINUITY_PROTOCOL_VERSION },
+    protocol: { name: formatForVerifiedOwner(storage).protocol("head-agent-core-historical-continuity"), version: HISTORICAL_CONTINUITY_PROTOCOL_VERSION },
     projectId: input.projectId,
     boundaryId: input.boundaryId,
     boundaryHash: input.boundaryHash,
@@ -40,7 +41,7 @@ export function verifyHistoricalContinuityReceipt(receipt, { boundary, currentCa
   delete payload.receiptId;
   delete payload.receiptHash;
   const hash = historicalBoundaryDigest(historicalBoundaryCanonicalJson(payload));
-  if (receipt?.kind !== "HistoricalContinuityReceipt" || receipt.protocol?.name !== "head-agent-core-historical-continuity"
+  if (receipt?.kind !== "HistoricalContinuityReceipt" || !familyFormatForOriginal("head-agent-core-historical-continuity", receipt, familyFormatForOriginal("head-agent-core-historical-artifact-boundary", boundary))
     || receipt.protocol?.version !== HISTORICAL_CONTINUITY_PROTOCOL_VERSION || receipt.receiptHash !== hash
     || receipt.receiptId !== `historical-continuity-${hash.slice(0, 24)}` || receipt.relation !== "HISTORICALLY_FOLLOWS"
     || receipt.authorityClass !== "evidence" || receipt.instructionAuthority !== false || receipt.promotionAuthority !== false || receipt.recoveryAuthority !== false
@@ -53,8 +54,8 @@ export function verifyHistoricalContinuityReceipt(receipt, { boundary, currentCa
   return receipt;
 }
 
-export function publishHistoricalContinuityReceipt({ root = ".", currentCandidateSet } = {}) {
-  const application = readCommittedHistoricalArtifactBoundary({ root, allowAbsent: true });
+export function publishHistoricalContinuityReceipt({ root = ".", currentCandidateSet, storage } = {}) {
+  const application = readCommittedHistoricalArtifactBoundary({ root, allowAbsent: true, storage });
   if (!application) return null;
   const historicalCandidates = application.boundary.entries.filter((entry) => entry.role === "historical-candidate-set");
   const historical = historicalCandidates.find((entry) => entry.artifactId === application.boundary.validatedHistoricalApproval?.candidateSetId)
@@ -68,9 +69,9 @@ export function publishHistoricalContinuityReceipt({ root = ".", currentCandidat
     historicalCandidateSetHash: historical.sha256,
     currentCandidateSetId: currentCandidateSet.candidateSetId,
     currentCandidateSetHash: currentCandidateSet.candidateSetHash,
-  });
+  }, storage);
   verifyHistoricalContinuityReceipt(receipt, { boundary: application.boundary, currentCandidateSet });
-  const directory = path.join(fs.realpathSync(path.resolve(root)), ...DIRECTORY.split("/"));
+  const directory = path.join(fs.realpathSync(path.resolve(root)), ...relativeProjectArtifact(storage, "onboarding", "historical-continuity").split("/"));
   fs.mkdirSync(directory, { recursive: true });
   const file = path.join(directory, `${receipt.receiptId}.json`);
   const content = `${JSON.stringify(receipt, null, 2)}\n`;
@@ -80,9 +81,9 @@ export function publishHistoricalContinuityReceipt({ root = ".", currentCandidat
   return receipt;
 }
 
-export function readHistoricalContinuityReceipts({ root = ".", boundary, currentCandidateSets = [] } = {}) {
+export function readHistoricalContinuityReceipts({ root = ".", boundary, currentCandidateSets = [], storage } = {}) {
   const projectRoot = fs.realpathSync(path.resolve(root));
-  const directory = path.join(projectRoot, ...DIRECTORY.split("/"));
+  const directory = path.join(projectRoot, ...relativeProjectArtifact(storage, "onboarding", "historical-continuity").split("/"));
   if (!fs.existsSync(directory)) return [];
   const byId = new Map(currentCandidateSets.map((candidate) => [candidate.candidateSetId, candidate]));
   return fs.readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name, "en")).map((entry) => {

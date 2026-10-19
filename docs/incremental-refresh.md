@@ -107,25 +107,25 @@ An active Run is not stopped or mutated by refresh. Its Run record, ExecutionCon
 - the Capsule-pinned SourceSnapshot when present;
 - the refreshed SourceSnapshot;
 - whether drift exists;
-- the required HEAD choice: continue with pinned inputs, recompile, revise, or cancel.
+- the required Lode choice: continue with pinned inputs, recompile, revise, or cancel.
 
-A pending ResultPacket likewise remains frozen for Fresh HEAD review. Refresh evidence may inform review, but cannot rewrite the result or its accepted execution inputs.
+A pending ResultPacket likewise remains frozen for Fresh Lode review. Refresh evidence may inform review, but cannot rewrite the result or its accepted execution inputs.
 
 ## Immutable artifacts
 
 The local reference implementation stores:
 
 ```text
-.head/refresh/requests/incremental-refresh-request-*.json
-.head/refresh/receipts/incremental-refresh-receipt-*.json
-.head/refresh/current.json
-.head/refresh/triggers/batches/refresh-trigger-batch-*.json
-.head/refresh/triggers/deliveries/refresh-trigger-delivery-*.json
-.head/refresh/triggers/current.json
-.head/document-projection/post-refresh/policies/post-refresh-projection-policy-*.json
-.head/document-projection/post-refresh/receipts/post-refresh-projection-receipt-*.json
-.head/document-projection/post-refresh/current-policy.json
-.head/document-projection/post-refresh/current.json
+.lode/refresh/requests/incremental-refresh-request-*.json
+.lode/refresh/receipts/incremental-refresh-receipt-*.json
+.lode/refresh/current.json
+.lode/refresh/triggers/batches/refresh-trigger-batch-*.json
+.lode/refresh/triggers/deliveries/refresh-trigger-delivery-*.json
+.lode/refresh/triggers/current.json
+.lode/document-projection/post-refresh/policies/post-refresh-projection-policy-*.json
+.lode/document-projection/post-refresh/receipts/post-refresh-projection-receipt-*.json
+.lode/document-projection/post-refresh/current-policy.json
+.lode/document-projection/post-refresh/current.json
 ```
 
 Requests and receipts are content-derived immutable artifacts. The current file is a digest-verified replaceable pointer. A later full index or refresh can make the latest receipt stale without invalidating its historical evidence.
@@ -133,30 +133,30 @@ Requests and receipts are content-derived immutable artifacts. The current file 
 ## CLI and MCP
 
 ```powershell
-node scripts/head.mjs world-refresh <project>
-node scripts/head.mjs world-refresh <project> --expect-changed src/a.mjs,src/b.mjs
-node scripts/head.mjs world-refresh-status <project>
-node scripts/head.mjs world-refresh-read <project> --receipt incremental-refresh-receipt-<24-hex>
-node scripts/head.mjs world-refresh-events <project> --input refresh-events.json
-node scripts/head.mjs world-refresh-watch <project> --debounce-ms 350 --max-events 1024
-node scripts/head.mjs world-refresh-trigger-status <project>
-node scripts/head.mjs world-refresh-trigger-read <project> --delivery refresh-trigger-delivery-<24-hex>
-node scripts/head.mjs world-docs-policy-set <project> --input post-refresh-policy.json
-node scripts/head.mjs world-docs-policy-status <project>
-node scripts/head.mjs world-docs-refresh-status <project>
-node scripts/head.mjs world-docs-refresh-read <project> --receipt post-refresh-projection-receipt-<24-hex>
+node scripts/lode.mjs world-refresh <project>
+node scripts/lode.mjs world-refresh <project> --expect-changed src/a.mjs,src/b.mjs
+node scripts/lode.mjs world-refresh-status <project>
+node scripts/lode.mjs world-refresh-read <project> --receipt incremental-refresh-receipt-<24-hex>
+node scripts/lode.mjs world-refresh-events <project> --input refresh-events.json
+node scripts/lode.mjs world-refresh-watch <project> --debounce-ms 350 --max-events 1024
+node scripts/lode.mjs world-refresh-trigger-status <project>
+node scripts/lode.mjs world-refresh-trigger-read <project> --delivery refresh-trigger-delivery-<24-hex>
+node scripts/lode.mjs world-docs-policy-set <project> --input post-refresh-policy.json
+node scripts/lode.mjs world-docs-policy-status <project>
+node scripts/lode.mjs world-docs-refresh-status <project>
+node scripts/lode.mjs world-docs-refresh-read <project> --receipt post-refresh-projection-receipt-<24-hex>
 ```
 
 `--trigger-evidence` adds sorted evidence identities. `--parent-snapshot` declares additional SourceSnapshot parents; it does not request or perform a merge.
 
 Read-only MCP exposes:
 
-- `head_incremental_refresh_status`;
-- `head_incremental_refresh_receipt`;
-- `head_refresh_trigger_status`;
-- `head_refresh_trigger_delivery`;
-- `head_post_refresh_projection_status`;
-- `head_post_refresh_projection_receipt`.
+- `lode_incremental_refresh_status`;
+- `lode_incremental_refresh_receipt`;
+- `lode_refresh_trigger_status`;
+- `lode_refresh_trigger_delivery`;
+- `lode_post_refresh_projection_status`;
+- `lode_post_refresh_projection_receipt`.
 
 MCP does not expose refresh mutation.
 

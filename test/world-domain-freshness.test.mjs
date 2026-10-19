@@ -1,15 +1,17 @@
+import { relativeProjectArtifact } from "../scripts/lib/project-storage-format.mjs";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { initializeProject } from "../scripts/lib/head-core.mjs";
+import { initializeProject, inspectProject } from "../scripts/lib/head-core.mjs";
 import { createHeadSession, withSessionRoute } from "../scripts/lib/session-routing.mjs";
 import { buildWorldModel, inspectWorldModel, inspectWorldDomainFreshness, readWorldModelForDiscovery,
   buildWorldTraversalEligibility, queryWorldModel, queryWorldTemporalGraph } from "../scripts/lib/world-model.mjs";
 import { queryTemporalProvenanceGraph, buildTemporalProvenanceGraph } from "../scripts/lib/temporal-provenance.mjs";
-import { normalizeProductModelDocument } from "../scripts/lib/product-model.mjs";
+import { emptyProductModelDocument, normalizeProductModelDocument } from "../scripts/lib/product-model.mjs";
+import { initialOnboardingDocuments } from "../scripts/lib/onboarding-contract.mjs";
 import { compileContext } from "../scripts/lib/context-compiler.mjs";
 import { queryGraphProjection } from "../scripts/lib/graph-projection-adapter.mjs";
 import { SOURCE_ANALYSIS_VERSION } from "../scripts/lib/source-analysis.mjs";
@@ -30,18 +32,57 @@ function bytes(root) {
   }
   visit(root); return result;
 }
-async function fixture(t) {
+// Synthetic legacy contract seed only; genuine old-producer interoperability is verified separately.
+function seedLegacyProject(root) {
+  root = fs.realpathSync(root);
+  const createdAt = "2026-09-22T00:00:00.000Z";
+  const project = { schemaVersion: 1, projectId: `head-${crypto.createHash("sha256").update(root).digest("hex").slice(0, 20)}`,
+    projectRoot: root, createdAt, runtimes: ["claude", "codex", "opencode"], integrations: {},
+    authority: { head: "ordinary investigation, strategy, integration, and completion judgment",
+      user: "material product, policy, architecture, cost, workflow, and consequential external actions" } };
+  const sessionState = { schemaVersion: 1, sessionId: `session-${crypto.randomUUID()}`, mode: "session",
+    currentWholePlanId: null, activeRunId: null, activeExecutionContractId: null, lastResultPacketId: null,
+    pendingReview: null, lastReviewDecisionId: null, requiredPlanAction: null, latestCheckpoint: null, updatedAt: createdAt };
+  const product = emptyProductModelDocument();
+  const onboarding = initialOnboardingDocuments({ project, sessionState,
+    productModelId: normalizeProductModelDocument(product).productModelId, updatedAt: createdAt });
+  const records = new Map([
+    [".head/project.json", project], [".head/sessions/current.json", sessionState],
+    [".head/context/knowledge.json", { schemaVersion: 1, evidence: [], claims: [], decisions: [], unknowns: [] }],
+    [".head/context/product-model.json", product], [".head/onboarding/current.json", onboarding.state],
+    [`.head/sessions/records/${onboarding.sessionRecord.sessionId}.json`, onboarding.sessionRecord],
+    [`.head/onboarding/storage-selections/${onboarding.storageSelection.storageSelectionId}.json`, onboarding.storageSelection],
+  ]);
+  for (const [relative, value] of records) {
+    const file = path.join(root, relative); fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`, { flag: "wx" });
+  }
+  const immutable = [...records.keys()].filter(relative => relative === ".head/project.json"
+    || relative.startsWith(".head/sessions/records/") || relative.startsWith(".head/onboarding/storage-selections/"));
+  const manifest = { schemaVersion: 1, generatedAt: createdAt, pluginRoot,
+    packageVersion: JSON.parse(fs.readFileSync(path.join(pluginRoot, "package.json"))).version,
+    managed: immutable.map(relative => ({ path: relative, sha256: crypto.createHash("sha256").update(fs.readFileSync(path.join(root, relative))).digest("hex") })) };
+  fs.mkdirSync(path.join(root, ".head/generated"), { recursive: true });
+  fs.writeFileSync(path.join(root, ".head/generated/manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, { flag: "wx" });
+  const inspected = inspectProject(root); assert.equal(inspected.status, "ready");
+  assert.equal(inspected.storage.directory, ".head");
+  return { project };
+}
+
+async function fixture(t, { legacy = false } = {}) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "head-domain-")));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  if (legacy) seedLegacyProject(root);
+  else initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const storage = inspectProject(root).storage;
   fs.mkdirSync(path.join(root, "src"));
   fs.writeFileSync(path.join(root, "src/main.mjs"), "import { relay } from './relay.mjs';\nexport function start(value) { return relay(value); }\n");
   fs.writeFileSync(path.join(root, "src/relay.mjs"), "export function relay(value) { return value; }\n");
   await buildWorldModel({ root });
-  return root;
+  return { root, storage };
 }
-function mutateSession(root, patch) {
-  const file = path.join(root, ".head/sessions/current.json");
+function mutateSession(root, storage, patch) {
+  const file = path.join(root, relativeProjectArtifact(storage, "sessions", "current.json"));
   const state = JSON.parse(fs.readFileSync(file));
   fs.writeFileSync(file, JSON.stringify({ ...state, ...patch })); return state;
 }
@@ -56,9 +97,9 @@ function retainedStore(snapshot) {
 }
 
 test("runtime/checkpoint drift preserves code query and Context; reads leave every byte unchanged", async t => {
-  const root = await fixture(t), original = readWorldModelForDiscovery({ root }).snapshot;
+  const { root, storage } = await fixture(t), original = readWorldModelForDiscovery({ root }).snapshot;
   assert.equal(inspectWorldModel({ root }).status, "current");
-  mutateSession(root, { latestCheckpoint: { checkpointId: "checkpoint-fixture", digest: "a".repeat(64) } });
+  mutateSession(root, storage, { latestCheckpoint: { checkpointId: "checkpoint-fixture", digest: "a".repeat(64) } });
   const before = bytes(root);
   const full = inspectWorldModel({ root });
   assert.equal(full.status, "stale");
@@ -81,12 +122,12 @@ test("runtime/checkpoint drift preserves code query and Context; reads leave eve
 });
 
 test("code-only query never reads unrelated current Product, Session, observation or runtime readers", async t => {
-  const root = await fixture(t);
-  fs.writeFileSync(path.join(root, ".head/context/product-model.json"), "broken-product-json");
+  const { root, storage } = await fixture(t);
+  fs.writeFileSync(path.join(root, relativeProjectArtifact(storage, "context", "product-model.json")), "broken-product-json");
   const codeContext = compileContext({ root, task: "Inspect source", evidenceNeeds: [{ id: "code", kind: "repository-source", paths: ["src/main.mjs"] }] }).capsule;
   assert.deepEqual(Object.keys(codeContext.repositoryWorldFreshness.domains), ["code"]);
   assert(codeContext.repositoryContext.some(item => item.path === "src/main.mjs"));
-  fs.writeFileSync(path.join(root, ".head/sessions/current.json"), "broken-session-json");
+  fs.writeFileSync(path.join(root, relativeProjectArtifact(storage, "sessions", "current.json")), "broken-session-json");
   const before = bytes(root);
   assert.equal(inspectWorldDomainFreshness({ root, domains: ["code"] }).freshness.domains.code.status, "current");
   assert.equal(queryWorldModel({ root, query: "relay" }).status, "current");
@@ -98,7 +139,7 @@ test("code-only query never reads unrelated current Product, Session, observatio
 });
 
 test("capture owner remains Session A while Session B is selected; no World copy per Session", async t => {
-  const root = await fixture(t), original = readWorldModelForDiscovery({ root }).snapshot;
+  const { root, storage } = await fixture(t), original = readWorldModelForDiscovery({ root }).snapshot;
   const second = createHeadSession({ root, purpose: "Independent work" }).sessionId;
   const before = bytes(root);
   withSessionRoute(root, second, () => {
@@ -116,7 +157,7 @@ test("capture owner remains Session A while Session B is selected; no World copy
 
 test("add/delete/rename invalidate all code relations, including unchanged importer; source fallback is non-writing", async t => {
   for (const operation of ["add", "delete", "rename", "edit"]) {
-    const root = await fixture(t), importer = fs.readFileSync(path.join(root, "src/main.mjs"));
+    const { root, storage } = await fixture(t), importer = fs.readFileSync(path.join(root, "src/main.mjs"));
     if (operation === "add") fs.writeFileSync(path.join(root, "src/extra.mjs"), "export const extra = 1;\n");
     if (operation === "delete") fs.unlinkSync(path.join(root, "src/relay.mjs"));
     if (operation === "rename") fs.renameSync(path.join(root, "src/relay.mjs"), path.join(root, "src/renamed.mjs"));
@@ -132,7 +173,7 @@ test("add/delete/rename invalidate all code relations, including unchanged impor
 });
 
 test("SourceScope and recorded analyzer basis are genuine invalidators, not runtime aliases", async t => {
-  const root = await fixture(t), snapshot = readWorldModelForDiscovery({ root }).snapshot;
+  const { root, storage } = await fixture(t), snapshot = readWorldModelForDiscovery({ root }).snapshot;
   assert.equal(snapshot.analysisBasis.sourceAnalysisVersion, SOURCE_ANALYSIS_VERSION);
   assert.equal(snapshot.indexer.sourceAnalysisVersion, SOURCE_ANALYSIS_VERSION);
   writeRepositorySourceScope({ projectRoot: root, selection: { excludeRoots: ["src"] } });
@@ -147,7 +188,7 @@ test("SourceScope and recorded analyzer basis are genuine invalidators, not runt
 });
 
 test("an unchanged importer's newly resolved target needs the existing refresh, not guessed traversal", async t => {
-  const root = await fixture(t);
+  const { root, storage } = await fixture(t);
   fs.appendFileSync(path.join(root, "src/main.mjs"), "import { optional } from './optional.mjs';\n");
   const first = (await buildWorldModel({ root })).snapshot;
   assert(first.semanticGraph.summary.unresolvedImportCount > 0);
@@ -160,11 +201,11 @@ test("an unchanged importer's newly resolved target needs the existing refresh, 
   assert.notEqual(second.worldModelId, first.worldModelId);
   assert.equal(second.semanticGraph.summary.unresolvedImportCount, 0);
   assert(queryWorldModel({ root, query: "optional.mjs" }).edges.some(edge => edge.type === "IMPORTS"));
-  assert(fs.existsSync(path.join(root, ".head/world-model/snapshots", `${first.worldModelId}.json`)));
+  assert(fs.existsSync(path.join(root, relativeProjectArtifact(storage, "world-model", "snapshots"), `${first.worldModelId}.json`)));
 });
 
 test("product Git branch drift remains observable without invalidating unrelated code", async t => {
-  const root = await fixture(t);
+  const { root, storage } = await fixture(t);
   fs.mkdirSync(path.join(root, ".git/refs/heads"), { recursive: true });
   fs.writeFileSync(path.join(root, ".git/HEAD"), "ref: refs/heads/main\n");
   fs.writeFileSync(path.join(root, ".git/refs/heads/main"), `${"1".repeat(40)}\n`);
@@ -176,7 +217,7 @@ test("product Git branch drift remains observable without invalidating unrelated
 });
 
 test("Product drift excludes only Product links while current code remains available to Context", async t => {
-  const root = await fixture(t), productFile = path.join(root, ".head/context/product-model.json");
+  const { root, storage } = await fixture(t), productFile = path.join(root, relativeProjectArtifact(storage, "context", "product-model.json"));
   const product = { schemaVersion: 1, featureGroups: [], capabilities: [{ key: "relay", name: "Relay", description: "Forward a message" }],
     features: [], requirements: [], constraints: [], decisions: [] };
   fs.writeFileSync(productFile, JSON.stringify(product)); await buildWorldModel({ root });
@@ -197,7 +238,9 @@ test("Product drift excludes only Product links while current code remains avail
 });
 
 test("legacy 0.18 snapshots remain verified historical evidence without invented analysis currentness", async t => {
-  const root = await fixture(t), original = readWorldModelForDiscovery({ root }).snapshot;
+  const { root, storage } = await fixture(t, { legacy: true }), original = readWorldModelForDiscovery({ root }).snapshot;
+  assert.equal(storage.directory, ".head");
+  assert.equal(original.protocol.name, "head-agent-core-world-model");
   const legacy = structuredClone(original);
   delete legacy.analysisBasis; delete legacy.domainBases; delete legacy.worldModelId; delete legacy.worldModelHash;
   legacy.protocol.version = "0.18.0";
@@ -214,7 +257,7 @@ test("legacy 0.18 snapshots remain verified historical evidence without invented
 });
 
 test("mixed traversal filters stale bridge BEFORE expansion, retains exact identity, and avoids unsupported remote adapter", async t => {
-  const root = await fixture(t), snapshot = readWorldModelForDiscovery({ root }).snapshot;
+  const { root, storage } = await fixture(t), snapshot = readWorldModelForDiscovery({ root }).snapshot;
   const productModel = normalizeProductModelDocument({ schemaVersion: 1, featureGroups: [],
     capabilities: [{ key: "relay", name: "Relay", description: "Forward messages" }], features: [], requirements: [], constraints: [], decisions: [] });
   const graph = buildTemporalProvenanceGraph({ projectId: snapshot.projectId, files: snapshot.files, productModel });

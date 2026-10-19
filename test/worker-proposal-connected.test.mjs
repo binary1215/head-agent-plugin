@@ -1,3 +1,4 @@
+import { relativeProjectArtifact } from "../scripts/lib/project-storage-format.mjs";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import fs from "node:fs";
@@ -94,6 +95,7 @@ async function fixture(t) {
     }
   });
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const storage = inspectProject(root).storage;
   fs.writeFileSync(path.join(root, "left.txt"), "left original\n");
   fs.writeFileSync(path.join(root, "right.txt"), "right original\n");
   const consumerFile = path.join(root, "consumer.mjs");
@@ -118,7 +120,7 @@ async function fixture(t) {
   const versionEvidence = await buildRuntimeVersionEvidence({ runtimes: ["codex"], environment, spawnImplementation: schemaSpawn });
   const protocolEvidence = await buildRuntimeProtocolEvidence({ runtimes: ["codex"], environment, versionEvidence, spawnImplementation: schemaSpawn });
   const inspected = inspectProject(root);
-  const projectBinding = buildRuntimeProjectBinding({ projectId: inspected.project.projectId, headSessionId: inspected.state.sessionId,
+  const projectBinding = buildRuntimeProjectBinding({ storage, projectId: inspected.project.projectId, headSessionId: inspected.state.sessionId,
     projectRoot: root, projectStatus: "ready", versionEvidence, protocolEvidence });
   for (const name of ["left", "right"]) {
     const selectedPath = name + ".txt", sourcePaths = ["consumer.mjs", selectedPath].sort();
@@ -138,9 +140,9 @@ async function fixture(t) {
       directory: path.join(operational, "worker-jobs", authorization.projectId, authorization.authorizationId) });
   }
   const selection = resolveVerifiedProcessSupervisor({ pluginRoot: supervisorRoot });
-  return { root, container, members, run, consumerFile, cleanupChecks,
-    sessionFile: path.join(root, ".head/sessions/current.json"),
-    runFile: path.join(root, ".head/sessions/runs", run.runId, "run.json"),
+  return { root, storage, container, members, run, consumerFile, cleanupChecks,
+    sessionFile: path.join(root, relativeProjectArtifact(storage, "sessions", "current.json")),
+    runFile: path.join(root, relativeProjectArtifact(storage, "sessions", "runs"), run.runId, "run.json"),
     async startAll() {
       // Launch independent owners together; this test does not equate launch
       // overlap with measured model execution concurrency.
@@ -251,7 +253,7 @@ test("two native-owned model-free proposals reach exact HEAD effects, combined b
   assert.ok(published.resultPacket.evidence[0].memberProvenance.every(member => member.actualProviderInvoked === false));
   assert.equal(inspectProject(f.root).state.lastReviewDecisionId, null);
   assert.equal(inspectProject(f.root).state.latestCheckpoint, null);
-  assert.equal(fs.existsSync(path.join(f.root, ".head/lineage/review-decisions")), false);
+  assert.equal(fs.existsSync(path.join(f.root, relativeProjectArtifact(f.storage, "lineage", "review-decisions"))), false);
   const reviewed = reviewRun({ root: f.root, reviewContextId: getPendingReviewContext({ root: f.root }).review.reviewContextId,
     disposition: "accept", rationale: "Explicit synthetic user review accepts this exact connected fixture result only",
     nextActions: ["Integrate the separately stated HEAD recovery direction"] });

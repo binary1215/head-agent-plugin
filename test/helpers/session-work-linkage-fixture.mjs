@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { initializeProject } from "../../scripts/lib/head-core.mjs";
+import { initializeProject, inspectProject } from "../../scripts/lib/head-core.mjs";
 import { createHeadSession, withSessionRoute } from "../../scripts/lib/session-routing.mjs";
 import { recordSessionWorkEvidence, readSessionWorkContext } from "../../scripts/lib/session-work-context.mjs";
 
@@ -37,11 +37,18 @@ export function fixture(t, purpose = "Synthetic local investigation; no external
   const root = path.join(base, "project"), operational = path.join(base, "host");
   fs.mkdirSync(root);
   initializeProject({ root, pluginRoot, runtimes: ["codex", "claude", "opencode"] });
+  const owner = inspectProject(root), layout = owner.storage;
+  assert.equal(layout.projectRoot, fs.realpathSync(root));
+  assert.equal(layout.projectId, owner.project.projectId);
+  assert.equal(layout.dialect, "lode");
+  assert.equal(layout.directory, ".lode");
+  assert.equal(layout.projectFile, path.join(root, ".lode", "project.json"));
+  assert.equal(fs.existsSync(path.join(root, ".head", "project.json")), false);
   const session = createHeadSession({ root, purpose });
   if (process.env.HEAD_AGENT_KEEP_TEST_TMP !== "1") t.after(() => fs.rmSync(base, { recursive: true, force: true }));
   let occurrence = 0;
   const route = callback => withSessionRoute(root, session.sessionId, callback);
-  return { base, root, operational, session, route,
+  return { base, root, owner, layout, storage: layout, operational, session, route,
     save(input) {
       const RealDate = globalThis.Date, time = Date.parse("2026-01-01T00:00:00Z") + occurrence++ * 1000;
       globalThis.Date = class extends RealDate {

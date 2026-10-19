@@ -98,7 +98,7 @@ async function runInteractiveScenario(selection) {
         }
       },
     });
-    process.stderr.write(`NESTED_CHILD_START pid=${supervised.child.pid} parent=${process.pid} command=head-agent-process-supervisor--interactive cwd=${repositoryRoot} ports=none\n`);
+    process.stderr.write(`NESTED_CHILD_START pid=${supervised.child.pid} parent=${process.pid} command=lode-agent-process-supervisor--interactive cwd=${repositoryRoot} ports=none\n`);
     const completion = new Promise(resolve => {
       supervised.child.once("error", error => { failure ||= error; });
       supervised.child.once("close", (code, signal) => {
@@ -209,7 +209,7 @@ async function runScenario(selection, mode) {
         }
       },
     });
-    process.stderr.write(`NESTED_CHILD_START pid=${supervised.child.pid} parent=${process.pid} command=head-agent-process-supervisor cwd=${path.dirname(selection.binaryPath)} ports=none\n`);
+    process.stderr.write(`NESTED_CHILD_START pid=${supervised.child.pid} parent=${process.pid} command=lode-agent-process-supervisor cwd=${path.dirname(selection.binaryPath)} ports=none\n`);
     supervised.child.stdout.on("data", (chunk) => {
       output += chunk.toString("utf8");
       for (const line of output.split(/\r?\n/)) {
@@ -290,7 +290,7 @@ async function runBoundedControlScenario(selection, runtime, action) {
         if (event.type === "provider.started") providerPid = event.providerPid;
       },
     });
-    process.stderr.write(`NESTED_CHILD_START pid=${controlled.child.pid} parent=${process.pid} command=head-agent-bounded-${action} cwd=${path.dirname(selection.binaryPath)} ports=none\n`);
+    process.stderr.write(`NESTED_CHILD_START pid=${controlled.child.pid} parent=${process.pid} command=lode-agent-bounded-${action} cwd=${path.dirname(selection.binaryPath)} ports=none\n`);
     controlled.child.stdout.on("data", (chunk) => {
       output += chunk.toString("utf8");
       for (const line of output.split(/\r?\n/u)) {
@@ -356,7 +356,7 @@ async function runBoundedControlScenario(selection, runtime, action) {
 }
 
 async function main() {
-  const pluginRoot = path.resolve(option("--plugin-root", process.env.HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT || repositoryRoot));
+  const pluginRoot = path.resolve(option("--plugin-root", process.env.LODE_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT || process.env.HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT || repositoryRoot));
   const selection = resolveVerifiedProcessSupervisor({ pluginRoot });
   const normal = await runScenario(selection, "normal");
   const cancelled = await runScenario(selection, "cancel");

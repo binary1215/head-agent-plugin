@@ -5,12 +5,11 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { initializeProject, inspectProject } from "../scripts/lib/head-core.mjs";
+import { formatForVerifiedOwner } from "../scripts/lib/project-storage-format.mjs";
 import { observationDigest } from "../scripts/lib/observation-contract.mjs";
 import { defineMetric, recordMetricObservation, compareMetricObservations } from "../scripts/lib/measurement-workflow.mjs";
 import {
   loadObservationArtifacts, readObservation,
-  OBSERVATION_DESCRIPTOR_DIRECTORY, OBSERVATION_RECORD_DIRECTORY,
-  OBSERVATION_RECEIPT_DIRECTORY, DERIVED_OBSERVATION_DIRECTORY,
 } from "../scripts/lib/observation-store.mjs";
 import { LocalJsonWorldModelStoreAdapter } from "../scripts/lib/world-model-store.mjs";
 
@@ -26,7 +25,9 @@ function fixture(t) {
   t.diagnostic(JSON.stringify({ fixture: root, pid: process.pid, parentPid: process.ppid, cwd: process.cwd(), ports: [] }));
   if (process.env.HEAD_AGENT_KEEP_TEST_TMP !== "1") t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
-  return root;
+  const storage = inspectProject(root).storage;
+  const layout = formatForVerifiedOwner(storage);
+  return { root, storage, layout };
 }
 
 function input(overrides = {}) {
@@ -40,7 +41,7 @@ function input(overrides = {}) {
   };
 }
 
-function files(root, relative = ".head/observations") {
+function files(root, layout, relative = `${layout.directory}/observations`) {
   const result = {};
   function walk(directory) {
     if (!fs.existsSync(directory)) return;
@@ -54,13 +55,13 @@ function files(root, relative = ".head/observations") {
   return result;
 }
 
-function authority(root) {
-  return Object.fromEntries([".head/project.json", ".head/context/product-model.json", ".head/sessions/current.json"]
+function authority(root, layout) {
+  return Object.fromEntries([`${layout.directory}/project.json`, `${layout.directory}/context/product-model.json`, `${layout.directory}/sessions/current.json`]
     .map((relative) => [relative, sha(fs.readFileSync(path.join(root, relative)).toString("utf8"))]));
 }
 
-function artifacts(root) {
-  return loadObservationArtifacts({ projectRoot: root, projectId: inspectProject(root).project.projectId });
+function artifacts(root, storage) {
+  return loadObservationArtifacts({ projectRoot: root, projectId: storage.projectId, storage });
 }
 
 function healthy(result) {
@@ -75,8 +76,8 @@ function deferred(result, reasonCode = "INVALID_WORLD_MODEL_STORE_DOCUMENT") {
   assert.equal(result.ordinaryWorkBlocked, false);
 }
 
-function breakPointer(root) {
-  const file = path.join(root, ".head/world-model/current.json");
+function breakPointer(root, layout) {
+  const file = path.join(root, layout.directory, "world-model/current.json");
   const original = fs.readFileSync(file);
   fs.writeFileSync(file, malformedPointer);
   return { file, original };
@@ -94,7 +95,7 @@ async function pair(root) {
 }
 
 test("healthy measurement writes retain primary evidence, statuses and exact two-ID World responses", { concurrency: false }, async (t) => {
-  const root = fixture(t);
+  const { root, storage, layout } = fixture(t);
   const defined = await defineMetric({ root, ...definition });
   healthy(defined);
   assert.equal(defined.status, "recorded");
@@ -119,13 +120,13 @@ test("healthy measurement writes retain primary evidence, statuses and exact two
 });
 
 test("committed define, observe and compare survive broken World with exact replay and later projection recovery", { concurrency: false }, async (t) => {
-  const root = fixture(t);
+  const { root, storage, layout } = fixture(t);
   await defineMetric({ root, metricKey: "setup", unit: "count", direction: "increase" });
-  const pointer = breakPointer(root);
-  const beforeAuthority = authority(root);
+  const pointer = breakPointer(root, layout);
+  const beforeAuthority = authority(root, layout);
   const unchanged = () => {
     assert.equal(fs.readFileSync(pointer.file, "utf8"), malformedPointer);
-    assert.deepEqual(authority(root), beforeAuthority);
+    assert.deepEqual(authority(root, layout), beforeAuthority);
   };
   const defined = await defineMetric({ root, ...definition });
   deferred(defined); unchanged();
@@ -144,7 +145,7 @@ test("committed define, observe and compare survive broken World with exact repl
   assert.equal(compared.comparison.payload.absolute_change, -30);
   assert.equal(compared.comparability.numericComparisonAvailable, true);
   assert.equal(compared.causalityEstablished, false);
-  const stored = artifacts(root);
+  const stored = artifacts(root, storage);
   assert.ok(stored.descriptors.some((item) => item.descriptorId === defined.descriptor.descriptorId));
   for (const result of [baseline, current]) {
     const read = readObservation({ root, observationId: result.observation.observationId });
@@ -152,7 +153,7 @@ test("committed define, observe and compare survive broken World with exact repl
     assert.deepEqual(read.receipt, result.receipt);
   }
   assert.deepEqual(readObservation({ root, observationId: compared.comparison.derivedObservationId }).observation, compared.comparison);
-  const committedFiles = files(root);
+  const committedFiles = files(root, layout);
   const repeat = async (expectHealthy) => {
     const retries = [await defineMetric({ root, ...definition }), await recordMetricObservation(baselineInput),
       await recordMetricObservation(currentInput), await compareMetricObservations(comparisonInput)];
@@ -162,9 +163,9 @@ test("committed define, observe and compare survive broken World with exact repl
     assert.equal(retries[1].receipt.receiptId, baseline.receipt.receiptId);
     assert.equal(retries[2].observation.observationId, current.observation.observationId);
     assert.equal(retries[3].comparison.derivedObservationId, compared.comparison.derivedObservationId);
-    assert.deepEqual(files(root), committedFiles);
-    assert.deepEqual(artifacts(root), stored);
-    assert.deepEqual(authority(root), beforeAuthority);
+    assert.deepEqual(files(root, layout), committedFiles);
+    assert.deepEqual(artifacts(root, storage), stored);
+    assert.deepEqual(authority(root, layout), beforeAuthority);
   };
   await repeat(false); unchanged();
   fs.writeFileSync(pointer.file, pointer.original);
@@ -175,11 +176,11 @@ test("committed define, observe and compare survive broken World with exact repl
 });
 
 test("primary validation, conflicts and divergent replay still reject under broken World", { concurrency: false }, async (t) => {
-  const root = fixture(t);
+  const { root, storage, layout } = fixture(t);
   const { baseline, current, comparisonInput } = await pair(root);
   const other = await recordMetricObservation({ root, ...input({ subjectKey: "other", sourceEventKeyDigest: sha("other") }) });
-  breakPointer(root);
-  const before = files(root);
+  breakPointer(root, layout);
+  const before = files(root, layout);
   const cases = [
     ["INVALID_MEASUREMENT_INPUT", () => defineMetric({ root, ...definition, direction: "sideways" })],
     ["METRIC_DEFINITION_CONFLICT", () => defineMetric({ root, ...definition, unit: "seconds" })],
@@ -191,14 +192,14 @@ test("primary validation, conflicts and divergent replay still reject under brok
     ["INCOMPARABLE_METRIC_OBSERVATIONS", () => compareMetricObservations({ ...comparisonInput, currentObservationId: other.observation.observationId })],
     ["INCOMPARABLE_METRIC_OBSERVATIONS", () => compareMetricObservations({ root, baselineObservationId: current.observation.observationId, currentObservationId: baseline.observation.observationId })],
   ];
-  for (const [code, operation] of cases) { await assert.rejects(operation, { code }); assert.deepEqual(files(root), before); }
+  for (const [code, operation] of cases) { await assert.rejects(operation, { code }); assert.deepEqual(files(root, layout), before); }
 });
 
 test("original digest, owner and read-permission failures escape before derived projection", { concurrency: false }, async (t) => {
-  const root = fixture(t);
+  const { root, storage, layout } = fixture(t);
   const { baseline } = await pair(root);
-  breakPointer(root);
-  const directory = path.join(root, OBSERVATION_RECORD_DIRECTORY);
+  breakPointer(root, layout);
+  const directory = path.join(root, `${layout.directory}/observations/records/by-source-key`);
   const file = fs.readdirSync(directory).map((name) => path.join(directory, name))
     .find((candidate) => JSON.parse(fs.readFileSync(candidate, "utf8")).observationId === baseline.observation.observationId);
   const original = fs.readFileSync(file, "utf8");
@@ -206,16 +207,16 @@ test("original digest, owner and read-permission failures escape before derived 
   try {
     const changed = JSON.parse(original); changed.payload.value += 1;
     fs.writeFileSync(file, JSON.stringify(changed));
-    const beforeDigest = files(root);
+    const beforeDigest = files(root, layout);
     await assert.rejects(invoke, { code: "OBSERVATION_DIGEST_MISMATCH" });
-    assert.deepEqual(files(root), beforeDigest);
+    assert.deepEqual(files(root, layout), beforeDigest);
     const wrongOwner = JSON.parse(original); wrongOwner.projectId = `head-${sha("other-project").slice(0, 20)}`;
     const payload = { ...wrongOwner }; delete payload.observationId; delete payload.observationHash;
     wrongOwner.observationHash = sha(payload); wrongOwner.observationId = `observation-${wrongOwner.observationHash.slice(0, 24)}`;
     fs.writeFileSync(file, JSON.stringify(wrongOwner));
-    const beforeOwner = files(root);
+    const beforeOwner = files(root, layout);
     await assert.rejects(invoke, { code: "INVALID_OBSERVATION_RECORD" });
-    assert.deepEqual(files(root), beforeOwner);
+    assert.deepEqual(files(root, layout), beforeOwner);
   } finally { fs.writeFileSync(file, original); }
   const readFile = fs.readFileSync;
   const error = Object.assign(new Error("fixture-only denied original read"), { code: "EACCES" });
@@ -230,7 +231,7 @@ test("original digest, owner and read-permission failures escape before derived 
   assert.equal(hits, 1);
 });
 
-async function failFinalPublish(t, root, relative, kind, operation) {
+async function failFinalPublish(t, root, layout, relative, kind, operation) {
   const directory = path.join(root, relative);
   const original = fs.linkSync;
   const error = Object.assign(new Error("fixture-only final primary publish failure"), { code: "EIO" });
@@ -250,33 +251,33 @@ async function failFinalPublish(t, root, relative, kind, operation) {
   assert.equal(hit.stageKind, kind);
   assert.equal(hit.targetExisted, false);
   assert.equal(fs.existsSync(hit.target), false);
-  assert.equal(Object.keys(files(root)).some((file) => file.endsWith(".tmp")), false);
+  assert.equal(Object.keys(files(root, layout)).some((file) => file.endsWith(".tmp")), false);
   t.diagnostic(JSON.stringify({ finalPublishReached: true, ...hit, originalErrorPropagated: true }));
 }
 
 test("final primary publish and multi-artifact partial commits remain failures", { concurrency: false }, async (t) => {
   await t.test("descriptor final publish", async (t) => {
-    const root = fixture(t);
-    await failFinalPublish(t, root, OBSERVATION_DESCRIPTOR_DIRECTORY, "ObservationTypeDescriptor", () => defineMetric({ root, ...definition }));
-    assert.deepEqual(files(root), {});
+    const { root, storage, layout } = fixture(t);
+    await failFinalPublish(t, root, layout, `${layout.directory}/observations/descriptors`, "ObservationTypeDescriptor", () => defineMetric({ root, ...definition }));
+    assert.deepEqual(files(root, layout), {});
   });
   await t.test("observation final publish", async (t) => {
-    const root = fixture(t); await defineMetric({ root, ...definition }); breakPointer(root);
-    const before = files(root);
-    await failFinalPublish(t, root, OBSERVATION_RECORD_DIRECTORY, "ObservationRecord", () => recordMetricObservation({ root, ...input() }));
-    assert.deepEqual(files(root), before);
+    const { root, storage, layout } = fixture(t); await defineMetric({ root, ...definition }); breakPointer(root, layout);
+    const before = files(root, layout);
+    await failFinalPublish(t, root, layout, `${layout.directory}/observations/records/by-source-key`, "ObservationRecord", () => recordMetricObservation({ root, ...input() }));
+    assert.deepEqual(files(root, layout), before);
   });
   await t.test("receipt failure preserves the partial observation without reporting success", async (t) => {
-    const root = fixture(t); await defineMetric({ root, ...definition }); breakPointer(root);
-    await failFinalPublish(t, root, OBSERVATION_RECEIPT_DIRECTORY, "ObservationCollectionReceipt", () => recordMetricObservation({ root, ...input() }));
-    assert.equal(fs.readdirSync(path.join(root, OBSERVATION_RECORD_DIRECTORY)).filter((name) => name.endsWith(".json")).length, 1);
-    assert.equal(fs.readdirSync(path.join(root, OBSERVATION_RECEIPT_DIRECTORY)).length, 0);
-    assert.throws(() => artifacts(root), { code: "OBSERVATION_RECEIPT_MISSING" });
+    const { root, storage, layout } = fixture(t); await defineMetric({ root, ...definition }); breakPointer(root, layout);
+    await failFinalPublish(t, root, layout, `${layout.directory}/observations/receipts`, "ObservationCollectionReceipt", () => recordMetricObservation({ root, ...input() }));
+    assert.equal(fs.readdirSync(path.join(root, `${layout.directory}/observations/records/by-source-key`)).filter((name) => name.endsWith(".json")).length, 1);
+    assert.equal(fs.readdirSync(path.join(root, `${layout.directory}/observations/receipts`)).length, 0);
+    assert.throws(() => artifacts(root, storage), { code: "OBSERVATION_RECEIPT_MISSING" });
   });
   await t.test("derived failure preserves the comparison descriptor without reporting success", async (t) => {
-    const root = fixture(t); const { comparisonInput } = await pair(root); breakPointer(root);
-    await failFinalPublish(t, root, DERIVED_OBSERVATION_DIRECTORY, "DerivedObservationRecord", () => compareMetricObservations(comparisonInput));
-    const stored = artifacts(root);
+    const { root, storage, layout } = fixture(t); const { comparisonInput } = await pair(root); breakPointer(root, layout);
+    await failFinalPublish(t, root, layout, `${layout.directory}/observations/derived`, "DerivedObservationRecord", () => compareMetricObservations(comparisonInput));
+    const stored = artifacts(root, storage);
     assert.equal(stored.descriptors.filter((descriptor) => descriptor.typeKey.endsWith(".comparison")).length, 1);
     assert.equal(stored.derivedObservations.length, 0);
     assert.equal(stored.observations.length, 2);
@@ -284,7 +285,7 @@ test("final primary publish and multi-artifact partial commits remain failures",
 });
 
 test("projection wrapper emits only bounded codes and hides messages, paths and stacks", { concurrency: false }, async (t) => {
-  const root = fixture(t);
+  const { root, storage, layout } = fixture(t);
   await defineMetric({ root, ...definition });
   const original = LocalJsonWorldModelStoreAdapter.prototype.readPointer;
   const cases = [

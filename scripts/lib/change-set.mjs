@@ -1,7 +1,8 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { inspectProject, SCHEMA_VERSION } from "./head-core.mjs";
+import { familyFormatForOriginal, formatForVerifiedOwner, relativeProjectArtifact } from "./project-storage-format.mjs";
+import { inspectProject, SCHEMA_VERSION } from "./lode-core.mjs";
 import { readContextCapsule } from "./context-compiler.mjs";
 import { readLineageArtifact } from "./execution-lineage.mjs";
 import {
@@ -56,13 +57,13 @@ function normalizedIds(values, label) {
   return [...new Set(values)].sort();
 }
 
-function safeFile(projectRoot, relative, id, prefix) {
+function safeFile(projectRoot, relative, id, prefix, storage) {
   if (!new RegExp(`^${prefix}-[a-f0-9]{24}$`).test(id || "")) fail(`Invalid ${prefix} identity.`, "INVALID_CHANGE_SET_ID");
-  return path.join(projectRoot, ...relative.split("/"), `${id}.json`);
+  return path.join(projectRoot, ...relativeProjectArtifact(storage, ...relative.split("/").slice(1)).split("/"), `${id}.json`);
 }
 
-function stateFile(projectRoot) {
-  return path.join(projectRoot, ...STATE_RELATIVE_PATH.split("/"));
+function stateFile(projectRoot, storage) {
+  return path.join(projectRoot, ...relativeProjectArtifact(storage, ...STATE_RELATIVE_PATH.split("/").slice(1)).split("/"));
 }
 
 function atomicWrite(file, content) {
@@ -93,11 +94,11 @@ function readJson(file, label) {
   catch (error) { fail(`${label} is invalid JSON: ${error.message}`, "INVALID_CHANGE_SET_ARTIFACT"); }
 }
 
-function stateArtifact(project, body) {
+function stateArtifact(project, body, storage) {
   const payload = {
     schemaVersion: SCHEMA_VERSION,
     kind: "ChangeSetStatePointer",
-    protocol: { name: "head-agent-core-change-set-state", version: CHANGE_SET_VERSION },
+    protocol: { name: formatForVerifiedOwner(storage).protocol("head-agent-core-change-set-state"), version: CHANGE_SET_VERSION },
     projectId: project.projectId,
     sessionId: body.sessionId,
     phase: body.phase,
@@ -113,8 +114,8 @@ function stateArtifact(project, body) {
   return { ...payload, stateId: `change-set-state-${stateHash.slice(0, 24)}`, stateHash };
 }
 
-function verifyState(document, project) {
-  if (!document || document.kind !== "ChangeSetStatePointer" || document.protocol?.version !== CHANGE_SET_VERSION
+function verifyState(document, project, storage) {
+  if (!document || document.kind !== "ChangeSetStatePointer" || !familyFormatForOriginal("head-agent-core-change-set-state", document, storage) || document.protocol?.version !== CHANGE_SET_VERSION
     || document.projectId !== project.projectId || document.sessionId !== project.sessionId
     || !["awaiting-review", "awaiting-evidence", "reviewed", "rejected"].includes(document.phase)) {
     fail("ChangeSet state pointer is invalid.", "INVALID_CHANGE_SET_STATE");
@@ -128,9 +129,9 @@ function verifyState(document, project) {
   return document;
 }
 
-function writeState(projectRoot, project, body) {
-  const state = stateArtifact({ ...project, sessionId: body.sessionId }, body);
-  atomicWrite(stateFile(projectRoot), json(state));
+function writeState(projectRoot, project, body, storage) {
+  const state = stateArtifact({ ...project, sessionId: body.sessionId }, body, storage);
+  atomicWrite(stateFile(projectRoot, storage), json(state));
   return state;
 }
 
@@ -181,7 +182,7 @@ function currentProductRevision(graph, logicalEntityId) {
   return edge?.to || "";
 }
 
-function impactCandidateSet(changeSet, afterSnapshot) {
+function impactCandidateSet(changeSet, afterSnapshot, storage) {
   const graph = afterSnapshot.temporalProvenanceGraph;
   const changeByLogical = new Map();
   for (const change of changeSet.changes) {
@@ -225,7 +226,7 @@ function impactCandidateSet(changeSet, afterSnapshot) {
     const payload = {
       schemaVersion: SCHEMA_VERSION,
       kind: "ChangeImpactCandidate",
-      protocol: { name: "head-agent-core-change-impact-candidates", version: CHANGE_SET_VERSION },
+      protocol: { name: formatForVerifiedOwner(storage).protocol("head-agent-core-change-impact-candidates"), version: CHANGE_SET_VERSION },
       changeSetId: changeSet.changeSetId,
       relationshipType: "IMPACTS",
       target: group.target,
@@ -290,7 +291,7 @@ function impactCandidateSet(changeSet, afterSnapshot) {
   const payload = {
     schemaVersion: SCHEMA_VERSION,
     kind: "ChangeImpactCandidateSet",
-    protocol: { name: "head-agent-core-change-impact-candidates", version: CHANGE_SET_VERSION },
+    protocol: { name: formatForVerifiedOwner(storage).protocol("head-agent-core-change-impact-candidates"), version: CHANGE_SET_VERSION },
     projectId: changeSet.projectId,
     sessionId: changeSet.sessionId,
     changeSetId: changeSet.changeSetId,
@@ -304,7 +305,7 @@ function impactCandidateSet(changeSet, afterSnapshot) {
     promotionAuthority: false,
   };
   const hash = changeSetDigest(changeSetCanonicalJson(payload));
-  return verifyChangeImpactCandidateSet({ ...payload, candidateSetId: `change-impact-candidates-${hash.slice(0, 24)}`, candidateSetHash: hash }, changeSet, changeSet.projectId);
+  return verifyChangeImpactCandidateSet({ ...payload, candidateSetId: `change-impact-candidates-${hash.slice(0, 24)}`, candidateSetHash: hash }, changeSet, changeSet.projectId, storage);
 }
 
 function lineageForChangeSet(projectRoot, resultPacketId, reviewDecisionId) {
@@ -320,8 +321,8 @@ function lineageForChangeSet(projectRoot, resultPacketId, reviewDecisionId) {
   return { result, review, contract, capsule };
 }
 
-async function rebuildProjection({ projectRoot, projectId, sourceWorld, additionalChangeSets = [], additionalCandidateSets = [], additionalReviewDecisions = [], additionalVcsEvidence = [] }) {
-  const projection = loadChangeSetProjection({ projectRoot, projectId, additionalChangeSets, additionalCandidateSets, additionalReviewDecisions, additionalVcsEvidence });
+async function rebuildProjection({ projectRoot, projectId, sourceWorld, additionalChangeSets = [], additionalCandidateSets = [], additionalReviewDecisions = [], additionalVcsEvidence = [] }, storage) {
+  const projection = loadChangeSetProjection({ storage, projectRoot, projectId, additionalChangeSets, additionalCandidateSets, additionalReviewDecisions, additionalVcsEvidence });
   const built = await buildWorldModel({
     root: projectRoot,
     persist: true,
@@ -334,45 +335,49 @@ async function rebuildProjection({ projectRoot, projectId, sourceWorld, addition
 
 export function readChangeSet({ root = ".", changeSetId } = {}) {
   const inspected = readyProject(root, "ChangeSet inspection");
-  const file = safeFile(inspected.project.projectRoot, CHANGE_SET_DIRECTORY, changeSetId, "change-set");
+  const storage = inspected.storage;
+  const file = safeFile(inspected.project.projectRoot, CHANGE_SET_DIRECTORY, changeSetId, "change-set", storage);
   if (!fs.existsSync(file)) fail(`ChangeSet not found: ${changeSetId}`, "CHANGE_SET_NOT_FOUND");
-  return { status: "verified", file, changeSet: verifyChangeSet(readJson(file, "ChangeSet"), inspected.project.projectId) };
+  return { status: "verified", file, changeSet: verifyChangeSet(readJson(file, "ChangeSet"), inspected.project.projectId, storage) };
 }
 
 export function readChangeImpactCandidateSet({ root = ".", candidateSetId } = {}) {
   const inspected = readyProject(root, "Change impact candidate inspection");
-  const file = safeFile(inspected.project.projectRoot, CHANGE_IMPACT_CANDIDATE_DIRECTORY, candidateSetId, "change-impact-candidates");
+  const storage = inspected.storage;
+  const file = safeFile(inspected.project.projectRoot, CHANGE_IMPACT_CANDIDATE_DIRECTORY, candidateSetId, "change-impact-candidates", storage);
   if (!fs.existsSync(file)) fail(`Change impact candidate set not found: ${candidateSetId}`, "CHANGE_IMPACT_CANDIDATE_SET_NOT_FOUND");
   const candidateSet = readJson(file, "Change impact candidate set");
   const changeSet = readChangeSet({ root: inspected.project.projectRoot, changeSetId: candidateSet.changeSetId }).changeSet;
-  return { status: "verified", file, candidateSet: verifyChangeImpactCandidateSet(candidateSet, changeSet, inspected.project.projectId) };
+  return { status: "verified", file, candidateSet: verifyChangeImpactCandidateSet(candidateSet, changeSet, inspected.project.projectId, storage) };
 }
 
 export function readChangeImpactReviewDecision({ root = ".", reviewDecisionId } = {}) {
   const inspected = readyProject(root, "Change impact review inspection");
-  const file = safeFile(inspected.project.projectRoot, CHANGE_IMPACT_REVIEW_DIRECTORY, reviewDecisionId, "change-impact-review-decision");
+  const storage = inspected.storage;
+  const file = safeFile(inspected.project.projectRoot, CHANGE_IMPACT_REVIEW_DIRECTORY, reviewDecisionId, "change-impact-review-decision", storage);
   if (!fs.existsSync(file)) fail(`Change impact ReviewDecision not found: ${reviewDecisionId}`, "CHANGE_IMPACT_REVIEW_NOT_FOUND");
   const review = readJson(file, "Change impact ReviewDecision");
   const candidateSet = readChangeImpactCandidateSet({ root: inspected.project.projectRoot, candidateSetId: review.candidateSetId }).candidateSet;
-  const reviewDecision = verifyChangeImpactReviewDecision(review, candidateSet, inspected.project.projectId);
+  const reviewDecision = verifyChangeImpactReviewDecision(review, candidateSet, inspected.project.projectId, storage);
   if (reviewDecision.reviewDecisionId !== reviewDecisionId) fail("Change impact ReviewDecision filename does not match its exact identity.", "CHANGE_IMPACT_REVIEW_IDENTITY_MISMATCH");
   return { status: "verified", file, reviewDecision };
 }
 
 export function readVcsEvidence({ root = ".", vcsEvidenceId } = {}) {
   const inspected = readyProject(root, "VCS evidence inspection");
-  const file = safeFile(inspected.project.projectRoot, VCS_EVIDENCE_DIRECTORY, vcsEvidenceId, "vcs-evidence");
+  const storage = inspected.storage;
+  const file = safeFile(inspected.project.projectRoot, VCS_EVIDENCE_DIRECTORY, vcsEvidenceId, "vcs-evidence", storage);
   if (!fs.existsSync(file)) fail(`VCS evidence not found: ${vcsEvidenceId}`, "VCS_EVIDENCE_NOT_FOUND");
   const vcsEvidence = readJson(file, "VCS evidence");
   const changeSet = readChangeSet({ root: inspected.project.projectRoot, changeSetId: vcsEvidence.changeSetId }).changeSet;
-  return { status: "verified", file, vcsEvidence: verifyVcsEvidence(vcsEvidence, changeSet, inspected.project.projectId) };
+  return { status: "verified", file, vcsEvidence: verifyVcsEvidence(vcsEvidence, changeSet, inspected.project.projectId, storage) };
 }
 
-function gitCommitObservation(commit) {
+function gitCommitObservation(commit, storage) {
   const payload = {
     schemaVersion: SCHEMA_VERSION,
     kind: "GitCommitObservation",
-    protocol: { name: "head-agent-core-git-commit-observation", version: VCS_EVIDENCE_VERSION },
+    protocol: { name: formatForVerifiedOwner(storage).protocol("head-agent-core-git-commit-observation"), version: VCS_EVIDENCE_VERSION },
     vcsKind: "git",
     objectId: commit.commit,
     parents: [...commit.parents].sort(),
@@ -390,21 +395,21 @@ function gitCommitObservation(commit) {
     promotionAuthority: false,
   };
   const hash = changeSetDigest(changeSetCanonicalJson(payload));
-  return verifyGitCommitObservation({ ...payload, gitCommitObservationId: `git-commit-observation-${hash.slice(0, 24)}`, gitCommitObservationHash: hash });
+  return verifyGitCommitObservation({ ...payload, gitCommitObservationId: `git-commit-observation-${hash.slice(0, 24)}`, gitCommitObservationHash: hash }, storage);
 }
 
-function buildVcsEvidence(changeSet, history, commitIds, rationale) {
+function buildVcsEvidence(changeSet, history, commitIds, rationale, storage) {
   const ids = [...new Set(normalizedIds(commitIds, "commitIds").map((item) => item.toLocaleLowerCase()))].sort();
   if (!ids.length || ids.some((item) => !/^[a-f0-9]{40,64}$/.test(item))) fail("commitIds must contain one or more Git object ids.", "INVALID_VCS_EVIDENCE_INPUT");
   const commits = new Map(history.commits.map((commit) => [commit.commit, commit]));
   const missing = ids.filter((id) => !commits.has(id));
   if (missing.length) fail(`Selected Git commits are absent from the verified history: ${missing.join(", ")}`, "VCS_EVIDENCE_COMMIT_NOT_FOUND");
-  const commitObservations = ids.map((id) => gitCommitObservation(commits.get(id)))
+  const commitObservations = ids.map((id) => gitCommitObservation(commits.get(id), storage))
     .sort((left, right) => left.gitCommitObservationId.localeCompare(right.gitCommitObservationId));
   const payload = {
     schemaVersion: SCHEMA_VERSION,
     kind: "VcsEvidence",
-    protocol: { name: "head-agent-core-vcs-evidence", version: VCS_EVIDENCE_VERSION },
+    protocol: { name: formatForVerifiedOwner(storage).protocol("head-agent-core-vcs-evidence"), version: VCS_EVIDENCE_VERSION },
     projectId: changeSet.projectId,
     sessionId: changeSet.sessionId,
     changeSetId: changeSet.changeSetId,
@@ -424,11 +429,12 @@ function buildVcsEvidence(changeSet, history, commitIds, rationale) {
     promotionAuthority: false,
   };
   const hash = changeSetDigest(changeSetCanonicalJson(payload));
-  return verifyVcsEvidence({ ...payload, vcsEvidenceId: `vcs-evidence-${hash.slice(0, 24)}`, vcsEvidenceHash: hash }, changeSet, changeSet.projectId);
+  return verifyVcsEvidence({ ...payload, vcsEvidenceId: `vcs-evidence-${hash.slice(0, 24)}`, vcsEvidenceHash: hash }, changeSet, changeSet.projectId, storage);
 }
 
 export async function attachVcsEvidence({ root = ".", changeSetId, commitIds = [], rationale } = {}) {
   const inspected = readyProject(root, "VCS evidence attachment");
+  const storage = inspected.storage;
   if (inspected.state.activeRunId || inspected.state.pendingReview) {
     fail("VCS evidence attachment cannot replace the current graph while a Run is active or awaiting review.", "VCS_EVIDENCE_RUN_CONFLICT");
   }
@@ -441,17 +447,17 @@ export async function attachVcsEvidence({ root = ".", changeSetId, commitIds = [
   if (!history || history.status !== "available" || history.coverage !== "all-reachable-commits") {
     fail(`Verified Git history is unavailable (${history?.reasonCode || history?.status || "missing"}).`, "VCS_EVIDENCE_UNAVAILABLE");
   }
-  const vcsEvidence = buildVcsEvidence(changeSet, history, commitIds, rationale);
+  const vcsEvidence = buildVcsEvidence(changeSet, history, commitIds, rationale, storage);
   const projected = await rebuildProjection({
     projectRoot,
     projectId: inspected.project.projectId,
     sourceWorld: current.snapshot,
     additionalVcsEvidence: [vcsEvidence],
-  });
-  persistImmutable(safeFile(projectRoot, VCS_EVIDENCE_DIRECTORY, vcsEvidence.vcsEvidenceId, "vcs-evidence"), vcsEvidence, "VCS evidence");
+  }, storage);
+  persistImmutable(safeFile(projectRoot, VCS_EVIDENCE_DIRECTORY, vcsEvidence.vcsEvidenceId, "vcs-evidence", storage), vcsEvidence, "VCS evidence");
   let state = null;
-  if (fs.existsSync(stateFile(projectRoot))) {
-    const previous = verifyState(readJson(stateFile(projectRoot), "ChangeSet state pointer"), { ...inspected.project, sessionId: inspected.state.sessionId });
+  if (fs.existsSync(stateFile(projectRoot, storage))) {
+    const previous = verifyState(readJson(stateFile(projectRoot, storage), "ChangeSet state pointer"), { ...inspected.project, sessionId: inspected.state.sessionId }, storage);
     const vcsEvidenceIds = projected.changeSetProjectionInput.vcsEvidence
       .filter((item) => item.changeSetId === previous.changeSetId).map((item) => item.vcsEvidenceId).sort();
     state = writeState(projectRoot, inspected.project, {
@@ -464,7 +470,7 @@ export async function attachVcsEvidence({ root = ".", changeSetId, commitIds = [
       graphSnapshotId: projected.snapshot.temporalProvenanceGraph.graphSnapshotId,
       sourceSnapshotId: projected.snapshot.temporalProvenanceGraph.sourceSnapshotId,
       vcsEvidenceIds,
-    });
+    }, storage);
   }
   const unchanged = changeSet.changeSetId === originalIdentity.changeSetId && changeSet.changeSetHash === originalIdentity.changeSetHash;
   if (!unchanged) fail("VCS evidence attachment changed the provider-neutral ChangeSet identity.", "CHANGE_SET_IDENTITY_DRIFT");
@@ -480,11 +486,12 @@ export async function attachVcsEvidence({ root = ".", changeSetId, commitIds = [
 
 export async function recordChangeSet({ root = ".", resultPacketId, reviewDecisionId, beforeWorldModelId = "", parentChangeSetIds = [] } = {}) {
   const inspected = readyProject(root, "ChangeSet recording");
+  const storage = inspected.storage;
   if (inspected.state.activeRunId || inspected.state.pendingReview) fail("ChangeSet recording requires the execution Run and Fresh HEAD review to be complete.", "CHANGE_SET_RUN_CONFLICT");
   const projectRoot = inspected.project.projectRoot;
-  const existingStateFile = stateFile(projectRoot);
+  const existingStateFile = stateFile(projectRoot, storage);
   if (fs.existsSync(existingStateFile)) {
-    const currentState = verifyState(readJson(existingStateFile, "ChangeSet state pointer"), { ...inspected.project, sessionId: inspected.state.sessionId });
+    const currentState = verifyState(readJson(existingStateFile, "ChangeSet state pointer"), { ...inspected.project, sessionId: inspected.state.sessionId }, storage);
     if (currentState.phase === "awaiting-review") fail("The current Change impact candidate set requires review before another ChangeSet is recorded.", "CHANGE_IMPACT_REVIEW_REQUIRED");
   }
   const lineage = lineageForChangeSet(projectRoot, resultPacketId, reviewDecisionId);
@@ -506,7 +513,7 @@ export async function recordChangeSet({ root = ".", resultPacketId, reviewDecisi
   const payload = {
     schemaVersion: SCHEMA_VERSION,
     kind: "ChangeSet",
-    protocol: { name: "head-agent-core-change-set", version: CHANGE_SET_VERSION },
+    protocol: { name: formatForVerifiedOwner(storage).protocol("head-agent-core-change-set"), version: CHANGE_SET_VERSION },
     projectId: inspected.project.projectId,
     sessionId: inspected.state.sessionId,
     parentChangeSetIds: parents,
@@ -523,11 +530,11 @@ export async function recordChangeSet({ root = ".", resultPacketId, reviewDecisi
     promotionAuthority: false,
   };
   const hash = changeSetDigest(changeSetCanonicalJson(payload));
-  const changeSet = verifyChangeSet({ ...payload, changeSetId: `change-set-${hash.slice(0, 24)}`, changeSetHash: hash }, inspected.project.projectId);
-  const candidateSet = impactCandidateSet(changeSet, after);
-  const projected = await rebuildProjection({ projectRoot, projectId: inspected.project.projectId, sourceWorld: after, additionalChangeSets: [changeSet], additionalCandidateSets: [candidateSet] });
-  persistImmutable(safeFile(projectRoot, CHANGE_SET_DIRECTORY, changeSet.changeSetId, "change-set"), changeSet, "ChangeSet");
-  persistImmutable(safeFile(projectRoot, CHANGE_IMPACT_CANDIDATE_DIRECTORY, candidateSet.candidateSetId, "change-impact-candidates"), candidateSet, "Change impact candidate set");
+  const changeSet = verifyChangeSet({ ...payload, changeSetId: `change-set-${hash.slice(0, 24)}`, changeSetHash: hash }, inspected.project.projectId, storage);
+  const candidateSet = impactCandidateSet(changeSet, after, storage);
+  const projected = await rebuildProjection({ projectRoot, projectId: inspected.project.projectId, sourceWorld: after, additionalChangeSets: [changeSet], additionalCandidateSets: [candidateSet] }, storage);
+  persistImmutable(safeFile(projectRoot, CHANGE_SET_DIRECTORY, changeSet.changeSetId, "change-set", storage), changeSet, "ChangeSet");
+  persistImmutable(safeFile(projectRoot, CHANGE_IMPACT_CANDIDATE_DIRECTORY, candidateSet.candidateSetId, "change-impact-candidates", storage), candidateSet, "Change impact candidate set");
   const phase = candidateSet.candidates.length ? "awaiting-review" : "awaiting-evidence";
   const state = writeState(projectRoot, inspected.project, {
     sessionId: inspected.state.sessionId,
@@ -539,11 +546,11 @@ export async function recordChangeSet({ root = ".", resultPacketId, reviewDecisi
     graphSnapshotId: projected.snapshot.temporalProvenanceGraph.graphSnapshotId,
     sourceSnapshotId: projected.snapshot.temporalProvenanceGraph.sourceSnapshotId,
     vcsEvidenceIds: [],
-  });
+  }, storage);
   return { status: phase === "awaiting-review" ? "awaiting_change_impact_review" : "awaiting_change_impact_evidence", state, changeSet, candidateSet, worldModel: { worldModelId: projected.snapshot.worldModelId, ...snapshotReference(projected.snapshot) }, authority: "impact-candidates-have-no-promotion-authority" };
 }
 
-function buildImpactReview(candidateSet, disposition, acceptedCandidateIds, rationale) {
+function buildImpactReview(candidateSet, disposition, acceptedCandidateIds, rationale, storage) {
   const allIds = candidateSet.candidates.map((item) => item.candidateId);
   const selected = disposition === "accept-all" ? allIds : disposition === "reject" ? [] : normalizedIds(acceptedCandidateIds, "acceptedCandidateIds");
   const known = new Set(allIds);
@@ -553,7 +560,7 @@ function buildImpactReview(candidateSet, disposition, acceptedCandidateIds, rati
   const payload = {
     schemaVersion: SCHEMA_VERSION,
     kind: "ReviewDecision",
-    protocol: { name: "head-agent-core-change-impact-review", version: CHANGE_SET_VERSION },
+    protocol: { name: formatForVerifiedOwner(storage).protocol("head-agent-core-change-impact-review"), version: CHANGE_SET_VERSION },
     decisionScope: "change-impact",
     projectId: candidateSet.projectId,
     sessionId: candidateSet.sessionId,
@@ -568,14 +575,14 @@ function buildImpactReview(candidateSet, disposition, acceptedCandidateIds, rati
     promotionAuthority: disposition.startsWith("accept"),
   };
   const hash = changeSetDigest(changeSetCanonicalJson(payload));
-  return verifyChangeImpactReviewDecision({ ...payload, reviewDecisionId: `change-impact-review-decision-${hash.slice(0, 24)}`, reviewDecisionHash: hash }, candidateSet, candidateSet.projectId);
+  return verifyChangeImpactReviewDecision({ ...payload, reviewDecisionId: `change-impact-review-decision-${hash.slice(0, 24)}`, reviewDecisionHash: hash }, candidateSet, candidateSet.projectId, storage);
 }
 
-function recordedImpactReview({ projectRoot, projectId, candidateSet }) {
+function recordedImpactReview({ projectRoot, projectId, candidateSet }, storage) {
   // Only the immutable P1 artifact directory may establish a saved review.
   // A rebuildable Graph node is useful for equality checks, never authority.
-  const projection = loadChangeSetProjection({ projectRoot, projectId });
-  const directory = path.join(projectRoot, ...CHANGE_IMPACT_REVIEW_DIRECTORY.split("/"));
+  const projection = loadChangeSetProjection({ storage, projectRoot, projectId });
+  const directory = path.join(projectRoot, ...relativeProjectArtifact(storage, ...CHANGE_IMPACT_REVIEW_DIRECTORY.split("/").slice(1)).split("/"));
   const files = fs.existsSync(directory)
     ? fs.readdirSync(directory, { withFileTypes: true }).filter((entry) => entry.isFile() && entry.name.endsWith(".json")).map((entry) => entry.name)
     : [];
@@ -611,8 +618,8 @@ function currentCandidateEvidence(candidateSet, state, world) {
     && world.snapshot.temporalProvenanceGraph.sourceSnapshotId === candidateSet.afterSourceSnapshotId;
 }
 
-function exactRequestCanRepairOrphanProjection({ projectRoot, projectId, candidateSet, world, review }) {
-  const expectedProjection = loadChangeSetProjection({ projectRoot, projectId, additionalReviewDecisions: [review] });
+function exactRequestCanRepairOrphanProjection({ projectRoot, projectId, candidateSet, world, review }, storage) {
+  const expectedProjection = loadChangeSetProjection({ storage, projectRoot, projectId, additionalReviewDecisions: [review] });
   if (world.status !== "stale"
     || world.snapshot.temporalProvenanceGraph.sourceSnapshotId !== candidateSet.afterSourceSnapshotId
     || world.snapshot.changeSetProjection?.projectionInputHash !== expectedProjection.projectionInputHash
@@ -624,9 +631,9 @@ function exactRequestCanRepairOrphanProjection({ projectRoot, projectId, candida
     || (Array.isArray(value) ? value.length === 0 : value !== true));
 }
 
-function completeImpactReview({ projectRoot, inspected, state, review, snapshot, worldStatus = "current", reusedReviewDecision = false, updatePointer = true }) {
+function completeImpactReview({ projectRoot, inspected, state, review, snapshot, worldStatus = "current", reusedReviewDecision = false, updatePointer = true }, storage) {
   const nextPhase = review.disposition === "reject" ? "rejected" : "reviewed";
-  const projection = loadChangeSetProjection({ projectRoot, projectId: inspected.project.projectId });
+  const projection = loadChangeSetProjection({ storage, projectRoot, projectId: inspected.project.projectId });
   const nextState = updatePointer ? writeState(projectRoot, inspected.project, {
     sessionId: inspected.state.sessionId,
     phase: nextPhase,
@@ -637,7 +644,7 @@ function completeImpactReview({ projectRoot, inspected, state, review, snapshot,
     graphSnapshotId: snapshot.temporalProvenanceGraph.graphSnapshotId,
     sourceSnapshotId: snapshot.temporalProvenanceGraph.sourceSnapshotId,
     vcsEvidenceIds: projection.vcsEvidence.filter((item) => item.changeSetId === state.changeSetId).map((item) => item.vcsEvidenceId).sort(),
-  }) : state;
+  }, storage) : state;
   return {
     status: nextPhase === "reviewed" ? "change_impacts_reviewed" : "change_impacts_rejected",
     state: nextState,
@@ -654,17 +661,18 @@ export async function reviewChangeImpact(options = {}) {
 
 async function reviewChangeImpactLocked({ root = ".", candidateSetId, disposition, acceptedCandidateIds = [], rationale } = {}) {
   const inspected = readyProject(root, "Change impact review");
+  const storage = inspected.storage;
   if (inspected.state.activeRunId || inspected.state.pendingReview) fail("Change impact review cannot advance while a Run is active or awaiting review.", "CHANGE_SET_RUN_CONFLICT");
   const projectRoot = inspected.project.projectRoot;
-  if (!fs.existsSync(stateFile(projectRoot))) fail("No ChangeSet is awaiting impact review.", "CHANGE_SET_NOT_STARTED");
-  const state = verifyState(readJson(stateFile(projectRoot), "ChangeSet state pointer"), { ...inspected.project, sessionId: inspected.state.sessionId });
+  if (!fs.existsSync(stateFile(projectRoot, storage))) fail("No ChangeSet is awaiting impact review.", "CHANGE_SET_NOT_STARTED");
+  const state = verifyState(readJson(stateFile(projectRoot, storage), "ChangeSet state pointer"), { ...inspected.project, sessionId: inspected.state.sessionId }, storage);
   if (!["awaiting-review", "reviewed", "rejected"].includes(state.phase) || state.candidateSetId !== candidateSetId) fail("Change impact review references a stale or non-reviewable candidate set.", "STALE_CHANGE_IMPACT_CANDIDATE_SET");
   const candidateSet = readChangeImpactCandidateSet({ root: projectRoot, candidateSetId }).candidateSet;
   if (candidateSet.sessionId !== state.sessionId || candidateSet.changeSetId !== state.changeSetId) fail("Change impact candidate set belongs to different ChangeSet lineage.", "CHANGE_IMPACT_CANDIDATE_SET_IDENTITY_MISMATCH");
   const normalizedDisposition = requiredText(disposition, "Review disposition").toLocaleLowerCase();
   if (!["accept-all", "accept-selection", "reject"].includes(normalizedDisposition)) fail("Change impact disposition must be accept-all, accept-selection, or reject.", "INVALID_CHANGE_IMPACT_REVIEW_DISPOSITION");
-  const review = buildImpactReview(candidateSet, normalizedDisposition, acceptedCandidateIds, rationale);
-  const recordedReview = recordedImpactReview({ projectRoot, projectId: inspected.project.projectId, candidateSet });
+  const review = buildImpactReview(candidateSet, normalizedDisposition, acceptedCandidateIds, rationale, storage);
+  const recordedReview = recordedImpactReview({ projectRoot, projectId: inspected.project.projectId, candidateSet }, storage);
   const pointerPending = state.phase === "awaiting-review";
   if (!pointerPending && (!recordedReview || state.reviewDecisionId !== recordedReview.reviewDecisionId
     || state.phase !== (recordedReview.disposition === "reject" ? "rejected" : "reviewed"))) {
@@ -679,17 +687,17 @@ async function reviewChangeImpactLocked({ root = ".", candidateSetId, dispositio
     const projectionState = impactReviewProjectionState(current.snapshot, recordedReview);
     if (!projectionState.exact && !projectionState.absent) fail("The World projection does not match the exact saved Change impact decision.", "CHANGE_IMPACT_REVIEW_PROJECTION_MISMATCH");
     if (projectionState.absent) {
-      await rebuildProjection({ projectRoot, projectId: inspected.project.projectId, sourceWorld: current.snapshot });
+      await rebuildProjection({ projectRoot, projectId: inspected.project.projectId, sourceWorld: current.snapshot }, storage);
       current = inspectWorldModel({ root: projectRoot });
       if (!impactReviewProjectionState(current.snapshot, recordedReview).exact) fail("The saved Change impact decision could not be verified in the rebuilt World projection.", "CHANGE_IMPACT_REVIEW_PROJECTION_MISMATCH");
     }
     return completeImpactReview({ projectRoot, inspected, state, review: recordedReview, snapshot: current.snapshot,
-      worldStatus: current.status, reusedReviewDecision: true, updatePointer: pointerPending });
+      worldStatus: current.status, reusedReviewDecision: true, updatePointer: pointerPending }, storage);
   }
   const evidenceCurrent = currentCandidateEvidence(candidateSet, state, current);
   const repairableOrphanProjection = normalizedDisposition !== "reject" && !evidenceCurrent && exactRequestCanRepairOrphanProjection({
     projectRoot, projectId: inspected.project.projectId, candidateSet, world: current, review,
-  });
+  }, storage);
   if (normalizedDisposition !== "reject" && !evidenceCurrent && !repairableOrphanProjection) {
     fail(`Repository evidence changed after impact inference. Explicitly reject the outdated candidate set ${candidateSetId}, then record a fresh ChangeSet from current evidence; stale candidates cannot be accepted.`, "CHANGE_IMPACT_SOURCE_DRIFT");
   }
@@ -700,21 +708,22 @@ async function reviewChangeImpactLocked({ root = ".", candidateSetId, dispositio
   }
   // P1 authority is durable before its rebuildable P4 projection. Exact retry
   // repairs projection/pointer boundaries without asking the user again.
-  persistImmutable(safeFile(projectRoot, CHANGE_IMPACT_REVIEW_DIRECTORY, review.reviewDecisionId, "change-impact-review-decision"), review, "Change impact ReviewDecision");
-  const projected = await rebuildProjection({ projectRoot, projectId: inspected.project.projectId, sourceWorld: current.snapshot });
-  return completeImpactReview({ projectRoot, inspected, state, review, snapshot: projected.snapshot });
+  persistImmutable(safeFile(projectRoot, CHANGE_IMPACT_REVIEW_DIRECTORY, review.reviewDecisionId, "change-impact-review-decision", storage), review, "Change impact ReviewDecision");
+  const projected = await rebuildProjection({ projectRoot, projectId: inspected.project.projectId, sourceWorld: current.snapshot }, storage);
+  return completeImpactReview({ projectRoot, inspected, state, review, snapshot: projected.snapshot }, storage);
 }
 
 export function inspectChangeSets({ root = "." } = {}) {
   const inspected = readyProject(root, "ChangeSet inspection");
-  const file = stateFile(inspected.project.projectRoot);
+  const storage = inspected.storage;
+  const file = stateFile(inspected.project.projectRoot, storage);
   if (!fs.existsSync(file)) return { status: "not_started", projectId: inspected.project.projectId, sessionId: inspected.state.sessionId, nextAction: "Record a ChangeSet after an accepted execution review and repository re-index." };
-  const state = verifyState(readJson(file, "ChangeSet state pointer"), { ...inspected.project, sessionId: inspected.state.sessionId });
+  const state = verifyState(readJson(file, "ChangeSet state pointer"), { ...inspected.project, sessionId: inspected.state.sessionId }, storage);
   const changeSet = readChangeSet({ root: inspected.project.projectRoot, changeSetId: state.changeSetId }).changeSet;
   const candidateSet = readChangeImpactCandidateSet({ root: inspected.project.projectRoot, candidateSetId: state.candidateSetId }).candidateSet;
-  const savedReview = recordedImpactReview({ projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId, candidateSet });
+  const savedReview = recordedImpactReview({ projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId, candidateSet }, storage);
   const reviewDecision = state.reviewDecisionId ? readChangeImpactReviewDecision({ root: inspected.project.projectRoot, reviewDecisionId: state.reviewDecisionId }).reviewDecision : savedReview;
-  const projection = loadChangeSetProjection({ projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId });
+  const projection = loadChangeSetProjection({ storage, projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId });
   const vcsEvidence = projection.vcsEvidence.filter((item) => item.changeSetId === changeSet.changeSetId);
   const world = inspectWorldModel({ root: inspected.project.projectRoot });
   const awaitingReview = state.phase === "awaiting-review";

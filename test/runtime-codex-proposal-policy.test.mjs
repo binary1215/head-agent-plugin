@@ -12,7 +12,7 @@ import { buildCodexFreshProposalPolicyPlan, verifyCodexFreshProposalPolicyPlan,
 const copy = value => JSON.parse(JSON.stringify(value));
 const hash = value => crypto.createHash("sha256").update(value).digest("hex");
 function fixture(t, options = {}) {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(process.env.HEAD_AGENT_TEST_TMP || os.tmpdir(), "head-proposal-policy-")));
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(process.env.LODE_AGENT_TEST_TMP || process.env.HEAD_AGENT_TEST_TMP || os.tmpdir(), "head-proposal-policy-")));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const codexHome = path.join(root, "home"); fs.mkdirSync(codexHome);
   return { root, codexHome, policy: buildCodexFreshProposalPolicyPlan({ executablePath: fs.realpathSync(process.execPath), codexHome,

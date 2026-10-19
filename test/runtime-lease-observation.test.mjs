@@ -5,7 +5,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { initializeProject, inspectProject } from "../scripts/lib/head-core.mjs";
+import { initializeProject, inspectProject } from "../scripts/lib/lode-core.mjs";
+import { formatForVerifiedOwner } from "../scripts/lib/project-storage-format.mjs";
 import { buildRuntimeVersionEvidence } from "../scripts/lib/runtime-machine-execution.mjs";
 import { buildRuntimeProjectBinding, buildRuntimeProtocolEvidence } from "../scripts/lib/runtime-protocol-evidence.mjs";
 import { buildRuntimeInvocationAuthorization } from "../scripts/lib/runtime-invocation-lifecycle.mjs";
@@ -33,7 +34,7 @@ function syntheticCapabilitySpawn(_command, args) {
 }
 
 async function fixture(t) {
-  const parent = fs.realpathSync(process.env.HEAD_AGENT_TEST_TMP || os.tmpdir());
+  const parent = fs.realpathSync(process.env.LODE_AGENT_TEST_TMP || process.env.HEAD_AGENT_TEST_TMP || os.tmpdir());
   const container = fs.mkdtempSync(path.join(parent, "head-lease-observation-"));
   const [root, operational, bin] = ["project", "operational", "schema-capability"].map(name => {
     const directory = path.join(container, name); fs.mkdirSync(directory); return directory;
@@ -48,6 +49,10 @@ async function fixture(t) {
     fs.rmSync(container, { recursive: true, force: true });
   });
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const storage = inspectProject(root).storage;
+  assert.equal(storage.directory, ".lode");
+  assert.equal(fs.existsSync(path.resolve(root, ".lode/project.json")), true);
+  assert.equal(fs.existsSync(path.resolve(root, ".head/project.json")), false);
   const executable = path.join(bin, process.platform === "win32" ? "codex.exe" : "codex");
   fs.writeFileSync(executable, "Synthetic capability only; never executed\n");
   if (process.platform !== "win32") fs.chmodSync(executable, 0o755);
@@ -55,14 +60,14 @@ async function fixture(t) {
   const versionEvidence = await buildRuntimeVersionEvidence({ runtimes: ["codex"], environment, spawnImplementation: syntheticCapabilitySpawn });
   const protocolEvidence = await buildRuntimeProtocolEvidence({ runtimes: ["codex"], environment, versionEvidence, spawnImplementation: syntheticCapabilitySpawn });
   const inspected = inspectProject(root);
-  const projectBinding = buildRuntimeProjectBinding({ projectId: inspected.project.projectId, headSessionId: inspected.state.sessionId,
+  const projectBinding = buildRuntimeProjectBinding({ storage, projectId: inspected.project.projectId, headSessionId: inspected.state.sessionId,
     projectRoot: root, projectStatus: "ready", versionEvidence, protocolEvidence });
   const authorization = buildRuntimeInvocationAuthorization({ root, runtime: "codex", protocolEvidence, projectBinding,
     scope: { kind: "session", request: "Observe one synthetic lease without changing recovery direction" } }).authorization;
-  const input = { projectRoot: root, projectId: authorization.projectId, authorizationId: authorization.authorizationId };
+  const input = { projectRoot: root, projectId: authorization.projectId, authorizationId: authorization.authorizationId, storage };
   const leaseInput = { projectRoot: root, authorization, ownerFenceDigest };
   const lock = path.join(operational, "runtime-execution-leases", authorization.projectId, authorization.authorizationId, "owner.lock");
-  return { root, container, operational, authorization, input, leaseInput, lock, ownerFile: path.join(lock, "owner.json") };
+  return { storage, root, container, operational, authorization, input, leaseInput, lock, ownerFile: path.join(lock, "owner.json") };
 }
 
 function snapshot(root) {
@@ -176,7 +181,7 @@ test("lease inspection preserves durable digest and released-owner contradiction
   const f = await fixture(t);
   let owner;
   await withRuntimeExecutionLease(f.leaseInput, async ({ lease }) => { owner = lease; });
-  const directory = path.join(f.root, ".head/runtime/execution-leases", f.authorization.authorizationId);
+  const directory = path.join(f.root, f.storage.directory, "runtime/execution-leases", f.authorization.authorizationId);
   for (const [name, mutate, code] of [
     ["consumption.json", document => ({ ...document, ownerFenceDigest: "0".repeat(64) }), "RUNTIME_EXECUTION_LEASE_CONSUMPTION_DIGEST_MISMATCH"],
     ["release.json", document => ({ ...document, operationStatus: "failed" }), "RUNTIME_EXECUTION_LEASE_RELEASE_DIGEST_MISMATCH"],
@@ -210,7 +215,7 @@ test("stable incomplete locks cannot be acquired or verified and invalid owner e
     withOwner("{", "INVALID_RUNTIME_EXECUTION_LEASE"); // Partial publication cannot be distinguished from corrupt JSON.
     withOwner("{}", "INVALID_RUNTIME_EXECUTION_LEASE");
     withOwner(JSON.stringify({ ...owner, pid: 0 }), "INVALID_RUNTIME_EXECUTION_LEASE_OWNER");
-    withOwner(JSON.stringify({ ...owner, projectId: `head-${"0".repeat(20)}` }), "RUNTIME_EXECUTION_LEASE_PROJECT_MISMATCH");
+    withOwner(JSON.stringify({ ...owner, projectId: `${formatForVerifiedOwner(f.storage).projectPrefix}${"0".repeat(20)}` }), "RUNTIME_EXECUTION_LEASE_PROJECT_MISMATCH");
     const unexpected = path.join(f.lock, "unexpected.json");
     fs.writeFileSync(unexpected, "{}");
     try { inspectReadOnly(f, null, "UNSAFE_RUNTIME_OPERATIONAL_STATE"); }

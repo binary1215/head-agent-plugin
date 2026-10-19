@@ -1,4 +1,5 @@
-import { inspectProject, SCHEMA_VERSION } from "./head-core.mjs";
+import { formatForVerifiedOwner, familyFormatForOriginal } from "./project-storage-format.mjs";
+import { inspectProject, SCHEMA_VERSION } from "./lode-core.mjs";
 import { OBSERVATION_PROTOCOL_VERSION, observationCanonicalJson, observationDigest } from "./observation-contract.mjs";
 import { loadObservationArtifacts } from "./observation-store.mjs";
 
@@ -11,7 +12,7 @@ function edge(type, from, to, evidenceIds) {
   return { edgeId: `observation-edge-${hash.slice(0, 24)}`, ...payload, edgeHash: hash };
 }
 
-function projectionPayload({ projectId, descriptors, observations, derivedObservations, receipts }) {
+function projectionPayload({ projectId, descriptors, observations, derivedObservations, receipts }, storage) {
   const nodes = [];
   const edges = [];
   for (const descriptor of descriptors) nodes.push({
@@ -86,7 +87,7 @@ function projectionPayload({ projectId, descriptors, observations, derivedObserv
   return {
     schemaVersion: SCHEMA_VERSION,
     kind: "ObservationStatusProjection",
-    protocol: { name: "head-agent-core-observation-projection", version: OBSERVATION_PROTOCOL_VERSION },
+    protocol: { name: formatForVerifiedOwner(storage).protocol("head-agent-core-observation-projection"), version: OBSERVATION_PROTOCOL_VERSION },
     projectId,
     descriptorIds: descriptors.map((item) => item.descriptorId),
     observationIds: observations.map((item) => item.observationId),
@@ -107,13 +108,14 @@ function projectionPayload({ projectId, descriptors, observations, derivedObserv
   };
 }
 
-export function verifyObservationProjection(document, projectId = "") {
+export function verifyObservationProjection(document, projectId = "", storage) {
+  const format = familyFormatForOriginal("head-agent-core-observation-projection", document, storage);
   if (!document || typeof document !== "object" || Array.isArray(document)) fail("ObservationStatusProjection is invalid.", "INVALID_OBSERVATION_PROJECTION");
   const payload = { ...document }; delete payload.projectionId; delete payload.projectionHash;
   const hash = observationDigest(payload);
   if (document.projectionId !== `observation-projection-${hash.slice(0, 24)}` || document.projectionHash !== hash
     || document.schemaVersion !== SCHEMA_VERSION || document.kind !== "ObservationStatusProjection"
-    || document.protocol?.name !== "head-agent-core-observation-projection" || document.protocol?.version !== OBSERVATION_PROTOCOL_VERSION
+    || !format || document.protocol?.version !== OBSERVATION_PROTOCOL_VERSION
     || projectId && document.projectId !== projectId || !Array.isArray(document.nodes) || !Array.isArray(document.edges)
     || document.graphPolicy?.automaticSemanticRelations !== false || document.graphPolicy?.contextEligibility !== "exact-evidence-need-only"
     || document.authority !== "rebuildable-observation-view-not-product-or-recovery-canon"
@@ -130,11 +132,11 @@ export function verifyObservationProjection(document, projectId = "") {
   return document;
 }
 
-export function loadObservationProjection({ projectRoot, projectId, artifacts = null } = {}) {
-  const verifiedArtifacts = artifacts || loadObservationArtifacts({ projectRoot, projectId });
-  const payload = projectionPayload({ projectId, ...verifiedArtifacts });
+export function loadObservationProjection({ projectRoot, projectId, artifacts = null, storage = null } = {}) {
+  const verifiedArtifacts = artifacts || loadObservationArtifacts({ projectRoot, projectId, storage });
+  const payload = projectionPayload({ projectId, ...verifiedArtifacts }, storage);
   const projectionHash = observationDigest(payload);
-  return verifyObservationProjection({ ...payload, projectionId: `observation-projection-${projectionHash.slice(0, 24)}`, projectionHash }, projectId);
+  return verifyObservationProjection({ ...payload, projectionId: `observation-projection-${projectionHash.slice(0, 24)}`, projectionHash }, projectId, storage);
 }
 
 function optionalKey(value, label) {
@@ -218,8 +220,8 @@ export function queryObservations({
   if (expectedProjectionId && !/^observation-projection-[a-f0-9]{24}$/.test(expectedProjectionId)) fail("Observation query projectionId is invalid.", "INVALID_OBSERVATION_QUERY_CURSOR");
   if (normalized.observedAfter && normalized.observedBefore && normalized.observedAfter > normalized.observedBefore) fail("Observation query time range is invalid.", "INVALID_OBSERVATION_QUERY");
 
-  const artifacts = loadObservationArtifacts({ projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId });
-  const projection = loadObservationProjection({ projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId, artifacts });
+  const artifacts = loadObservationArtifacts({ projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId, storage: inspected.storage });
+  const projection = loadObservationProjection({ projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId, artifacts, storage: inspected.storage });
   if (expectedProjectionId && expectedProjectionId !== projection.projectionId) fail("Observation query cursor projection is stale.", "STALE_OBSERVATION_QUERY_CURSOR");
   const records = [
     ...artifacts.observations,
@@ -247,7 +249,7 @@ export function queryObservations({
   const payload = {
     schemaVersion: SCHEMA_VERSION,
     kind: "ObservationQueryProjection",
-    protocol: { name: "head-agent-core-observation-query", version: OBSERVATION_PROTOCOL_VERSION },
+    protocol: { name: formatForVerifiedOwner(inspected.storage).protocol("head-agent-core-observation-query"), version: OBSERVATION_PROTOCOL_VERSION },
     projectId: inspected.project.projectId,
     sessionId: inspected.state.sessionId,
     sourceProjectionId: projection.projectionId,

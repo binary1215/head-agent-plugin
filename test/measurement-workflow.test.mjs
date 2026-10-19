@@ -5,7 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { initializeProject } from "../scripts/lib/head-core.mjs";
+import { initializeProject, inspectProject } from "../scripts/lib/head-core.mjs";
+import { formatForVerifiedOwner } from "../scripts/lib/project-storage-format.mjs";
 import {
   assessMetricComparison,
   compareMetricObservations,
@@ -29,7 +30,9 @@ function fixture(t) {
   const root = fs.mkdtempSync(path.join(testParent, "head-agent-measurement-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
-  return root;
+  const storage = inspectProject(root).storage;
+  const layout = formatForVerifiedOwner(storage);
+  return { root, storage, layout };
 }
 
 function observationInput(overrides = {}) {
@@ -54,9 +57,9 @@ function observationInput(overrides = {}) {
 }
 
 test("metric evidence remains P3/P4, discloses partial coverage, and requires the existing initiative review for follow-up", async (t) => {
-  const root = fixture(t);
-  const canonFile = path.join(root, ".head", "context", "product-model.json");
-  const sessionFile = path.join(root, ".head", "sessions", "current.json");
+  const { root, layout } = fixture(t);
+  const canonFile = path.join(root, layout.directory, "context", "product-model.json");
+  const sessionFile = path.join(root, layout.directory, "sessions", "current.json");
   const canonBefore = fs.readFileSync(canonFile, "utf8");
   const sessionBefore = fs.readFileSync(sessionFile, "utf8");
 
@@ -106,7 +109,7 @@ test("metric evidence remains P3/P4, discloses partial coverage, and requires th
   assert.deepEqual(followUp.initiativeCandidate.hypothesisIds, [assessed.hypothesis.hypothesisId]);
   assert.equal(fs.readFileSync(canonFile, "utf8"), canonBefore);
   assert.equal(fs.readFileSync(sessionFile, "utf8"), sessionBefore);
-  assert.equal(fs.existsSync(path.join(root, ".head", "conformance")), false);
+  assert.equal(fs.existsSync(path.join(root, layout.directory, "conformance")), false);
 
   const graph = inspectWorldModel({ root }).snapshot.temporalProvenanceGraph;
   const ids = new Set(graph.nodes.map((node) => node.nodeId));
@@ -139,7 +142,7 @@ test("metric evidence remains P3/P4, discloses partial coverage, and requires th
 });
 
 test("metric comparison fails closed only for real comparability mismatches", async (t) => {
-  const root = fixture(t);
+  const { root, layout } = fixture(t);
   const firstDefinition = await defineMetric({ root, metricKey: "request-latency", unit: "milliseconds", direction: "decrease", typeVersion: "1" });
   const exactDefinitionReplay = await defineMetric({ root, metricKey: "request-latency", unit: "milliseconds", direction: "decrease", typeVersion: "1" });
   assert.equal(exactDefinitionReplay.status, "existing");
@@ -198,7 +201,7 @@ test("metric comparison fails closed only for real comparability mismatches", as
 });
 
 test("metric observation retry without an observed timestamp reuses the durable event time", async (t) => {
-  const root = fixture(t);
+  const { root, layout } = fixture(t);
   await defineMetric({ root, metricKey: "request-latency", unit: "milliseconds", direction: "decrease" });
   const input = observationInput();
   delete input.observedAt;
@@ -214,7 +217,7 @@ test("metric observation retry without an observed timestamp reuses the durable 
 });
 
 test("metric comparison remains available while disclosing unequal collection conditions", async (t) => {
-  const root = fixture(t);
+  const { root, layout } = fixture(t);
   await defineMetric({ root, metricKey: "request-latency", unit: "milliseconds", direction: "decrease" });
   const baseline = await recordMetricObservation({ root, ...observationInput({
     form: "aggregate",
@@ -260,7 +263,7 @@ test("metric comparison remains available while disclosing unequal collection co
 });
 
 test("CLI and typed MCP expose the same nonblocking metric status", async (t) => {
-  const root = fixture(t);
+  const { root, layout } = fixture(t);
   assert.ok(tools.some((tool) => tool.name === "head_metric_define"));
   assert.ok(tools.some((tool) => tool.name === "head_metric_status"));
   assert.ok(tools.some((tool) => tool.name === "head_metric_trace"));

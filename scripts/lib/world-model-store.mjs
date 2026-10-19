@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { formatForVerifiedOwner } from "./project-storage-format.mjs";
 
 export const WORLD_MODEL_STORE_ADAPTER_VERSION = "0.1.0";
 export const WORLD_MODEL_STORAGE_CONTRACT = "replaceable-rebuildable-materialized-view";
@@ -67,9 +68,10 @@ export function assertWorldModelStoreAdapter(adapter) {
 }
 
 export class LocalJsonWorldModelStoreAdapter {
-  constructor({ projectRoot }) {
+  constructor({ projectRoot, storage = null }) {
     if (typeof projectRoot !== "string" || !projectRoot.trim()) fail("Local JSON adapter requires projectRoot.", "WORLD_MODEL_STORE_ROOT_REQUIRED");
     this.projectRoot = path.resolve(projectRoot);
+    this.storage = storage;
     this.adapterVersion = WORLD_MODEL_STORE_ADAPTER_VERSION;
   }
 
@@ -87,11 +89,11 @@ export class LocalJsonWorldModelStoreAdapter {
   }
 
   pointerLocation() {
-    return path.join(this.projectRoot, ".head", "world-model", "current.json");
+    return path.join(this.projectRoot, formatForVerifiedOwner(this.storage).directory, "world-model", "current.json");
   }
 
   snapshotLocation(worldModelId) {
-    return path.join(this.projectRoot, ".head", "world-model", "snapshots", `${snapshotId(worldModelId)}.json`);
+    return path.join(this.projectRoot, formatForVerifiedOwner(this.storage).directory, "world-model", "snapshots", `${snapshotId(worldModelId)}.json`);
   }
 
   readPointer() {
@@ -120,7 +122,7 @@ export class LocalJsonWorldModelStoreAdapter {
   }
 
   listSnapshotIds() {
-    const directory = path.join(this.projectRoot, ".head", "world-model", "snapshots");
+    const directory = path.join(this.projectRoot, formatForVerifiedOwner(this.storage).directory, "world-model", "snapshots");
     if (!fs.existsSync(directory)) return [];
     return fs.readdirSync(directory, { withFileTypes: true })
       .filter((entry) => entry.isFile() && /^world-model-[a-f0-9]{24}\.json$/.test(entry.name))
@@ -129,6 +131,6 @@ export class LocalJsonWorldModelStoreAdapter {
   }
 }
 
-export function createWorldModelStoreAdapter({ projectRoot, adapter = null } = {}) {
-  return assertWorldModelStoreAdapter(adapter || new LocalJsonWorldModelStoreAdapter({ projectRoot }));
+export function createWorldModelStoreAdapter({ projectRoot, adapter = null, storage = null } = {}) {
+  return assertWorldModelStoreAdapter(adapter || new LocalJsonWorldModelStoreAdapter({ projectRoot, storage }));
 }

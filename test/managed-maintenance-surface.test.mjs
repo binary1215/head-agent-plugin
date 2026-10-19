@@ -18,12 +18,12 @@ import { workerIntegrationFixture } from "./helpers/worker-integration-fixture.m
 const pluginRoot = path.resolve(import.meta.dirname, "..");
 const code = "MANAGED_OPERATION_NOT_ON_DEFAULT_SURFACE";
 const mutations = [
-  ["worker-prepare", "head_bounded_worker_prepare"], ["worker-start", "head_bounded_worker_start"],
-  ["worker-dispatch", "head_bounded_worker_dispatch"], ["worker-execute", null],
-  ["worker-apply", "head_bounded_worker_apply_result"], ["worker-reconcile", "head_bounded_worker_reconcile"],
-  ["worker-job-reconcile", "head_bounded_worker_job_reconcile"], ["worker-integrate", "head_worker_integration"],
-  ["worker-wave-create", "head_bounded_worker_wave_create"], ["worker-wave-seal", "head_bounded_worker_wave_seal"],
-  ["worker-wave-abandon", "head_bounded_worker_wave_abandon"],
+  ["worker-prepare", "lode_bounded_worker_prepare"], ["worker-start", "lode_bounded_worker_start"],
+  ["worker-dispatch", "lode_bounded_worker_dispatch"], ["worker-execute", null],
+  ["worker-apply", "lode_bounded_worker_apply_result"], ["worker-reconcile", "lode_bounded_worker_reconcile"],
+  ["worker-job-reconcile", "lode_bounded_worker_job_reconcile"], ["worker-integrate", "lode_worker_integration"],
+  ["worker-wave-create", "lode_bounded_worker_wave_create"], ["worker-wave-seal", "lode_bounded_worker_wave_seal"],
+  ["worker-wave-abandon", "lode_bounded_worker_wave_abandon"],
 ];
 const request = (name, args) => ({ id: 1, method: "tools/call", params: { name, arguments: args } });
 const processEvent = event => console.log(JSON.stringify({ ...event, at: new Date().toISOString(), ports: [] }));
@@ -51,22 +51,22 @@ test("small default discovery keeps all optional contracts discoverable and mana
   const retained = (await dispatch({ id: 2, method: "tools/list" }, { surface: "managed-maintenance" })).result.tools;
   assert.deepEqual(ordinary, tools); assert.deepEqual(retained, toolsForSurface("managed-maintenance"));
   assert.equal(ordinary.length, 20);
-  for (const name of ["head_session_create", "head_project_direction_update"]) {
+  for (const name of ["lode_session_create", "lode_project_direction_update"]) {
     assert.strictEqual(tools.find(tool => tool.name === name), catalogTools.find(tool => tool.name === name));
     assert.deepEqual(ordinary.find(tool => tool.name === name), retained.find(tool => tool.name === name));
   }
-  assert(ordinary.some(tool => tool.name === "head_session_host_request_prepare"));
-  assert(catalogTools.some(tool => tool.name === "head_onboarding_candidate_restore"));
-  const routers = new Set(["head_tools_discover", "head_tools_read", "head_tools_call"]);
+  assert(ordinary.some(tool => tool.name === "lode_session_host_request_prepare"));
+  assert(catalogTools.some(tool => tool.name === "lode_onboarding_candidate_restore"));
+  const routers = new Set(["lode_tools_discover", "lode_tools_read", "lode_tools_call"]);
   assert.deepEqual(retained.filter(tool => !routers.has(tool.name)).map(tool => tool.name).sort(), catalogTools.map(tool => tool.name).sort());
   for (const [, name] of mutations) if (name) {
-    const discovered = (await dispatch(request("head_tools_discover", { name }))).result.structuredContent.tools[0];
+    const discovered = (await dispatch(request("lode_tools_discover", { name }))).result.structuredContent.tools[0];
     assert.equal(discovered.executionMode, "managed");
-    assert.equal(discovered.invokeWith, "head_tools_call");
+    assert.equal(discovered.invokeWith, "lode_tools_call");
   }
-  for (const name of ["head_bounded_worker_status", "head_bounded_worker_wait", "head_bounded_worker_job_status", "head_bounded_worker_job_patch", "head_bounded_worker_cancel", "head_worker_integration_status", "head_bounded_worker_wave_read", "head_bounded_worker_wave_status", "head_bounded_worker_wave_results", "head_bounded_worker_wave_wait", "head_context_preview", "head_world_model", "head_conversation_enter"]) {
+  for (const name of ["lode_bounded_worker_status", "lode_bounded_worker_wait", "lode_bounded_worker_job_status", "lode_bounded_worker_job_patch", "lode_bounded_worker_cancel", "lode_worker_integration_status", "lode_bounded_worker_wave_read", "lode_bounded_worker_wave_status", "lode_bounded_worker_wave_results", "lode_bounded_worker_wave_wait", "lode_context_preview", "lode_world_model", "lode_conversation_enter"]) {
     assert(catalogTools.some(tool => tool.name === name), name);
-    const found = await dispatch(request("head_tools_discover", { name }));
+    const found = await dispatch(request("lode_tools_discover", { name }));
     assert.equal(found.result.structuredContent.tools[0].name, name);
   }
 });
@@ -83,7 +83,7 @@ test("raw MCP and CLI mutations cannot bypass discovery or write any project sta
     assert(explicit.error, name); assert.doesNotMatch(explicit.error.message, /not available on the ordinary/);
   }
   for (const action of ["prepare", "apply", "reconcile", "settle-incomplete", "prepare-result", "publish-result"]) {
-    const response = await dispatch(request("head_worker_integration", { project_root: root, action }));
+    const response = await dispatch(request("lode_worker_integration", { project_root: root, action }));
     assert.match(response.error.message, /not available on the ordinary/);
   }
   assert.deepEqual(snapshot(root), before); assert.deepEqual(events, []);
@@ -108,7 +108,7 @@ async function authorization(root, worker = undefined) {
   const versionEvidence = await buildRuntimeVersionEvidence({ runtimes: ["codex"], environment, spawnImplementation: schemaSpawn });
   const protocolEvidence = await buildRuntimeProtocolEvidence({ runtimes: ["codex"], environment, versionEvidence, spawnImplementation: schemaSpawn });
   const inspected = inspectProject(root);
-  const projectBinding = buildRuntimeProjectBinding({ projectId: inspected.project.projectId, headSessionId: inspected.state.sessionId,
+  const projectBinding = buildRuntimeProjectBinding({ storage: inspected.storage, projectId: inspected.project.projectId, headSessionId: inspected.state.sessionId,
     projectRoot: fs.realpathSync(root), projectStatus: "ready", versionEvidence, protocolEvidence });
   return buildRuntimeInvocationAuthorization({ root, runtime: "codex", scope: { kind: "session", request: "Inspect synthetic a.txt" },
     workspaceMode: "read-only", protocolEvidence, projectBinding, worker, persist: true }).authorization;
@@ -181,7 +181,7 @@ test("default diagnostics preserve exact history without recommending launches; 
   const before = snapshot(f.root);
   for (let i = 0; i < 2; i++) {
     const cli = runCommand(["worker-wave-status", f.root, "--wave", waveId]);
-    const mcp = await dispatch(request("head_bounded_worker_wave_status", { project_root: f.root, wave_id: waveId }));
+    const mcp = await dispatch(request("lode_bounded_worker_wave_status", { project_root: f.root, wave_id: waveId }));
     assert.deepEqual(mcp.result.structuredContent, cli);
     assert.equal(cli.projection.guidance.canSeal, true, "Mechanical evidence is retained, not authority to mutate");
     assert.match(cli.projection.guidance.nextStep, /status never seals or selects a maintenance mutation/);
@@ -193,7 +193,7 @@ test("default diagnostics preserve exact history without recommending launches; 
   const seal = runCommand(["managed-maintenance", "worker-wave-seal", f.root, "--wave", waveId]);
   assert.equal(seal.status, "sealed");
   const sealed = snapshot(f.root);
-  const replay = await dispatch(request("head_bounded_worker_wave_seal", { project_root: f.root, wave_id: waveId }), { surface: "managed-maintenance" });
+  const replay = await dispatch(request("lode_bounded_worker_wave_seal", { project_root: f.root, wave_id: waveId }), { surface: "managed-maintenance" });
   assert.equal(replay.error, undefined);
   assert.deepEqual(snapshot(f.root), sealed, "Maintenance replay retains create-only behavior");
 });

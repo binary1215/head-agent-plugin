@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { familyFormatForOriginal, formatForVerifiedOwner, relativeProjectArtifact } from "./project-storage-format.mjs";
 import {
   ONBOARDING_CANDIDATE_DIRECTORY,
   ONBOARDING_PRODUCT_REVISION_DIRECTORY,
@@ -87,15 +88,15 @@ function verifyContentIdentity(document, { idField, hashField, prefix, label }) 
   return document;
 }
 
-function candidateModel(candidates) {
-  const document = emptyProductModelDocument();
+function candidateModel(candidates, storage) {
+  const document = emptyProductModelDocument(storage);
   for (const candidate of candidates) {
     if (!PRODUCT_ENTITY_KINDS.includes(candidate.productKind)) {
       fail(`Unsupported onboarding product kind: ${candidate.productKind}`, "INVALID_ONBOARDING_PROJECTION_CANDIDATE");
     }
     document[ARRAY_BY_KIND[candidate.productKind]].push(candidate.proposedEntity);
   }
-  return normalizeProductModelDocument(document);
+  return normalizeProductModelDocument(document, storage);
 }
 
 function verifyEvidence(evidence) {
@@ -114,7 +115,7 @@ function verifyEvidence(evidence) {
   return evidence;
 }
 
-function verifyCandidate(candidate) {
+function verifyCandidate(candidate, format) {
   verifyContentIdentity(candidate, {
     idField: "candidateId",
     hashField: "candidateHash",
@@ -124,7 +125,7 @@ function verifyCandidate(candidate) {
   if (candidate.schemaVersion !== 1 || candidate.kind !== "OnboardingProductCandidate" || !PRODUCT_ENTITY_KINDS.includes(candidate.productKind)
     || candidate.authorityClass !== "candidate" || candidate.instructionAuthority !== false || candidate.promotionAuthority !== false
     || !Number.isFinite(candidate.confidence) || candidate.confidence < 0 || candidate.confidence > 1
-    || !new Set(["head-agent-core-semantic-proposal-normalizer", "head-agent-core-user-brief-normalizer"]).has(candidate.producer)
+    || !new Set([format.protocol("head-agent-core-semantic-proposal-normalizer"), format.protocol("head-agent-core-user-brief-normalizer")]).has(candidate.producer)
     || candidate.producerVersion !== CANDIDATE_PROTOCOL_VERSION
     || typeof candidate.explanation !== "string" || !candidate.explanation || candidate.explanation.length > 2000
     || !/^source-snapshot-[a-f0-9]{24}$/.test(candidate.sourceSnapshotId || "")) {
@@ -134,7 +135,7 @@ function verifyCandidate(candidate) {
   return candidate;
 }
 
-export function verifyOnboardingCandidateSetForProjection(document, projectId = "") {
+export function verifyOnboardingCandidateSetForProjection(document, projectId = "", storage) {
   verifyContentIdentity(document, {
     idField: "candidateSetId",
     hashField: "candidateSetHash",
@@ -142,10 +143,11 @@ export function verifyOnboardingCandidateSetForProjection(document, projectId = 
     label: "Onboarding candidate set",
   });
   const candidateProtocolVersion = document.protocol?.version;
-  if (document.kind !== "OnboardingCandidateSet" || document.protocol?.name !== "head-agent-core-onboarding-candidates"
+  const format = familyFormatForOriginal("head-agent-core-onboarding-candidates", document, storage);
+  if (!format || document.kind !== "OnboardingCandidateSet"
     || candidateProtocolVersion !== CANDIDATE_PROTOCOL_VERSION
     || document.schemaVersion !== 1 || (projectId && document.projectId !== projectId)
-    || !/^head-[a-f0-9]{20}$/.test(document.projectId || "")
+    || !new RegExp(`^${format.projectPrefix}[a-f0-9]{20}$`).test(document.projectId || "")
     || !/^session-[A-Fa-f0-9-]{36}$/.test(document.sessionId || "")
     || !["existing", "new"].includes(document.inputMode)
     || !/^onboarding-storage-[a-f0-9]{24}$/.test(document.storageSelectionId || "")
@@ -181,7 +183,7 @@ export function verifyOnboardingCandidateSetForProjection(document, projectId = 
   }
   const candidateIds = new Set();
   for (const candidate of document.candidates) {
-    verifyCandidate(candidate);
+    verifyCandidate(candidate, format);
     if (candidate.sourceSnapshotId !== document.sourceSnapshotId) fail("Candidate source snapshot does not match its set.", "ONBOARDING_PROJECTION_SOURCE_MISMATCH");
     if (candidateIds.has(candidate.candidateId)) fail(`Duplicate onboarding candidate: ${candidate.candidateId}`, "DUPLICATE_ONBOARDING_PROJECTION_ARTIFACT");
     candidateIds.add(candidate.candidateId);
@@ -194,7 +196,7 @@ export function verifyOnboardingCandidateSetForProjection(document, projectId = 
   if (canonicalJson(document.candidates.map((item) => item.candidateId)) !== canonicalJson(orderedCandidates.map((item) => item.candidateId))) {
     fail("Onboarding candidates must use deterministic ordering.", "INVALID_ONBOARDING_PROJECTION_ORDER");
   }
-  candidateModel(document.candidates);
+  candidateModel(document.candidates, format);
   const unknownIds = new Set();
   for (const unknown of document.unknowns) {
     if (!unknown || !/^onboarding-unknown-[a-f0-9]{24}$/.test(unknown.unknownId || "")
@@ -239,12 +241,14 @@ export function verifyOnboardingReviewDecisionForProjection(document, candidateS
     label: "Onboarding ReviewDecision",
   });
   const dispositions = new Set(["accept-all", "accept-selection", "revise", "reject"]);
-  if (document.kind !== "ReviewDecision" || document.protocol?.name !== "head-agent-core-onboarding-review"
+  const format = familyFormatForOriginal("head-agent-core-onboarding-review", document);
+  const candidateFormat = familyFormatForOriginal("head-agent-core-onboarding-candidates", candidateSet);
+  if (!format || !candidateFormat || format.dialect !== candidateFormat.dialect || document.kind !== "ReviewDecision"
     || document.protocol?.version !== "0.1.0" || document.schemaVersion !== 1
     || document.decisionScope !== "product-canon-bootstrap" || !dispositions.has(document.disposition)
     || (projectId && document.projectId !== projectId) || document.projectId !== candidateSet.projectId
     || document.sessionId !== candidateSet.sessionId || document.candidateSetId !== candidateSet.candidateSetId
-    || !/^head-[a-f0-9]{20}$/.test(document.projectId || "") || !/^session-[A-Fa-f0-9-]{36}$/.test(document.sessionId || "")
+    || !new RegExp(`^${format.projectPrefix}[a-f0-9]{20}$`).test(document.projectId || "") || !/^session-[A-Fa-f0-9-]{36}$/.test(document.sessionId || "")
     || !Array.isArray(document.userEdits) || !Array.isArray(document.addedEntities) || !Array.isArray(document.lineage)
     || typeof document.rationale !== "string" || !document.rationale
     || document.authority !== "explicit-user-onboarding-review" || document.instructionAuthority !== true) {
@@ -276,11 +280,11 @@ export function verifyOnboardingReviewDecisionForProjection(document, candidateS
   return document;
 }
 
-export function verifyProductModelRevisionForProjection(document) {
+export function verifyProductModelRevisionForProjection(document, storage = null) {
   if (!document || document.schemaVersion !== 1 || document.kind !== "ProductModelRevision" || document.authority !== "user-owned-project-canon-revision") {
     fail("Product Model revision is invalid.", "INVALID_ONBOARDING_PRODUCT_REVISION");
   }
-  const model = normalizeProductModelDocument(document.document);
+  const model = normalizeProductModelDocument(document.document, storage);
   if (document.productModelId !== model.productModelId || document.productModelHash !== model.productModelHash) {
     fail("Product Model revision digest verification failed.", "ONBOARDING_PRODUCT_REVISION_DIGEST_MISMATCH");
   }
@@ -350,25 +354,30 @@ export function loadOnboardingGraphProjection({
   additionalCandidateSets = [],
   additionalReviewDecisions = [],
   additionalProductModelRevisions = [],
+  storage,
 } = {}) {
-  if (typeof projectRoot !== "string" || !projectRoot || !/^head-[a-f0-9]{20}$/.test(projectId || "")
+  const format = formatForVerifiedOwner(storage);
+  const candidateDirectory = relativeProjectArtifact(storage, "onboarding", "candidate-sets");
+  const reviewDirectory = relativeProjectArtifact(storage, "onboarding", "review-decisions");
+  const revisionDirectory = relativeProjectArtifact(storage, "onboarding", "product-model-revisions");
+  if (typeof projectRoot !== "string" || !projectRoot || !new RegExp(`^${format.projectPrefix}[a-f0-9]{20}$`).test(projectId || "")
     || !/^product-model-[a-f0-9]{24}$/.test(currentProductModelId || "")) {
     fail("Onboarding graph projection scope is invalid.", "INVALID_ONBOARDING_PROJECTION_SCOPE");
   }
-  const historical = readCommittedHistoricalArtifactBoundary({ root: projectRoot, projectId, allowAbsent: true });
-  const candidateFiles = readArtifactDirectory(projectRoot, ONBOARDING_CANDIDATE_DIRECTORY, {
+  const historical = readCommittedHistoricalArtifactBoundary({ root: projectRoot, projectId, allowAbsent: true, storage });
+  const candidateFiles = readArtifactDirectory(projectRoot, candidateDirectory, {
     idPattern: /^onboarding-candidates-[a-f0-9]{24}$/,
     idField: "candidateSetId",
     limit: ARTIFACT_LIMITS.maxCandidateSets,
     label: "Onboarding candidate-set directory",
   });
-  const reviewFiles = readArtifactDirectory(projectRoot, ONBOARDING_REVIEW_DIRECTORY, {
+  const reviewFiles = readArtifactDirectory(projectRoot, reviewDirectory, {
     idPattern: /^onboarding-review-decision-[a-f0-9]{24}$/,
     idField: "reviewDecisionId",
     limit: ARTIFACT_LIMITS.maxReviewDecisions,
     label: "Onboarding review directory",
   });
-  const revisionFiles = readArtifactDirectory(projectRoot, ONBOARDING_PRODUCT_REVISION_DIRECTORY, {
+  const revisionFiles = readArtifactDirectory(projectRoot, revisionDirectory, {
     idPattern: /^product-model-[a-f0-9]{24}$/,
     idField: "productModelId",
     limit: ARTIFACT_LIMITS.maxProductModelRevisions,
@@ -382,7 +391,7 @@ export function loadOnboardingGraphProjection({
       const relative = `${relativeDirectory}/${document[idField]}.json`;
       const entry = historicalEntryForPath(historical, relative, role);
       if (!entry) {
-        if (document.protocol?.name === "head-agent-core-onboarding-candidates" && document.protocol?.version !== CANDIDATE_PROTOCOL_VERSION) {
+        if (familyFormatForOriginal("head-agent-core-onboarding-candidates", document) && document.protocol?.version !== CANDIDATE_PROTOCOL_VERSION) {
           fail(`Unsupported historical artifact is outside the committed boundary: ${relative}`, "HISTORICAL_BOUNDARY_COVERAGE_DRIFT");
         }
         current.push(document);
@@ -396,9 +405,9 @@ export function loadOnboardingGraphProjection({
     }
     return current;
   };
-  const storedCurrentCandidates = partition(candidateFiles.documents, ONBOARDING_CANDIDATE_DIRECTORY, "candidateSetId", "historical-candidate-set");
-  const storedCurrentReviews = partition(reviewFiles.documents, ONBOARDING_REVIEW_DIRECTORY, "reviewDecisionId", "historical-review");
-  const storedCurrentRevisions = partition(revisionFiles.documents, ONBOARDING_PRODUCT_REVISION_DIRECTORY, "productModelId", "historical-product-revision");
+  const storedCurrentCandidates = partition(candidateFiles.documents, candidateDirectory, "candidateSetId", "historical-candidate-set");
+  const storedCurrentReviews = partition(reviewFiles.documents, reviewDirectory, "reviewDecisionId", "historical-review");
+  const storedCurrentRevisions = partition(revisionFiles.documents, revisionDirectory, "productModelId", "historical-product-revision");
   const candidateSets = mergeArtifacts(storedCurrentCandidates, additionalCandidateSets, "candidateSetId", "Onboarding candidate set");
   const reviewDecisions = mergeArtifacts(storedCurrentReviews, additionalReviewDecisions, "reviewDecisionId", "Onboarding ReviewDecision");
   const productModelRevisions = mergeArtifacts(storedCurrentRevisions, additionalProductModelRevisions, "productModelId", "Product Model revision");
@@ -408,7 +417,7 @@ export function loadOnboardingGraphProjection({
   }
   const candidateById = new Map();
   for (const candidateSet of candidateSets) {
-    verifyOnboardingCandidateSetForProjection(candidateSet, projectId);
+    verifyOnboardingCandidateSetForProjection(candidateSet, projectId, storage);
     candidateById.set(candidateSet.candidateSetId, candidateSet);
   }
   for (const review of reviewDecisions) {
@@ -418,7 +427,7 @@ export function loadOnboardingGraphProjection({
   }
   const revisionById = new Map();
   for (const revision of productModelRevisions) {
-    verifyProductModelRevisionForProjection(revision);
+    verifyProductModelRevisionForProjection(revision, storage);
     revisionById.set(revision.productModelId, revision);
   }
   for (const candidateSet of candidateSets) {
@@ -452,10 +461,10 @@ export function loadOnboardingGraphProjection({
       fail(`Accepted ReviewDecision has incomplete Product Model revision evidence: ${review.reviewDecisionId}`, "ONBOARDING_PROJECTION_PRODUCT_REVISION_MISSING");
     }
   }
-  const continuityReceipts = historical ? readHistoricalContinuityReceipts({ root: projectRoot, boundary: historical.boundary, currentCandidateSets: candidateSets }) : [];
+  const continuityReceipts = historical ? readHistoricalContinuityReceipts({ root: projectRoot, boundary: historical.boundary, currentCandidateSets: candidateSets, storage }) : [];
   const payload = {
     kind: "OnboardingGraphProjectionInput",
-    protocol: { name: "head-agent-core-onboarding-graph-projection", version: ONBOARDING_GRAPH_PROJECTION_VERSION },
+    protocol: { name: format.protocol("head-agent-core-onboarding-graph-projection"), version: ONBOARDING_GRAPH_PROJECTION_VERSION },
     projectId,
     currentProductModelId,
     candidateSets,
@@ -490,8 +499,9 @@ export function loadOnboardingGraphProjection({
 }
 
 export function verifyOnboardingGraphProjectionInput(document) {
+  const format = familyFormatForOriginal("head-agent-core-onboarding-graph-projection", document);
   if (!document || document.kind !== "OnboardingGraphProjectionInput"
-    || document.protocol?.name !== "head-agent-core-onboarding-graph-projection"
+    || !format
     || document.protocol.version !== ONBOARDING_GRAPH_PROJECTION_VERSION
     || document.authority !== "mixed-source-derived-projection-input"
     || document.instructionAuthority !== false || document.promotionAuthority !== false) {
@@ -520,10 +530,10 @@ export function verifyOnboardingGraphProjectionInput(document) {
       fail("Historical typed and opaque Product revision coverage must be disjoint.", "INVALID_ONBOARDING_HISTORICAL_COVERAGE");
     }
     const referenceSpecs = new Map([
-      ["historical-candidate-set", { id: /^onboarding-candidates-[a-f0-9]{24}$/, modes: new Set(["opaque-historical"]), path: (id) => `${ONBOARDING_CANDIDATE_DIRECTORY}/${id}.json` }],
-      ["historical-review", { id: /^onboarding-review-decision-[a-f0-9]{24}$/, modes: new Set(["opaque-historical"]), path: (id) => `${ONBOARDING_REVIEW_DIRECTORY}/${id}.json` }],
-      ["historical-product-revision", { id: /^product-model-[a-f0-9]{24}$/, modes: new Set(["current-typed-with-historical-provenance", "opaque-legacy-revision"]), path: (id) => `${ONBOARDING_PRODUCT_REVISION_DIRECTORY}/${id}.json` }],
-      ["legacy-world-embedding-reference", { id: /^world-model-[a-f0-9]{24}$/, modes: new Set(["opaque-historical"]), path: (id) => `.head/world-model/snapshots/${id}.json` }],
+      ["historical-candidate-set", { id: /^onboarding-candidates-[a-f0-9]{24}$/, modes: new Set(["opaque-historical"]), path: (id) => relativeProjectArtifact(format, "onboarding", "candidate-sets", `${id}.json`) }],
+      ["historical-review", { id: /^onboarding-review-decision-[a-f0-9]{24}$/, modes: new Set(["opaque-historical"]), path: (id) => relativeProjectArtifact(format, "onboarding", "review-decisions", `${id}.json`) }],
+      ["historical-product-revision", { id: /^product-model-[a-f0-9]{24}$/, modes: new Set(["current-typed-with-historical-provenance", "opaque-legacy-revision"]), path: (id) => relativeProjectArtifact(format, "onboarding", "product-model-revisions", `${id}.json`) }],
+      ["legacy-world-embedding-reference", { id: /^world-model-[a-f0-9]{24}$/, modes: new Set(["opaque-historical"]), path: (id) => relativeProjectArtifact(format, "world-model", "snapshots", `${id}.json`) }],
     ]);
     const referenceById = new Map();
     for (const reference of historical.references) {

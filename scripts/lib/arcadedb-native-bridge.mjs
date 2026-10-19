@@ -28,10 +28,10 @@ function canonical(value) {
 
 const canonicalJson = (value) => JSON.stringify(canonical(value));
 
-function targetFor(platform = process.platform, arch = process.arch) {
+function targetFor(platform = process.platform, arch = process.arch, legacy = false) {
   const target = TARGETS[`${platform}-${arch}`];
   if (!target) fail(`Unsupported ArcadeDB native bridge target: ${platform}-${arch}.`, "ARCADEDB_NATIVE_BRIDGE_TARGET_UNSUPPORTED");
-  return target;
+  return legacy ? target : { ...target, executable: target.executable.replace("head-agent-", "lode-agent-") };
 }
 
 function inside(root, candidate) {
@@ -46,10 +46,10 @@ function assertFields(value, fields, label) {
   }
 }
 
-function payload({ target, binary }) {
+function payload({ target, binary, legacy = false }) {
   return {
     schemaVersion: 1,
-    kind: "HeadAgentArcadeDbBridgeManifest",
+    kind: legacy ? "HeadAgentArcadeDbBridgeManifest" : "LodeAgentArcadeDbBridgeManifest",
     manifestVersion: ARCADEDB_NATIVE_BRIDGE_MANIFEST_VERSION,
     bridgeProtocolVersion: ARCADEDB_NATIVE_BRIDGE_PROTOCOL_VERSION,
     target,
@@ -101,15 +101,17 @@ export function verifyArcadeDbNativeBridgeManifest(manifest, { platform = proces
   assertFields(manifest.binary, ["relativePath", "sha256", "size"], "ArcadeDB native bridge binary");
   assertFields(manifest.processModel, ["stdio", "descendants", "network", "databaseWrites", "projectWrites"], "ArcadeDB native bridge process model");
   assertFields(manifest.authority, ["kind", "instructionAuthority", "promotionAuthority", "canonicalAuthority", "mutatesProject", "mutatesCanon"], "ArcadeDB native bridge authority");
-  const target = targetFor(platform, arch);
+  const legacy = manifest.kind === "HeadAgentArcadeDbBridgeManifest";
+  const target = targetFor(platform, arch, legacy);
   const expected = payload({
+    legacy,
     target: { platform: target.platform, arch: target.arch, directory: target.directory },
     binary: manifest.binary,
   });
   const identityPayload = { ...manifest };
   delete identityPayload.manifestId;
   delete identityPayload.manifestHash;
-  if (manifest.schemaVersion !== 1 || manifest.kind !== "HeadAgentArcadeDbBridgeManifest"
+  if (manifest.schemaVersion !== 1 || !["HeadAgentArcadeDbBridgeManifest", "LodeAgentArcadeDbBridgeManifest"].includes(manifest.kind)
     || manifest.manifestVersion !== ARCADEDB_NATIVE_BRIDGE_MANIFEST_VERSION
     || manifest.bridgeProtocolVersion !== ARCADEDB_NATIVE_BRIDGE_PROTOCOL_VERSION
     || manifest.binary.relativePath !== target.executable || !/^[a-f0-9]{64}$/.test(manifest.binary.sha256 || "")

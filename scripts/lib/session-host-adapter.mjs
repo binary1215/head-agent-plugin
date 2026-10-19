@@ -1,3 +1,9 @@
+import { formatForVerifiedOwner, familyFormatForOriginal, resolveProjectStorage } from "./project-storage-format.mjs";
+const sessionIdOf = record => {
+  const format = familyFormatForOriginal({ sessionIdentity: true }, record);
+  return format ? record?.[format.sessionIdField] : undefined;
+};
+const originalFormat = record => familyFormatForOriginal({ kind: record?.kind }, record);
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -15,9 +21,11 @@ function fail(message, code = "INVALID_SESSION_HOST_INPUT") { throw Object.assig
 function required(value) { return typeof value === "string" && value.length > 0 && value.length <= 512 && !/[\u0000-\u001f]/.test(value); }
 function project(root) {
   const base = fs.realpathSync(path.resolve(root));
-  const record = JSON.parse(fs.readFileSync(safeSessionPath(base, ".head", "project.json"), "utf8"));
-  if (record.schemaVersion !== 1 || record.projectRoot !== base || !/^head-[a-f0-9]{20}$/.test(record.projectId || "")) fail("Project identity differs.", "PROJECT_IDENTITY_MISMATCH");
-  return { root: base, projectId: record.projectId };
+  const storage = resolveProjectStorage(base);
+  const format = formatForVerifiedOwner(storage);
+  const record = JSON.parse(fs.readFileSync(safeSessionPath(base, format.directory, "project.json"), "utf8"));
+  if (record.schemaVersion !== 1 || record.projectRoot !== base || !new RegExp(`^${format.projectPrefix}[a-f0-9]{20}$`).test(record.projectId || "")) fail("Project identity differs.", "PROJECT_IDENTITY_MISMATCH");
+  return { root: base, projectId: record.projectId, storage };
 }
 
 // Trusted Host composition API, deliberately NOT a public MCP native-ID input.
@@ -31,7 +39,7 @@ export function createSessionHostAdapter({ runtime, nativeSessionId, agentId = n
   const selectionTickets = new WeakMap();
   const pendingTickets = new Map();
   function location(owner, create = false) {
-    const operationalRoot = resolveRuntimeOperationalStateRoot({ projectRoot: owner.root, environment, platform, homeDirectory, create });
+    const operationalRoot = resolveRuntimeOperationalStateRoot({ projectRoot: owner.root, storage: owner.storage, environment, platform, homeDirectory, create });
     const parts = ["session-bindings", sha(encode([owner.projectId, owner.root, callerDigest]))];
     let current = operationalRoot;
     for (const part of parts) {
@@ -103,7 +111,7 @@ export function createSessionHostAdapter({ runtime, nativeSessionId, agentId = n
           catch (error) {
             // Only the unrelated absent/malformed default may be unavailable.
             // Without that predecessor, settlement must not guess a rollback.
-            if (error.headSessionRecordPath !== defaultSessionStatePath(owner.root)) throw error;
+            if (error.headSessionRecordPath !== defaultSessionStatePath(owner.root, owner.storage)) throw error;
           }
         }
         if (expectedRevision != null && before.revision !== expectedRevision) fail("Host selection changed.", "SESSION_HOST_BINDING_CONFLICT");
@@ -265,7 +273,7 @@ export function createSessionHostAdapter({ runtime, nativeSessionId, agentId = n
     lose: (options) => selection({ ...options, lost: true }),
     resolveSessionContext(request, options = {}) {
       const outer = request?.params?.arguments;
-      const args = ["head_tools_read", "head_tools_call"].includes(request?.params?.name) ? outer?.arguments : outer;
+      const args = ["head_tools_read", "head_tools_call", "lode_tools_read", "lode_tools_call"].includes(request?.params?.name) ? outer?.arguments : outer;
       if (!args?.project_root) fail("Expected an exact Project-scoped MCP request.");
       return contextFor(args.project_root, options);
     },

@@ -1,9 +1,11 @@
 import fs from "node:fs";
+import { formatForVerifiedOwner } from "./project-storage-format.mjs";
+import { ARTIFACT_COMPOSITION, publicToolName } from "./lode-artifact-composition.mjs";
 import path from "node:path";
 import { readProjectDirectionView } from "./project-direction-view.mjs";
-import { noteProjectGraphChange, PROJECT_GRAPH_INDEX_PATH } from "./discovery-index.mjs";
+import { noteProjectGraphChange, projectGraphIndexPath } from "./discovery-index.mjs";
 import { fileURLToPath } from "node:url";
-import { convergeProjectInstallation, initializeProject, inspectProject, isProjectRecoveryReadable } from "./head-core.mjs";
+import { convergeProjectInstallation, initializeProject, inspectProject, isProjectRecoveryReadable } from "./lode-core.mjs";
 import { inspectOnboarding, inspectOptionalOnboarding, inspectOptionalOnboardingForEntry, recoverOnboardingPromotion, refreshOnboardingCandidates, startOnboarding } from "./onboarding.mjs";
 import { buildRepositorySourceScope } from "./repository-source-scope.mjs";
 import { inspectRecoveryCheckpointDiagnosis } from "./recovery-checkpoint-diagnosis.mjs";
@@ -151,8 +153,8 @@ function productReadiness(status) {
 
 function contextReadiness({ coreState, productState, onboardingInspection = null }) {
   const entrypoint = {
-    cli: "head-agent context-prepare <project> --task <exact-task>",
-    mcpTool: "head_context_prepare",
+    cli: `${ARTIFACT_COMPOSITION.identity}-agent context-prepare <project> --task <exact-task>`,
+    mcpTool: publicToolName("head_context_prepare"),
   };
   if (coreState !== "ready") return {
     state: "blocked",
@@ -314,13 +316,13 @@ function entrypoint(action, onboardingInspection = null) {
   const worldAbsent = onboardingInspection?.worldModel?.status === "unavailable";
   const entries = {
     initialize_core: {
-      cli: "head-agent init <project> --runtime <runtimes>",
-      mcpTool: "head_project_initialize_or_resume",
+      cli: `${ARTIFACT_COMPOSITION.identity}-agent init <project> --runtime <runtimes>`,
+      mcpTool: publicToolName("head_project_initialize_or_resume"),
       mcpArguments: { profile: "core" },
     },
     review_managed_projection_drift: {
-      cli: "head-agent doctor <project>",
-      mcpTool: "head_project_status",
+      cli: `${ARTIFACT_COMPOSITION.identity}-agent doctor <project>`,
+      mcpTool: publicToolName("head_project_status"),
       note: "Review each reported managed-file drift before choosing an explicit repair.",
     },
     work_directly: {
@@ -329,21 +331,21 @@ function entrypoint(action, onboardingInspection = null) {
       note: "Continue the current authorized task using supplied context. Inspect status only for a relevant change or diagnosis.",
     },
     provide_product_evidence: {
-      cli: "head-agent resume <project> --profile product --input <onboarding.json>",
-      mcpTool: "head_project_initialize_or_resume",
+      cli: `${ARTIFACT_COMPOSITION.identity}-agent resume <project> --profile product --input <onboarding.json>`,
+      mcpTool: publicToolName("head_project_initialize_or_resume"),
       mcpArguments: { profile: "product" },
     },
     review_product_candidates: {
-      cli: "head-agent onboarding-status <project>",
-      mcpTool: "head_onboarding_guide",
+      cli: `${ARTIFACT_COMPOSITION.identity}-agent onboarding-status <project>`,
+      mcpTool: publicToolName("head_onboarding_guide"),
     },
     resume_product_governance: {
-      cli: "head-agent resume <project> --profile product",
-      mcpTool: "head_project_initialize_or_resume",
+      cli: `${ARTIFACT_COMPOSITION.identity}-agent resume <project> --profile product`,
+      mcpTool: publicToolName("head_project_initialize_or_resume"),
       mcpArguments: { profile: "product" },
     },
     refresh_product_world: {
-      cli: worldAbsent ? "head-agent world-index <project>" : "head-agent world-refresh <project>",
+      cli: worldAbsent ? `${ARTIFACT_COMPOSITION.identity}-agent world-index <project>` : `${ARTIFACT_COMPOSITION.identity}-agent world-refresh <project>`,
       worldOperation: worldAbsent ? "rebuild" : "incremental-refresh",
       mcpTool: null,
       note: worldAbsent ? "The derived World is absent. Explicitly rebuild from retained Canon and evidence; no Product reapproval is needed."
@@ -353,11 +355,11 @@ function entrypoint(action, onboardingInspection = null) {
       cli: null,
       mcpTool: null,
       note: "Continue the user's task with the needed files and available Product evidence. Prepare a Capsule only for reproducible selected-context handoff, durable Run or recovery needs.",
-      optionalContextTool: "head_context_prepare",
+      optionalContextTool: publicToolName("head_context_prepare"),
     },
     inspect_product_governance: {
-      cli: "head-agent onboarding-status <project>",
-      mcpTool: "head_onboarding_guide",
+      cli: `${ARTIFACT_COMPOSITION.identity}-agent onboarding-status <project>`,
+      mcpTool: publicToolName("head_onboarding_guide"),
     },
   };
   return entries[action];
@@ -380,13 +382,13 @@ function capabilityGuide({ coreState, productState, contextState, runtimes = [] 
         : productState === "reviewed_world_unchecked" ? "available-on-demand"
           : productState === "ready" ? "active-ready" : "active-action-required"),
       useWhen: "The task needs reviewed product meaning, World/Graph evidence, or governed document projections.",
-      entrypoint: "head_project_initialize_or_resume profile=product, then head_onboarding_guide",
+      entrypoint: `${publicToolName("head_project_initialize_or_resume")} profile=product, then ${publicToolName("head_onboarding_guide")}`,
     },
     {
       id: "context-compiler",
       availability: blocked || contextState.repositoryEvidence,
       useWhen: "Reproducible selected-context handoff, a durable Run or recovery actually needs a Capsule. Ordinary reading/editing uses needed files directly; the Compiler does not decide semantic sufficiency.",
-      entrypoint: "head_context_prepare",
+      entrypoint: publicToolName("head_context_prepare"),
     },
     {
       id: "durable-run",
@@ -410,7 +412,7 @@ function capabilityGuide({ coreState, productState, contextState, runtimes = [] 
       id: "provider-runtime",
       availability: blocked || "requires-capability-inspection-and-authorization",
       useWhen: "A selected provider must execute an explicitly bounded Session or Run action.",
-      entrypoint: "head_runtime_adapters, then an exact ExecutionAuthorization",
+      entrypoint: `${publicToolName("head_runtime_adapters")}, then an exact ExecutionAuthorization`,
       selectedRuntimes: runtimes,
     },
   ];
@@ -421,7 +423,7 @@ function projectExperience(projectInspection, onboardingInspection = null, recov
     const action = "initialize_core";
     const context = contextReadiness({ coreState: "not_initialized", productState: "unavailable" });
     return withExperienceProjections({
-      kind: "HeadProjectExperienceProjection",
+      kind: formatForVerifiedOwner(projectInspection.storage).kind("HeadProjectExperienceProjection"),
       protocolVersion: PROJECT_BOOTSTRAP_PROTOCOL_VERSION,
       status: "not_initialized",
       projectRoot: projectInspection.projectRoot,
@@ -435,7 +437,7 @@ function projectExperience(projectInspection, onboardingInspection = null, recov
       capabilities: capabilityGuide({ coreState: "not_initialized", productState: "unavailable", contextState: context }),
       runtime: runtimeProjection(projectInspection),
       authority: { advisoryOnly: true, persisted: false, mutatesProject: false, activatesCapabilities: false, grantsAuthorization: false },
-    });
+    }, projectInspection.storage);
   }
 
   const pendingCandidateNeedsWorld = ["awaiting_review", "revision_required"].includes(onboardingInspection?.status)
@@ -485,7 +487,7 @@ function projectExperience(projectInspection, onboardingInspection = null, recov
     capabilities: capabilityGuide({ coreState, productState: product.state, contextState: context, runtimes: projectInspection.project.runtimes }),
     runtime: runtimeProjection(projectInspection),
     authority: { advisoryOnly: true, persisted: false, mutatesProject: false, activatesCapabilities: false, grantsAuthorization: false },
-  });
+  }, projectInspection.storage);
 }
 
 export function inspectProjectExperience({ root = ".", recoveryOverride = null } = {}) {
@@ -549,7 +551,7 @@ export async function initializeOrResumeProject({ root = ".", pluginRoot, runtim
   // Explicit resume can initialize a missing optional inventory. Existing
   // inventories are refreshed by actual record writers or explicit indexing;
   // unchanged resume must not create a new derived generation after view loss.
-  if (!fs.existsSync(path.join(root, PROJECT_GRAPH_INDEX_PATH))) noteProjectGraphChange(root);
+  if (!fs.existsSync(path.join(root, projectGraphIndexPath(initialization.storage ?? before.storage)))) noteProjectGraphChange(root);
   let current = profile === "core" ? inspectOptionalOnboarding({ root }) : inspectOnboarding({ root });
   if (profile === "core") {
     const productGovernanceActivated = !["initialized", "migration_required"].includes(current.status);

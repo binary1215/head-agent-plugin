@@ -1,8 +1,14 @@
+import { formatForVerifiedOwner, familyFormatForOriginal } from "./project-storage-format.mjs";
+const sessionIdOf = record => {
+  const format = familyFormatForOriginal({ sessionIdentity: true }, record);
+  return format ? record?.[format.sessionIdField] : undefined;
+};
+const originalFormat = record => familyFormatForOriginal({ kind: record?.kind }, record);
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { assertRunSession } from "./session-routing.mjs";
-import { inspectProject } from "./head-core.mjs";
+import { inspectProject } from "./lode-core.mjs";
 import { readContextCapsule } from "./context-compiler.mjs";
 import { buildFreshHeadReview, readLineageArtifact } from "./execution-lineage.mjs";
 import { finishRun, getPendingReviewContext } from "./run-lineage.mjs";
@@ -70,7 +76,7 @@ export function verifyRuntimeRunResultApplication(document) {
     || !/^run-[0-9]+-[a-f0-9]{6}$/.test(document.runId || "")
     || !/^execution-contract-[a-f0-9]{24}$/.test(document.executionContractId || "")
     || !/^result-packet-[a-f0-9]{24}$/.test(document.resultPacketId || "")
-    || !/^fresh-head-review-[a-f0-9]{24}$/.test(document.reviewContextId || "")
+    || !/^fresh-(?:head|lode)-review-[a-f0-9]{24}$/.test(document.reviewContextId || "")
     || document.status !== "run-result-applied-awaiting-review"
     || document.freshHeadReviewRequired !== true || document.rawTranscriptIncluded !== false
     || document.authority !== "execution-lineage-application-evidence"
@@ -82,8 +88,8 @@ export function verifyRuntimeRunResultApplication(document) {
   return document;
 }
 
-function runResultApplicationFile(projectRoot, authorizationId) {
-  return path.join(runtimeInvocationRecordDirectory(projectRoot, authorizationId), "application.json");
+function runResultApplicationFile(projectRoot, authorizationId, storage) {
+  return path.join(runtimeInvocationRecordDirectory(projectRoot, authorizationId, storage), "application.json");
 }
 
 export function normalizeRuntimeRunResultTextProjection({ outcome, planDelta, impactRadius, unknowns } = {}) {
@@ -186,7 +192,7 @@ function verifyCanonicalRunResultPacket(resultPacket, fields, authorization) {
 
 function readRuntimeRunResultApplication(record) {
   const { projectRoot, authorizationId, authorization, receipt, draft } = record;
-  const file = runResultApplicationFile(projectRoot, authorizationId);
+  const file = runResultApplicationFile(projectRoot, authorizationId, record.storage ?? originalFormat(authorization));
   if (!fs.existsSync(file)) return null;
   const application = verifyRuntimeRunResultApplication(JSON.parse(fs.readFileSync(file, "utf8")));
   if (application.authorizationId !== authorizationId || application.lifecycleReceiptId !== receipt.receiptId
@@ -202,7 +208,7 @@ function readRuntimeRunResultApplication(record) {
     root: projectRoot,
     wholePlanId: authorization.scope.wholePlanId,
     resultPacketId: resultPacket.resultPacketId,
-    sessionId: authorization.headSessionId,
+    sessionId: sessionIdOf(authorization),
     runId: authorization.scope.runId,
   }).review;
   if (expectedReview.reviewContextId !== application.reviewContextId) {
@@ -211,8 +217,8 @@ function readRuntimeRunResultApplication(record) {
   return application;
 }
 
-export function readRuntimeInvocationResult({ root = ".", authorizationId } = {}) {
-  const record = readRuntimeInvocationRecord({ root, authorizationId });
+export function readRuntimeInvocationResult({ root = ".", authorizationId, storage } = {}) {
+  const record = readRuntimeInvocationRecord({ root, authorizationId, storage });
   const application = readRuntimeRunResultApplication(record);
   return {
     status: record.status,
@@ -224,18 +230,18 @@ export function readRuntimeInvocationResult({ root = ".", authorizationId } = {}
   };
 }
 
-export function applyRuntimeRunResult({ root = ".", authorizationId } = {}) {
+export function applyRuntimeRunResult({ root = ".", authorizationId, storage } = {}) {
   // Reading the target before taking finishRun's lock leaves a scope race.
   // Keep record validation, exact target validation, Run/Session completion and
   // the application receipt in the same existing reentrant mutation scope.
-  return withProjectMutation({ root, scope: "session-recovery" }, () => applyRuntimeRunResultLocked({ root, authorizationId }));
+  return withProjectMutation({ root, scope: "session-recovery" }, () => applyRuntimeRunResultLocked({ root, authorizationId, storage }));
 }
 
 function verifyApplicationProjectSession(record) {
   const inspected = inspectProject(record.projectRoot);
   const { authorization } = record;
   if (inspected.status !== "ready" || inspected.project.projectId !== authorization.projectId
-    || inspected.state.sessionId !== authorization.headSessionId
+    || inspected.state.sessionId !== sessionIdOf(authorization)
     || digest(fs.realpathSync(inspected.project.projectRoot)) !== authorization.projectRootDigest) {
     fail("Runtime result application requires its exact current Project and HEAD Session.", "RUNTIME_RUN_RESULT_APPLICATION_CONFLICT");
   }
@@ -251,7 +257,7 @@ function verifyApplicationRun(record, inspected) {
     || state.activeRunId && (state.activeExecutionContractId !== scope.executionContractId || state.pendingReview)) {
     fail("Runtime result belongs to a different Run or ExecutionContract; current work was not changed.", "RUNTIME_RUN_RESULT_APPLICATION_CONFLICT");
   }
-  const run = JSON.parse(fs.readFileSync(path.join(projectRoot, ".head", "sessions", "runs", scope.runId, "run.json"), "utf8"));
+  const run = JSON.parse(fs.readFileSync(path.join(projectRoot, formatForVerifiedOwner(inspected).directory, "sessions", "runs", scope.runId, "run.json"), "utf8"));
   assertRunSession(projectRoot, run, inspected.state);
   const contract = readLineageArtifact({ root: projectRoot, artifactId: scope.executionContractId }).artifact;
   const plan = readLineageArtifact({ root: projectRoot, artifactId: scope.wholePlanId }).artifact;
@@ -267,8 +273,8 @@ function verifyApplicationRun(record, inspected) {
   }
 }
 
-function applyRuntimeRunResultLocked({ root, authorizationId }) {
-  const record = readRuntimeInvocationRecord({ root, authorizationId });
+function applyRuntimeRunResultLocked({ root, authorizationId, storage }) {
+  const record = readRuntimeInvocationRecord({ root, authorizationId, storage });
   const { projectRoot, authorization } = record;
   const inspected = verifyApplicationProjectSession(record);
   if (authorization.scope.kind !== "run"
@@ -322,12 +328,12 @@ function applyRuntimeRunResultLocked({ root, authorizationId }) {
     promotionAuthority: false,
     mutatesCanon: false,
   }));
-  const applicationFile = runResultApplicationFile(projectRoot, authorizationId);
+  const applicationFile = runResultApplicationFile(projectRoot, authorizationId, record.storage ?? originalFormat(authorization));
   try {
     writeRuntimeInvocationArtifactExclusive(applicationFile, prettyJson(application));
   } catch (error) {
     if (error.code !== "EEXIST") throw error;
-    const concurrent = readRuntimeInvocationResult({ root: projectRoot, authorizationId }).application;
+    const concurrent = readRuntimeInvocationResult({ root: projectRoot, authorizationId, storage: record.storage ?? originalFormat(authorization) }).application;
     if (!concurrent || concurrent.applicationId !== application.applicationId) {
       fail("Concurrent runtime Run result application diverged.", "RUNTIME_RUN_RESULT_APPLICATION_CONFLICT");
     }

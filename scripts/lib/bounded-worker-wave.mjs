@@ -1,3 +1,9 @@
+import { formatForVerifiedOwner, familyFormatForOriginal } from "./project-storage-format.mjs";
+const sessionIdOf = record => {
+  const format = familyFormatForOriginal({ sessionIdentity: true }, record);
+  return format ? record?.[format.sessionIdField] : undefined;
+};
+const originalFormat = record => familyFormatForOriginal({ kind: record?.kind }, record);
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -6,7 +12,7 @@ import { artifactAuthorityBoundary, verifyArtifactAuthorityBoundary } from "./au
 import { readBoundedWorkerDispatch } from "./bounded-worker-dispatch.mjs";
 import { readContextCapsule } from "./context-compiler.mjs";
 import { readLineageArtifact } from "./execution-lineage.mjs";
-import { inspectProject } from "./head-core.mjs";
+import { inspectProject } from "./lode-core.mjs";
 import { inspectRuntimeExecutionLease } from "./runtime-execution-lease.mjs";
 import { readWorkerAdmissionProjection } from "./worker-admission.mjs";
 import { readRuntimeInvocationResult } from "./runtime-run-result-application.mjs";
@@ -70,8 +76,8 @@ function ready(root, action) {
   return inspected;
 }
 
-function waveDirectory(root) {
-  return path.join(root, ".head", "runtime", "worker-waves");
+function waveDirectory(root, storage) {
+  return path.join(root, formatForVerifiedOwner(storage).directory, "runtime", "worker-waves");
 }
 
 function requireWaveId(waveId) {
@@ -81,12 +87,12 @@ function requireWaveId(waveId) {
   return waveId;
 }
 
-function waveFile(root, waveId) {
-  return path.join(waveDirectory(root), `${requireWaveId(waveId)}.json`);
+function waveFile(root, waveId, storage) {
+  return path.join(waveDirectory(root, storage), `${requireWaveId(waveId)}.json`);
 }
 
-function terminalFile(root, waveId) {
-  return path.join(waveDirectory(root), `${requireWaveId(waveId)}.terminal.json`);
+function terminalFile(root, waveId, storage) {
+  return path.join(waveDirectory(root, storage), `${requireWaveId(waveId)}.terminal.json`);
 }
 
 function readJson(file, label, code) {
@@ -100,7 +106,7 @@ function currentLineage(inspected) {
   if (!state.activeRunId || !state.currentWholePlanId || !state.activeExecutionContractId) {
     fail("Bounded worker wave requires one exact active contract-bound Run.", "BOUNDED_WORKER_WAVE_RUN_CONFLICT");
   }
-  const runPath = path.join(root, ".head", "sessions", "runs", state.activeRunId, "run.json");
+  const runPath = path.join(root, formatForVerifiedOwner(inspected).directory, "sessions", "runs", state.activeRunId, "run.json");
   const run = readJson(runPath, "Active Run", "INVALID_BOUNDED_WORKER_WAVE_LINEAGE");
   assertRunSession(root, run, state);
   if (run.status !== "active" || run.runId !== state.activeRunId || run.wholePlanId !== state.currentWholePlanId
@@ -116,7 +122,7 @@ function currentLineage(inspected) {
   }
   return {
     projectId: inspected.project.projectId,
-    headSessionId: state.sessionId,
+    [formatForVerifiedOwner(inspected).sessionIdField]: state.sessionId,
     sessionPointerHash: digest(canonicalJson(state)),
     runId: run.runId,
     runHash: digest(canonicalJson(run)),
@@ -130,7 +136,7 @@ function currentLineage(inspected) {
 function verifyLineageMatches(wave, inspected) {
   const current = currentLineage(inspected);
   const fields = [
-    "projectId", "headSessionId", "runId", "runHash", "wholePlanId",
+    "projectId", formatForVerifiedOwner(inspected).sessionIdField, "runId", "runHash", "wholePlanId",
     "executionContractId", "contextCapsuleId", "contextCapsuleHash",
   ];
   if (fields.some((field) => wave[field] !== current[field])) {
@@ -169,8 +175,9 @@ function normalizeAuthorizationIds(values) {
 }
 
 export function verifyBoundedWorkerWave(document) {
+  const format = familyFormatForOriginal("head-agent-core-bounded-worker-wave", document);
   const fields = [
-    "schemaVersion", "kind", "protocol", "authorityBoundary", "projectId", "headSessionId",
+    "schemaVersion", "kind", "protocol", "authorityBoundary", "projectId", (format?.sessionIdField || "headSessionId"),
     "sessionPointerHash", "runId", "runHash", "wholePlanId", "executionContractId", "contextCapsuleId",
     "contextCapsuleHash", "members", "waveBoundary", "authority", "recoveryAuthority", "instructionAuthority",
     "reviewAuthority", "promotionAuthority", "mutatesCanon", "waveId", "waveHash",
@@ -187,7 +194,7 @@ export function verifyBoundedWorkerWave(document) {
       || !/^[a-f0-9]{64}$/.test(member.authorizationHash || "")
       || !/^bounded-worker-dispatch-[a-f0-9]{24}$/.test(member.dispatchId || "")
       || !/^[a-f0-9]{64}$/.test(member.dispatchHash || "")
-      || member.workerRole === "head" || typeof member.workerRole !== "string" || !member.workerRole
+      || member.workerRole === (format?.roleField || "head") || typeof member.workerRole !== "string" || !member.workerRole
       || !new Set(["claude", "codex", "opencode"]).has(member.runtime)) {
       fail("BoundedWorkerWave member violates the dispatch boundary.", "INVALID_BOUNDED_WORKER_WAVE");
     }
@@ -198,7 +205,7 @@ export function verifyBoundedWorkerWave(document) {
     createsExecutionAuthorization: false,
     widensMemberScope: false,
     independentAtMostOnceLeases: true,
-    wholeOutcomeOwner: "head",
+    wholeOutcomeOwner: format?.roleField || "head",
     sealRequiresEveryMemberStarted: true,
     completionRequiresEveryMemberSucceeded: true,
     providerIdentityPersisted: false,
@@ -207,10 +214,10 @@ export function verifyBoundedWorkerWave(document) {
     recoveryDirectionWritable: false,
   };
   if (document.schemaVersion !== 1 || document.kind !== "BoundedWorkerWave"
-    || document.protocol?.name !== "head-agent-core-bounded-worker-wave"
+    || !format || document.protocol?.name !== format.protocol("head-agent-core-bounded-worker-wave")
     || document.protocol?.version !== BOUNDED_WORKER_WAVE_VERSION
-    || !/^head-[a-f0-9]{20}$/.test(document.projectId || "")
-    || !/^session-[A-Fa-f0-9-]{36}$/.test(document.headSessionId || "")
+    || !new RegExp(`^${format?.projectPrefix || "head-"}[a-f0-9]{20}$`).test(document.projectId || "")
+    || !/^session-[A-Fa-f0-9-]{36}$/.test(sessionIdOf(document) || "")
     || !/^[a-f0-9]{64}$/.test(document.sessionPointerHash || "")
     || !/^run-[0-9]+-[a-f0-9]{6}$/.test(document.runId || "")
     || !/^[a-f0-9]{64}$/.test(document.runHash || "")
@@ -233,7 +240,7 @@ export function verifyBoundedWorkerWave(document) {
 }
 
 function verifiedWave(inspected, waveId) {
-  const file = waveFile(inspected.project.projectRoot, waveId);
+  const file = waveFile(inspected.project.projectRoot, waveId, inspected.storage);
   if (!fs.existsSync(file)) fail(`Bounded worker wave not found: ${waveId}.`, "BOUNDED_WORKER_WAVE_NOT_FOUND");
   const wave = verifyBoundedWorkerWave(readJson(file, "BoundedWorkerWave", "INVALID_BOUNDED_WORKER_WAVE"));
   if (wave.waveId !== waveId) fail("Bounded worker wave file identity is invalid.", "BOUNDED_WORKER_WAVE_DIGEST_MISMATCH");
@@ -246,7 +253,7 @@ function verifiedWave(inspected, waveId) {
   const plan = readLineageArtifact({ root, artifactId: wave.wholePlanId }).artifact;
   const contract = readLineageArtifact({ root, artifactId: wave.executionContractId }).artifact;
   const capsule = readContextCapsule({ root, capsuleId: wave.contextCapsuleId }).capsule;
-  const run = readJson(path.join(root, ".head", "sessions", "runs", wave.runId, "run.json"),
+  const run = readJson(path.join(root, formatForVerifiedOwner(inspected).directory, "sessions", "runs", wave.runId, "run.json"),
     "Recorded Run", "INVALID_BOUNDED_WORKER_WAVE_LINEAGE");
   if (plan.kind !== "WholePlanSnapshot" || contract.kind !== "ExecutionContract"
     || contract.wholePlanId !== wave.wholePlanId || contract.capsuleId !== wave.contextCapsuleId
@@ -258,7 +265,7 @@ function verifiedWave(inspected, waveId) {
   for (const member of wave.members) {
     const { dispatch } = readBoundedWorkerDispatch({ root: inspected.project.projectRoot, authorizationId: member.authorizationId });
     if (!memberMatchesDispatch(member, dispatch)
-      || dispatch.projectId !== wave.projectId || dispatch.headSessionId !== wave.headSessionId
+      || dispatch.projectId !== wave.projectId || sessionIdOf(dispatch) !== sessionIdOf(wave)
       || dispatch.runId !== wave.runId || dispatch.wholePlanId !== wave.wholePlanId
       || dispatch.executionContractId !== wave.executionContractId || dispatch.contextCapsuleId !== wave.contextCapsuleId) {
       fail("Bounded worker wave member dispatch or lineage was changed.", "BOUNDED_WORKER_WAVE_MEMBER_DRIFT");
@@ -280,7 +287,7 @@ export function createBoundedWorkerWave(options = {}) {
   const lineage = currentLineage(inspected);
   const members = normalizeAuthorizationIds(authorizationIds).map((authorizationId) => {
     const { dispatch } = readBoundedWorkerDispatch({ root: inspected.project.projectRoot, authorizationId });
-    if (dispatch.projectId !== lineage.projectId || dispatch.headSessionId !== lineage.headSessionId
+    if (dispatch.projectId !== lineage.projectId || sessionIdOf(dispatch) !== sessionIdOf(lineage)
       || dispatch.runId !== lineage.runId || dispatch.wholePlanId !== lineage.wholePlanId
       || dispatch.executionContractId !== lineage.executionContractId || dispatch.contextCapsuleId !== lineage.contextCapsuleId) {
       fail("Bounded worker wave members must share the exact current Project/Session/Run/plan/contract/Capsule lineage.", "BOUNDED_WORKER_WAVE_MEMBER_LINEAGE_CONFLICT");
@@ -290,7 +297,7 @@ export function createBoundedWorkerWave(options = {}) {
   const wave = verifyBoundedWorkerWave(identify({
     schemaVersion: 1,
     kind: "BoundedWorkerWave",
-    protocol: { name: "head-agent-core-bounded-worker-wave", version: BOUNDED_WORKER_WAVE_VERSION },
+    protocol: { name: formatForVerifiedOwner(inspected).protocol("head-agent-core-bounded-worker-wave"), version: BOUNDED_WORKER_WAVE_VERSION },
     authorityBoundary: artifactAuthorityBoundary("BoundedWorkerWave"),
     ...lineage,
     members,
@@ -298,7 +305,7 @@ export function createBoundedWorkerWave(options = {}) {
       createsExecutionAuthorization: false,
       widensMemberScope: false,
       independentAtMostOnceLeases: true,
-      wholeOutcomeOwner: "head",
+      wholeOutcomeOwner: formatForVerifiedOwner(inspected).roleField,
       sealRequiresEveryMemberStarted: true,
       completionRequiresEveryMemberSucceeded: true,
       providerIdentityPersisted: false,
@@ -313,7 +320,7 @@ export function createBoundedWorkerWave(options = {}) {
     promotionAuthority: false,
     mutatesCanon: false,
   }, { prefix: "bounded-worker-wave", idKey: "waveId", hashKey: "waveHash" }));
-  const file = waveFile(inspected.project.projectRoot, wave.waveId);
+  const file = waveFile(inspected.project.projectRoot, wave.waveId, inspected.storage);
   try { writeRuntimeInvocationArtifactExclusive(file, pretty(wave)); }
   catch (error) {
     if (error.code !== "EEXIST") throw error;
@@ -324,17 +331,17 @@ export function createBoundedWorkerWave(options = {}) {
   return { status: "created", file, wave };
 }
 
-function currentResult(root, authorizationId) {
-  try { return readRuntimeInvocationResult({ root, authorizationId }); }
+function currentResult(root, authorizationId, storage) {
+  try { return readRuntimeInvocationResult({ root, authorizationId, storage }); }
   catch (error) {
     if (error.code === "RUNTIME_INVOCATION_RESULT_NOT_FOUND") return null;
     throw error;
   }
 }
 
-function memberOperationalStatus(root, projectId, member) {
-  const result = currentResult(root, member.authorizationId);
-  const lease = inspectRuntimeExecutionLease({ projectRoot: root, projectId, authorizationId: member.authorizationId });
+function memberOperationalStatus(root, projectId, member, storage) {
+  const result = currentResult(root, member.authorizationId, storage);
+  const lease = inspectRuntimeExecutionLease({ projectRoot: root, projectId, authorizationId: member.authorizationId, storage });
   const started = lease.singleUseConsumed === true || Boolean(result);
   const returned = Boolean(result);
   const succeeded = result?.receipt?.status === "completed";
@@ -362,8 +369,9 @@ function memberOperationalStatus(root, projectId, member) {
 }
 
 function verifySeal(document, wave) {
+  const format = familyFormatForOriginal("head-agent-core-bounded-worker-wave-seal", document);
   const fields = [
-    "schemaVersion", "kind", "protocol", "authorityBoundary", "projectId", "headSessionId", "waveId", "waveHash",
+    "schemaVersion", "kind", "protocol", "authorityBoundary", "projectId", (format?.sessionIdField || "headSessionId"), "waveId", "waveHash",
     "runId", "wholePlanId", "executionContractId", "contextCapsuleId", "memberStartEvidence", "sealBoundary",
     "authority", "recoveryAuthority", "instructionAuthority", "reviewAuthority", "promotionAuthority", "mutatesCanon",
     "sealId", "sealHash",
@@ -398,9 +406,9 @@ function verifySeal(document, wave) {
     recoveryDirectionWritable: false,
   };
   if (document.schemaVersion !== 1 || document.kind !== "BoundedWorkerWaveSeal"
-    || document.protocol?.name !== "head-agent-core-bounded-worker-wave-seal"
+    || !format || document.protocol?.name !== format.protocol("head-agent-core-bounded-worker-wave-seal")
     || document.protocol?.version !== BOUNDED_WORKER_WAVE_VERSION
-    || document.projectId !== wave.projectId || document.headSessionId !== wave.headSessionId
+    || document.projectId !== wave.projectId || sessionIdOf(document) !== sessionIdOf(wave)
     || document.waveId !== wave.waveId || document.waveHash !== wave.waveHash || document.runId !== wave.runId
     || document.wholePlanId !== wave.wholePlanId || document.executionContractId !== wave.executionContractId
     || document.contextCapsuleId !== wave.contextCapsuleId
@@ -419,8 +427,9 @@ function verifySeal(document, wave) {
 }
 
 function verifyAbandonment(document, wave) {
+  const format = familyFormatForOriginal("head-agent-core-bounded-worker-wave-abandonment", document);
   const fields = [
-    "schemaVersion", "kind", "protocol", "authorityBoundary", "projectId", "headSessionId", "waveId", "waveHash",
+    "schemaVersion", "kind", "protocol", "authorityBoundary", "projectId", (format?.sessionIdField || "headSessionId"), "waveId", "waveHash",
     "runId", "reasonCode", "reasonSummary", "memberEvidence", "abandonBoundary", "authority", "recoveryAuthority",
     "instructionAuthority", "reviewAuthority", "promotionAuthority", "mutatesCanon", "abandonmentId", "abandonmentHash",
   ];
@@ -449,9 +458,9 @@ function verifyAbandonment(document, wave) {
     writesRecoveryDirection: false,
   };
   if (document.schemaVersion !== 1 || document.kind !== "BoundedWorkerWaveAbandonment"
-    || document.protocol?.name !== "head-agent-core-bounded-worker-wave-abandonment"
+    || !format || document.protocol?.name !== format.protocol("head-agent-core-bounded-worker-wave-abandonment")
     || document.protocol?.version !== BOUNDED_WORKER_WAVE_VERSION
-    || document.projectId !== wave.projectId || document.headSessionId !== wave.headSessionId
+    || document.projectId !== wave.projectId || sessionIdOf(document) !== sessionIdOf(wave)
     || document.waveId !== wave.waveId || document.waveHash !== wave.waveHash || document.runId !== wave.runId
     || !ABANDON_REASON_CODES.has(document.reasonCode)
     || typeof document.reasonSummary !== "string" || Buffer.byteLength(document.reasonSummary, "utf8") > 256
@@ -472,7 +481,7 @@ function verifyAbandonment(document, wave) {
 }
 
 function readTerminal(root, wave) {
-  const file = terminalFile(root, wave.waveId);
+  const file = terminalFile(root, wave.waveId, originalFormat(wave));
   if (!fs.existsSync(file)) return { file, seal: null, abandonment: null };
   const document = readJson(file, "Bounded worker wave terminal record", "INVALID_BOUNDED_WORKER_WAVE_TERMINAL");
   if (document?.kind === "BoundedWorkerWaveSeal") return { file, seal: verifySeal(document, wave), abandonment: null };
@@ -481,7 +490,7 @@ function readTerminal(root, wave) {
 }
 
 function buildStatusProjection({ root, wave, seal = null, abandonment = null, admissionHost = null }) {
-  const members = wave.members.map((member) => memberOperationalStatus(root, wave.projectId, member));
+  const members = wave.members.map((member) => memberOperationalStatus(root, wave.projectId, member, originalFormat(wave)));
   const counts = {
     requested: members.length,
     started: members.filter((member) => member.started).length,
@@ -495,10 +504,10 @@ function buildStatusProjection({ root, wave, seal = null, abandonment = null, ad
   const payload = {
     schemaVersion: 1,
     kind: "WorkerWaveStatusProjection",
-    protocol: { name: "head-agent-core-worker-wave-status", version: BOUNDED_WORKER_WAVE_VERSION },
+    protocol: { name: originalFormat(wave).protocol("head-agent-core-worker-wave-status"), version: BOUNDED_WORKER_WAVE_VERSION },
     authorityBoundary: artifactAuthorityBoundary("WorkerWaveStatusProjection"),
     projectId: wave.projectId,
-    headSessionId: wave.headSessionId,
+    [originalFormat(wave).sessionIdField]: sessionIdOf(wave),
     waveId: wave.waveId,
     sealId: seal?.sealId || null,
     abandonmentId: abandonment?.abandonmentId || null,
@@ -558,7 +567,7 @@ export function sealBoundedWorkerWave({ root = ".", waveId } = {}) {
   verifyLineageMatches(read.wave, ready(root, "a bounded worker wave is sealed"));
   if (read.abandonment) fail("An abandoned bounded worker wave cannot be sealed.", "BOUNDED_WORKER_WAVE_ABANDONED");
   if (read.seal) return { status: "existing", seal: read.seal, wave: read.wave };
-  const members = read.wave.members.map((member) => memberOperationalStatus(path.resolve(root), read.wave.projectId, member));
+  const members = read.wave.members.map((member) => memberOperationalStatus(path.resolve(root), read.wave.projectId, member, originalFormat(read.wave)));
   if (members.some((member) => !member.started || !member.consumptionId)) {
     fail("Every bounded worker wave member must have verified authorization consumption before seal.", "BOUNDED_WORKER_WAVE_NOT_FULLY_STARTED");
   }
@@ -572,10 +581,10 @@ export function sealBoundedWorkerWave({ root = ".", waveId } = {}) {
   const seal = verifySeal(identify({
     schemaVersion: 1,
     kind: "BoundedWorkerWaveSeal",
-    protocol: { name: "head-agent-core-bounded-worker-wave-seal", version: BOUNDED_WORKER_WAVE_VERSION },
+    protocol: { name: originalFormat(read.wave).protocol("head-agent-core-bounded-worker-wave-seal"), version: BOUNDED_WORKER_WAVE_VERSION },
     authorityBoundary: artifactAuthorityBoundary("BoundedWorkerWaveSeal"),
     projectId: read.wave.projectId,
-    headSessionId: read.wave.headSessionId,
+    [originalFormat(read.wave).sessionIdField]: sessionIdOf(read.wave),
     waveId: read.wave.waveId,
     waveHash: read.wave.waveHash,
     runId: read.wave.runId,
@@ -599,7 +608,7 @@ export function sealBoundedWorkerWave({ root = ".", waveId } = {}) {
     promotionAuthority: false,
     mutatesCanon: false,
   }, { prefix: "bounded-worker-wave-seal", idKey: "sealId", hashKey: "sealHash" }), read.wave);
-  const file = terminalFile(path.resolve(root), read.wave.waveId);
+  const file = terminalFile(path.resolve(root), read.wave.waveId, originalFormat(read.wave));
   try { writeRuntimeInvocationArtifactExclusive(file, pretty(seal)); }
   catch (error) {
     if (error.code !== "EEXIST") throw error;
@@ -633,7 +642,7 @@ export function abandonBoundedWorkerWave({ root = ".", waveId, reasonCode, reaso
     }
     return { status: "existing", abandonment: read.abandonment, wave: read.wave };
   }
-  const members = read.wave.members.map((member) => memberOperationalStatus(path.resolve(root), read.wave.projectId, member));
+  const members = read.wave.members.map((member) => memberOperationalStatus(path.resolve(root), read.wave.projectId, member, originalFormat(read.wave)));
   const memberEvidence = members.map((member) => ({
     authorizationId: member.authorizationId,
     dispatchId: member.dispatchId,
@@ -644,10 +653,10 @@ export function abandonBoundedWorkerWave({ root = ".", waveId, reasonCode, reaso
   const abandonment = verifyAbandonment(identify({
     schemaVersion: 1,
     kind: "BoundedWorkerWaveAbandonment",
-    protocol: { name: "head-agent-core-bounded-worker-wave-abandonment", version: BOUNDED_WORKER_WAVE_VERSION },
+    protocol: { name: originalFormat(read.wave).protocol("head-agent-core-bounded-worker-wave-abandonment"), version: BOUNDED_WORKER_WAVE_VERSION },
     authorityBoundary: artifactAuthorityBoundary("BoundedWorkerWaveAbandonment"),
     projectId: read.wave.projectId,
-    headSessionId: read.wave.headSessionId,
+    [originalFormat(read.wave).sessionIdField]: sessionIdOf(read.wave),
     waveId: read.wave.waveId,
     waveHash: read.wave.waveHash,
     runId: read.wave.runId,
@@ -668,7 +677,7 @@ export function abandonBoundedWorkerWave({ root = ".", waveId, reasonCode, reaso
     promotionAuthority: false,
     mutatesCanon: false,
   }, { prefix: "bounded-worker-wave-abandonment", idKey: "abandonmentId", hashKey: "abandonmentHash" }), read.wave);
-  const file = terminalFile(path.resolve(root), read.wave.waveId);
+  const file = terminalFile(path.resolve(root), read.wave.waveId, originalFormat(read.wave));
   try { writeRuntimeInvocationArtifactExclusive(file, pretty(abandonment)); }
   catch (error) {
     if (error.code !== "EEXIST") throw error;
@@ -685,10 +694,10 @@ function buildResultProjection(statusProjection) {
   const payload = {
     schemaVersion: 1,
     kind: "WorkerWaveResultProjection",
-    protocol: { name: "head-agent-core-worker-wave-results", version: BOUNDED_WORKER_WAVE_VERSION },
+    protocol: { name: originalFormat(statusProjection).protocol("head-agent-core-worker-wave-results"), version: BOUNDED_WORKER_WAVE_VERSION },
     authorityBoundary: artifactAuthorityBoundary("WorkerWaveResultProjection"),
     projectId: statusProjection.projectId,
-    headSessionId: statusProjection.headSessionId,
+    [originalFormat(statusProjection).sessionIdField]: sessionIdOf(statusProjection),
     waveId: statusProjection.waveId,
     sealId: statusProjection.sealId,
     state: statusProjection.state,
@@ -722,10 +731,10 @@ function waitOutcome(statusProjection, timedOut) {
   const payload = {
     schemaVersion: 1,
     kind: "BoundedWorkerWaveWaitOutcome",
-    protocol: { name: "head-agent-core-bounded-worker-wave-wait", version: BOUNDED_WORKER_WAVE_VERSION },
+    protocol: { name: originalFormat(statusProjection).protocol("head-agent-core-bounded-worker-wave-wait"), version: BOUNDED_WORKER_WAVE_VERSION },
     authorityBoundary: artifactAuthorityBoundary("BoundedWorkerWaveWaitOutcome"),
     projectId: statusProjection.projectId,
-    headSessionId: statusProjection.headSessionId,
+    [originalFormat(statusProjection).sessionIdField]: sessionIdOf(statusProjection),
     waveId: statusProjection.waveId,
     sealId: statusProjection.sealId,
     state: timedOut ? "timed-out" : statusProjection.state,

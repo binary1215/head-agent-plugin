@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { EventEmitter } from "node:events";
 import test from "node:test";
-import { initializeProject, inspectProject } from "../scripts/lib/head-core.mjs";
+import { initializeProject, inspectProject } from "../scripts/lib/lode-core.mjs";
 import { buildRuntimeVersionEvidence } from "../scripts/lib/runtime-machine-execution.mjs";
 import { buildRuntimeProjectBinding, buildRuntimeProtocolEvidence } from "../scripts/lib/runtime-protocol-evidence.mjs";
 import { buildRuntimeInvocationAuthorization } from "../scripts/lib/runtime-invocation-lifecycle.mjs";
@@ -24,7 +24,7 @@ import runWorker from "../scripts/lib/runtime-codex-worker-runner.mjs";
 const pluginRoot = path.resolve(import.meta.dirname, "..");
 const moduleFile = path.join(pluginRoot, "scripts/lib/runtime-codex-worker-host.mjs");
 const hash = bytes => crypto.createHash("sha256").update(bytes).digest("hex");
-const nativeRoot = process.env.HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT;
+const nativeRoot = (process.env.LODE_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT || process.env.HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT);
 const log = event => console.log(JSON.stringify({ ...event, observedAt: new Date().toISOString(), actualProviderInvoked: false }));
 log({ event: "native-host-composition-tests", pid: process.pid, parentPid: process.ppid, command: process.execPath, args: process.argv.slice(1), cwd: process.cwd(), ports: [] });
 function schemaSpawn(_command, args) {
@@ -36,7 +36,7 @@ function schemaSpawn(_command, args) {
   return child;
 }
 async function fixture(t, { scenario = "native-composition", evidenceMode = "protocol-fixture" } = {}) {
-  const parent = fs.realpathSync(process.env.HEAD_AGENT_TEST_TMP || os.tmpdir());
+  const parent = fs.realpathSync(process.env.LODE_AGENT_TEST_TMP || process.env.HEAD_AGENT_TEST_TMP || os.tmpdir());
   const dir = fs.mkdtempSync(path.join(parent, "head-product-native-host-"));
   const root = path.join(dir, "project"), operational = path.join(dir, "operational"), bin = path.join(dir, "bin");
   for (const p of [root, operational, bin]) fs.mkdirSync(p);
@@ -70,6 +70,10 @@ async function fixture(t, { scenario = "native-composition", evidenceMode = "pro
     fs.rmSync(dir, { recursive: true, force: true });
   });
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const storage = inspectProject(root).storage;
+  assert.equal(storage.directory, ".lode");
+  assert.equal(fs.existsSync(path.resolve(root, ".lode/project.json")), true);
+  assert.equal(fs.existsSync(path.resolve(root, ".head/project.json")), false);
   fs.writeFileSync(path.join(root, "selected.txt"), "Synthetic source\n");
   const executable = path.join(bin, process.platform === "win32" ? "codex.exe" : "codex");
   fs.writeFileSync(executable, "Synthetic schema-only identity; never executed\n");
@@ -78,7 +82,7 @@ async function fixture(t, { scenario = "native-composition", evidenceMode = "pro
   const versionEvidence = await buildRuntimeVersionEvidence({ runtimes: ["codex"], environment, spawnImplementation: schemaSpawn });
   const protocolEvidence = await buildRuntimeProtocolEvidence({ runtimes: ["codex"], environment, versionEvidence, spawnImplementation: schemaSpawn });
   const project = inspectProject(root);
-  const projectBinding = buildRuntimeProjectBinding({ projectId: project.project.projectId, headSessionId: project.state.sessionId,
+  const projectBinding = buildRuntimeProjectBinding({ storage, projectId: project.project.projectId, headSessionId: project.state.sessionId,
     projectRoot: root, projectStatus: "ready", versionEvidence, protocolEvidence });
   const sourceRead = { thread: { id: "source", turns: [{ id: "cutoff", status: "completed", itemsView: "full",
     items: [{ type: "agentMessage", id: "past", text: "Synthetic public context" }] }] } };
@@ -100,7 +104,7 @@ async function fixture(t, { scenario = "native-composition", evidenceMode = "pro
   const options = { root, executionRoot: workspaceBinding.executionRoot, authorization, policy, workspaceBinding, hostModuleFile: moduleFile, hostConnection, onProcess: log };
   const lease = () => inspectRuntimeExecutionLease({ projectRoot: root, projectId: authorization.projectId, authorizationId: authorization.authorizationId });
   const journal = () => fs.readFileSync(path.join(operational, "worker-jobs", authorization.projectId, authorization.authorizationId, "native-host-transcript.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
-  return { options, root, operational, authorization, selection, lease, journal, detached: () => { detached = true; }, sessionFile: path.join(root, ".head/sessions/current.json") };
+  return { storage, options, root, operational, authorization, selection, lease, journal, detached: () => { detached = true; }, sessionFile: path.join(root, storage.directory, "sessions/current.json") };
 }
 
 test("product runner composes owned native transport, exact lease and result without P2 or provider authority", { skip: !nativeRoot }, async t => {
@@ -134,7 +138,7 @@ test("product native composition reconnects in detached owner without serializin
   assert.equal(state.ownerExitObserved, true);
   const settled = reconcileBoundedWorkerJob({ root: f.root, authorizationId: f.authorization.authorizationId });
   assert.equal(settled.status, "completed");
-  assert.equal(readRuntimeInvocationRecord({ root: f.root, authorizationId: f.authorization.authorizationId }).receipt.status, "completed");
+  assert.equal(readRuntimeInvocationRecord({ root: f.root, storage: f.storage, authorizationId: f.authorization.authorizationId }).receipt.status, "completed");
   const bytes = JSON.stringify(f.journal());
   await startBoundedWorkerJob({ root: f.root, authorizationId: f.authorization.authorizationId, role: "coder" }, { host,
     supervisorSelection: f.selection, onProcess: log });

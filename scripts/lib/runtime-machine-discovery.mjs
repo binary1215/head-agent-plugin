@@ -1,3 +1,4 @@
+import { formatForVerifiedOwner, familyFormatForOriginal } from "./project-storage-format.mjs";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -194,7 +195,7 @@ function platformDescriptor(platform) {
   };
 }
 
-function agentDescriptor(runtime) {
+function agentDescriptor(runtime, storage) {
   return {
     contractVersion: RUNTIME_MACHINE_DISCOVERY_VERSION,
     adapterKind: `${runtime}-read-only-machine-discovery`,
@@ -204,7 +205,7 @@ function agentDescriptor(runtime) {
     disabledOperations: ["start", "resume", "stream", "interrupt", "close"],
     tuiScraping: false,
     providerSessionIdentity: "external-reference-only",
-    headSessionIdentity: "canonical-project-session",
+    [formatForVerifiedOwner(storage).value("headSessionIdentity")]: "canonical-project-session",
     executionContractRequiredForControl: true,
     controlOperationsEnabled: false,
     instructionAuthority: false,
@@ -265,14 +266,15 @@ export class ReadOnlyPlatformAdapter {
 }
 
 export class ReadOnlyAgentRuntimeAdapter {
-  constructor({ runtime, platformAdapter } = {}) {
+  constructor({ runtime, platformAdapter, storage } = {}) {
+    this.storage = storage;
     this.runtime = normalizeRuntime(runtime);
     if (!(platformAdapter instanceof ReadOnlyPlatformAdapter)) {
       fail("ReadOnlyAgentRuntimeAdapter requires a ReadOnlyPlatformAdapter.", "INVALID_RUNTIME_MACHINE_ADAPTER");
     }
     this.platformAdapter = platformAdapter;
   }
-  describe() { return agentDescriptor(this.runtime); }
+  describe() { return agentDescriptor(this.runtime, this.storage); }
   probe() {
     const executable = this.platformAdapter.resolveExecutable(this.runtime);
     const payload = {
@@ -350,8 +352,10 @@ export function verifyPlatformMachineProbe(document) {
 export function verifyAgentRuntimeMachineProbe(document) {
   assertFields(document, ["schemaVersion", "kind", "protocolVersion", "descriptor", "platform", "executable", "status", "runtimeControlEnabled", "authorityEffect", "probeId", "probeHash"], "Agent runtime machine probe");
   const runtime = normalizeRuntime(document.descriptor?.runtime);
+  const format = Object.hasOwn(document.descriptor || {}, "lodeSessionIdentity")
+    ? formatForVerifiedOwner({ dialect: "lode", directory: ".lode" }) : formatForVerifiedOwner();
   validateExecutableObservation(document.executable);
-  if (canonicalJson(document.descriptor) !== canonicalJson(agentDescriptor(runtime))
+  if (canonicalJson(document.descriptor) !== canonicalJson(agentDescriptor(runtime, format))
     || document.executable.runtime !== runtime || !RUNTIME_ADAPTER_PLATFORMS.includes(document.platform)
     || document.schemaVersion !== 1 || document.kind !== "AgentRuntimeMachineProbe"
     || document.protocolVersion !== RUNTIME_MACHINE_DISCOVERY_VERSION
@@ -379,12 +383,12 @@ export function buildRuntimeMachineComposition({
   runtimes = RUNTIME_ADAPTER_RUNTIMES,
   platform = process.platform,
   environment = process.env,
-  fileSystem = fs,
+  fileSystem = fs, storage,
 } = {}) {
   const selectedRuntimes = normalizedRuntimes(runtimes);
   const platformAdapter = new ReadOnlyPlatformAdapter({ platform, environment, fileSystem });
   const workspaceHostAdapter = new ReadOnlyWorkspaceHostAdapter();
-  const agentRuntimeProbes = selectedRuntimes.map((runtime) => new ReadOnlyAgentRuntimeAdapter({ runtime, platformAdapter }).probe());
+  const agentRuntimeProbes = selectedRuntimes.map((runtime) => new ReadOnlyAgentRuntimeAdapter({ runtime, platformAdapter, storage }).probe());
   const payload = {
     schemaVersion: 1,
     kind: "RuntimeMachineComposition",

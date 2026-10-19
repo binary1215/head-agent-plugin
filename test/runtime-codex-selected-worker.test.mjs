@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { EventEmitter } from "node:events";
 import test from "node:test";
-import { initializeProject, inspectProject } from "../scripts/lib/head-core.mjs";
+import { initializeProject, inspectProject } from "../scripts/lib/lode-core.mjs";
 import { buildRuntimeVersionEvidence } from "../scripts/lib/runtime-machine-execution.mjs";
 import { buildRuntimeProjectBinding, buildRuntimeProtocolEvidence } from "../scripts/lib/runtime-protocol-evidence.mjs";
 import { buildRuntimeInvocationAuthorization, prepareRuntimeInvocationExecution } from "../scripts/lib/runtime-invocation-lifecycle.mjs";
@@ -42,7 +42,7 @@ function schemaSpawn(_command, args) {
 }
 
 async function fixture(t, { mode = "success", timeoutMs = 8000, evidenceMode = "protocol-fixture" } = {}) {
-  const parent = fs.realpathSync(process.env.HEAD_AGENT_TEST_TMP || os.tmpdir());
+  const parent = fs.realpathSync(process.env.LODE_AGENT_TEST_TMP || process.env.HEAD_AGENT_TEST_TMP || os.tmpdir());
   const container = fs.mkdtempSync(path.join(parent, "head-codex-selected-"));
   const root = path.join(container, "project");
   const bin = path.join(container, "bin");
@@ -58,6 +58,10 @@ async function fixture(t, { mode = "success", timeoutMs = 8000, evidenceMode = "
     fs.rmSync(container, { recursive: true, force: true });
   });
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const storage = inspectProject(root).storage;
+  assert.equal(storage.directory, ".lode");
+  assert.equal(fs.existsSync(path.resolve(root, ".lode/project.json")), true);
+  assert.equal(fs.existsSync(path.resolve(root, ".head/project.json")), false);
   fs.writeFileSync(path.join(root, "selected.txt"), "selected dirty bytes Ω\r\n");
   const executable = path.join(bin, process.platform === "win32" ? "codex.exe" : "codex");
   fs.writeFileSync(executable, "Synthetic executable identity only; never executed\n");
@@ -66,7 +70,7 @@ async function fixture(t, { mode = "success", timeoutMs = 8000, evidenceMode = "
   const versionEvidence = await buildRuntimeVersionEvidence({ runtimes: ["codex"], environment, spawnImplementation: schemaSpawn });
   const protocolEvidence = await buildRuntimeProtocolEvidence({ runtimes: ["codex"], environment, versionEvidence, spawnImplementation: schemaSpawn });
   const inspected = inspectProject(root);
-  const projectBinding = buildRuntimeProjectBinding({ projectId: inspected.project.projectId,
+  const projectBinding = buildRuntimeProjectBinding({ storage, projectId: inspected.project.projectId,
     headSessionId: inspected.state.sessionId, projectRoot: root, projectStatus: "ready", versionEvidence, protocolEvidence });
   const sourceBasis = captureWorkerSourceBasis({ root, paths: ["selected.txt"], maxBytes: 1024 * 1024 });
   const workspaceBinding = prepareWorkerWorkspace({ projectRoot: root, workspaceRoot: path.join(container, "selected"), sourceBasis, maxBytes: 1024 * 1024 });
@@ -87,8 +91,8 @@ async function fixture(t, { mode = "success", timeoutMs = 8000, evidenceMode = "
   const bind = (extra = {}) => bindCodexWorkerPolicyCapability({ host, policy, authorization, workspaceBinding, root, target, ...extra });
   const capability = bind();
   const lease = () => inspectRuntimeExecutionLease({ projectRoot: root, projectId: authorization.projectId, authorizationId: authorization.authorizationId });
-  return { container, root, executable, operational, policy, workspaceBinding, authorization, protocolEvidence, projectBinding,
-    target, bind, capability, lease, authorize, mode, sessionFile: path.join(root, ".head", "sessions", "current.json") };
+  return { storage, container, root, executable, operational, policy, workspaceBinding, authorization, protocolEvidence, projectBinding,
+    target, bind, capability, lease, authorize, mode, sessionFile: path.join(root, storage.directory, "sessions", "current.json") };
 }
 
 test("typed plan is intent; missing, plain JSON and returned boolean proof never consume or spawn", async t => {
@@ -223,9 +227,9 @@ for (const reason of ["cancel", "timeout"]) {
 }
 
 async function transport(f) {
-  const supervisorSelection = resolveVerifiedProcessSupervisor({ pluginRoot: process.env.HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT || pluginRoot });
+  const supervisorSelection = resolveVerifiedProcessSupervisor({ pluginRoot: (process.env.LODE_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT || process.env.HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT) || pluginRoot });
   fs.writeFileSync(path.join(f.container, "fixture-connection.json"), JSON.stringify({ executable: f.executable,
-    protocolEvidence: f.protocolEvidence, projectBinding: f.projectBinding, supervisorSelection, mode: f.mode }));
+    storage: f.storage, protocolEvidence: f.protocolEvidence, projectBinding: f.projectBinding, supervisorSelection, mode: f.mode }));
   return { supervisorSelection, ...await connectCodexWorkerHost({ root: f.root, executionRoot: f.workspaceBinding.executionRoot,
     authorization: f.authorization, policy: f.policy }) };
 }
@@ -234,7 +238,7 @@ for (const failure of ["missingExecution", "resolverError", "invalidHost", "clos
   test(`fixed runner closes its reconnected Host on ${failure} before any lease use`, async t => {
     const f = await fixture(t);
     fs.writeFileSync(path.join(f.container, "fixture-connection.json"), JSON.stringify({
-      executable: f.executable, protocolEvidence: f.protocolEvidence, projectBinding: f.projectBinding,
+      executable: f.executable, storage: f.storage, protocolEvidence: f.protocolEvidence, projectBinding: f.projectBinding,
       [failure]: true, ...(failure === "closeError" ? { resolverError: true } : {}),
     }), { flag: "wx" });
     const expected = failure === "closeError" ? "CODEX_WORKER_HOST_CLEANUP_FAILED"
@@ -352,9 +356,10 @@ for (const mode of ["success", "expose-root"]) {
     assert.equal(f.lease().status, "consumed-released");
     assert.equal(outcome.executionLease.consumption.consumptionId, f.lease().consumption.consumptionId);
     assert.equal(outcome.executionLease.release.releaseId, f.lease().release.releaseId);
-    assert.equal(readRuntimeInvocationRecord({ root: f.root, authorizationId: f.authorization.authorizationId }).receipt.receiptId, outcome.receipt.receiptId);
+    assert.equal(readRuntimeInvocationRecord({ root: f.root, storage: f.storage, authorizationId: f.authorization.authorizationId }).receipt.receiptId, outcome.receipt.receiptId);
     assert.deepEqual(fs.readFileSync(f.sessionFile), beforeP2);
     assert.equal(fs.existsSync(path.join(f.workspaceBinding.executionRoot, ".head")), false);
+    assert.equal(fs.existsSync(path.join(f.workspaceBinding.executionRoot, ".lode")), false);
     assert.equal(fs.existsSync(path.join(f.operational, "runtime-provider-invocations")), false);
     for (const pid of owned) assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
   });
@@ -399,7 +404,7 @@ for (const mode of ["success", "write", "cancel", "timeout"]) {
       assert.equal(state.result.actualProviderInvoked, false);
       if (mode === "write") assert.ok(state.workspacePatch);
       if (mode === "success") {
-        const recordDirectory = path.join(f.root, ".head", "runtime", "invocations", f.authorization.authorizationId);
+        const recordDirectory = path.join(f.root, f.storage.directory, "runtime", "invocations", f.authorization.authorizationId);
         fs.renameSync(recordDirectory, path.join(f.container, "retained-result-before-reconcile"));
         assert.equal(readBoundedWorkerJob(input, { onProcess }).status, "incomplete");
         const recovered = reconcileBoundedWorkerJob(input, { onProcess });

@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { runCommand, usage } from "../scripts/head.mjs";
 import { dispatch, tools } from "../scripts/mcp-server.mjs";
-import { initializeProject } from "../scripts/lib/head-core.mjs";
+import { initializeProject, inspectProject } from "../scripts/lib/head-core.mjs";
 import { buildWorldModel } from "../scripts/lib/world-model.mjs";
 import { startOnboarding, reviewOnboarding } from "../scripts/lib/onboarding.mjs";
 import { startFeatureMapping, reviewFeatureMapping } from "../scripts/lib/feature-mapping.mjs";
@@ -27,7 +27,7 @@ function fixture(t, initialized = true) {
   });
   fs.writeFileSync(path.join(root, "source.mjs"), "export function answer() { return 42; }\n");
   if (initialized) initializeProject({ root, pluginRoot, runtimes: ["codex"] });
-  return root;
+  return { root, layout: initialized ? inspectProject(root).storage : null };
 }
 function snapshot(root) {
   return fs.readdirSync(root, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name)).flatMap(entry => {
@@ -53,9 +53,9 @@ async function startCliRun(root, sessionId, suffix) {
 }
 
 test("public session creation preserves the default active Run and unknown effect record", async t => {
-  const root = fixture(t);
+  const { root, layout } = fixture(t);
   const active = await startCliRun(root, null, "default");
-  const defaultFile = path.join(root, ".head", "sessions", "current.json");
+  const defaultFile = path.join(root, layout.directory, "sessions", "current.json");
   const current = JSON.parse(fs.readFileSync(defaultFile, "utf8"));
   current.unconfirmedExternalEffect = { action: "publish", outcome: "unknown", replayAllowed: false };
   fs.writeFileSync(defaultFile, JSON.stringify(current));
@@ -74,8 +74,8 @@ test("public session creation preserves the default active Run and unknown effec
 });
 
 test("concurrent public MCP awaits and CLI operations keep two Session checkpoints and Runs independent", async t => {
-  const root = fixture(t);
-  const defaultFile = path.join(root, ".head", "sessions", "current.json");
+  const { root, layout } = fixture(t);
+  const defaultFile = path.join(root, layout.directory, "sessions", "current.json");
   const defaultBefore = fs.readFileSync(defaultFile, "utf8");
   const a = await call("head_session_create", { project_root: root, purpose: "API progress" });
   const b = await runCommand(["session-create", root, "--purpose", "UI progress"]);
@@ -123,7 +123,7 @@ test("concurrent public MCP awaits and CLI operations keep two Session checkpoin
 });
 
 test("a later common cancellation survives historical checkpoint restore across Sessions", async t => {
-  const root = fixture(t);
+  const { root, layout } = fixture(t);
   const a = await call("head_session_create", { project_root: root, purpose: "Deploy investigation" });
   const b = await call("head_session_create", { project_root: root, purpose: "User direction" });
   const initial = { goal: "Investigate release", constraints: [], decisions: ["Investigate deployment"], cancelledActions: [] };
@@ -149,7 +149,7 @@ test("a later common cancellation survives historical checkpoint restore across 
 });
 
 test("managed entry is optional discoverable execution with the existing authorization boundary", async t => {
-  const root = fixture(t), before = snapshot(root);
+  const { root, layout } = fixture(t), before = snapshot(root);
   const discovered = await call("head_tools_discover", { name: "head_bounded_worker_start" });
   assert.equal(discovered.persisted, false);
   assert.equal(discovered.grantsAuthorization, false);
@@ -162,12 +162,12 @@ test("managed entry is optional discoverable execution with the existing authori
   assert.deepEqual(snapshot(root), before);
   assert(usage({ all: true, surface: "managed-maintenance" }).commands.some(command => command.includes("worker-wave-create")));
   assert(!usage().commands.some(command => command.includes("worker-wave-create")));
-  assert(tools.some(tool => tool.name === "head_project_graph"));
+  assert(tools.some(tool => tool.name === "lode_project_graph"));
 });
 
 test("public graph-first fallback needs no initialization, Product approval, Run, Capsule or DB", async t => {
   for (const initialized of [false, true]) {
-    const root = fixture(t, initialized), before = snapshot(root);
+    const { root, layout } = fixture(t, initialized), before = snapshot(root);
     const first = await call("head_project_graph", { project_root: root, query: "missing information" });
     assert.equal(first.kind, "ProjectGraphDiscoveryProjection");
     assert.equal(first.sourceFallback.available, true);
@@ -180,15 +180,15 @@ test("public graph-first fallback needs no initialization, Product approval, Run
     assert.equal(next.resultId, first.resultId);
     assert.equal(cli.resultId, first.resultId);
     assert.deepEqual(snapshot(root), before);
-    if (initialized) assert(!fs.existsSync(path.join(root, ".head", "world-model", "current.json")));
-    else assert(!fs.existsSync(path.join(root, ".head")));
+    if (initialized) assert(!fs.existsSync(path.join(root, layout.directory, "world-model", "current.json")));
+    else { assert(!fs.existsSync(path.join(root, ".head"))); assert(!fs.existsSync(path.join(root, ".lode"))); }
     fs.writeFileSync(path.join(root, "ordinary-work.txt"), "continue ordinary source work\n");
     assert.equal(fs.readFileSync(path.join(root, "ordinary-work.txt"), "utf8"), "continue ordinary source work\n");
   }
 });
 
 test("stale intact World evidence stays readable, while tampering and another root are excluded per layer", async t => {
-  const root = fixture(t);
+  const { root, layout } = fixture(t);
   const planInput = writeInput(root, "retained-work-plan", { objective: "Retain independent work evidence", plan: ["inspect sources"] });
   const plan = await runCommand(["lineage-plan", root, "--input", planInput]);
   const world = await buildWorldModel({ root });
@@ -204,7 +204,7 @@ test("stale intact World evidence stays readable, while tampering and another ro
   assert(retained.summary.freshnessStates["historical-source-bytes"] >= 1);
   assert.equal(retained.authority.executionAuthority, false);
   assert.deepEqual(snapshot(root), before);
-  const snapshotFile = path.join(root, ".head", "world-model", "snapshots", `${world.snapshot.worldModelId}.json`);
+  const snapshotFile = path.join(root, layout.directory, "world-model", "snapshots", `${world.snapshot.worldModelId}.json`);
   const corrupt = JSON.parse(fs.readFileSync(snapshotFile, "utf8"));
   corrupt.repositoryFingerprint = "tampered";
   fs.writeFileSync(snapshotFile, JSON.stringify(corrupt));
@@ -214,8 +214,8 @@ test("stale intact World evidence stays readable, while tampering and another ro
   assert(excluded.nodes.some(node => node.nodeId === plan.artifact.wholePlanId));
   assert.equal(excluded.sourceFallback.available, true);
   assert.deepEqual(snapshot(root), corruptedBefore);
-  const another = fixture(t, false);
-  fs.cpSync(path.join(root, ".head"), path.join(another, ".head"), { recursive: true });
+  const { root: another } = fixture(t, false);
+  fs.cpSync(path.join(root, layout.directory), path.join(another, layout.directory), { recursive: true });
   const copiedBefore = snapshot(another);
   const wrongRoot = await call("head_project_graph", { project_root: another });
   assert.equal(wrongRoot.status, "source-fallback");
@@ -225,7 +225,7 @@ test("stale intact World evidence stays readable, while tampering and another ro
 });
 
 test("rejected Product candidates retain review and revision state through public graph expansion and summary", async t => {
-  const root = fixture(t);
+  const { root, layout } = fixture(t);
   const started = await startOnboarding({ root, mode: "new", brief: {
     schemaVersion: 1, name: "Message service", summary: "Deliver messages.",
     capabilities: [{ key: "delivery", name: "Delivery", description: "Deliver one message." }],
@@ -253,7 +253,7 @@ test("rejected Product candidates retain review and revision state through publi
 });
 
 test("rejected relationships stored in a retained World remain rejected in graph summaries and neighbor endpoints", async t => {
-  const root = fixture(t);
+  const { root, layout } = fixture(t);
   const started = await startOnboarding({ root, mode: "new", brief: {
     schemaVersion: 1, name: "Answer service", summary: "Answer a request.",
     capabilities: [{ key: "answer", name: "Answer", description: "Answer one request." }],

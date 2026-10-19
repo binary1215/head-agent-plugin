@@ -26,9 +26,9 @@ function controlCleanupClock(t) {
   return () => { realClearTimeout(watchdog); realClearTimeout(escalation); t.mock.timers.reset(); };
 }
 function fixture(t, scenario = "normal", options = {}) {
-  const dir = fs.mkdtempSync(path.join(process.env.HEAD_AGENT_TEST_TMP || os.tmpdir(), "codex-rpc-"));
+  const dir = fs.mkdtempSync(path.join(process.env.LODE_AGENT_TEST_TMP || process.env.HEAD_AGENT_TEST_TMP || os.tmpdir(), "codex-rpc-"));
   const journal = [];
-  const selection = resolveVerifiedProcessSupervisor({ pluginRoot: process.env.HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT || root });
+  const selection = resolveVerifiedProcessSupervisor({ pluginRoot: (process.env.LODE_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT || process.env.HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT) || root });
   const config = { supervisorSelection: selection, executionRoot: dir, controlFile: path.join(dir, "control.jsonl"),
     providerEnvironment: process.env, terminationGraceMs: 200, sourceThreadId: "source",
     authorizationHash: hash("synthetic-authorization"), policyDigest: hash("synthetic-policy"), inputDigest: hash("synthetic-input"),

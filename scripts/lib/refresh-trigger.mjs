@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { inspectProject, SCHEMA_VERSION } from "./head-core.mjs";
+import { formatForVerifiedOwner, familyFormatForOriginal } from "./project-storage-format.mjs";
 import { readIncrementalRefreshReceipt, readPostRefreshProjectionReceipt, refreshWorldModel } from "./incremental-refresh.mjs";
 import { inspectRefreshWriterLease, withRefreshWriterLease } from "./refresh-writer-lease.mjs";
 import { managedRootFilesForProject, REPOSITORY_SCAN_EXCLUDED_DIRECTORIES } from "./repository-scan.mjs";
@@ -99,12 +100,15 @@ function normalizeRelativePath(value, label) {
   return normalized;
 }
 
-function ignoredPath(relativePath, managedRootFiles) {
+function ignoredPath(relativePath, managedRootFiles, storage = null) {
   const segments = relativePath.split("/");
-  return segments.some((segment) => EXCLUDED_DIRECTORIES.has(segment)) || managedRootFiles.includes(relativePath);
+  const ownedManagementSubtree = formatForVerifiedOwner(storage).dialect === "lode"
+    && managedRootFiles.includes(".lode")
+    && relativePath.startsWith(".lode/");
+  return segments.some((segment) => EXCLUDED_DIRECTORIES.has(segment)) || managedRootFiles.includes(relativePath) || ownedManagementSubtree;
 }
 
-function normalizeTriggerEvent(event, index, managedRootFiles) {
+function normalizeTriggerEvent(event, index, managedRootFiles, storage = null) {
   assertFields(event, ["kind", "operation", "path", "evidenceId"], `events[${index}]`);
   if (!EVENT_KINDS.has(event.kind)) fail(`events[${index}].kind is unsupported.`, "INVALID_REFRESH_TRIGGER_EVENT");
   const operation = normalizeOperation(event.operation, `events[${index}].operation`);
@@ -114,7 +118,7 @@ function normalizeTriggerEvent(event, index, managedRootFiles) {
     return { event: { kind: "project-signal", operation, path: null, evidenceId }, ignored: false };
   }
   const relativePath = normalizeRelativePath(event.path, `events[${index}].path`);
-  if (ignoredPath(relativePath, managedRootFiles)) return { event: null, ignored: true };
+  if (ignoredPath(relativePath, managedRootFiles, storage)) return { event: null, ignored: true };
   return { event: { kind: "path-hint", operation, path: relativePath, evidenceId }, ignored: false };
 }
 
@@ -149,8 +153,9 @@ export function buildRefreshTriggerBatch({
   maxEvents = DEFAULT_REFRESH_EVENT_LIMIT,
   overflowEventCount = 0,
   overflowRescanRequired = false,
-} = {}) {
-  if (typeof projectId !== "string" || !/^head-[a-f0-9]{20}$/.test(projectId)) fail("Refresh trigger projectId is invalid.", "INVALID_REFRESH_TRIGGER_SCHEMA");
+} = {}, storage = null) {
+  const format = formatForVerifiedOwner(storage);
+  if (typeof projectId !== "string" || !new RegExp(`^${format.projectPrefix}[a-f0-9]{20}$`).test(projectId)) fail("Refresh trigger projectId is invalid.", "INVALID_REFRESH_TRIGGER_SCHEMA");
   const source = normalizedSourceKind(sourceKind);
   const limit = normalizedEventLimit(maxEvents);
   if (!Array.isArray(events) || events.length > 10000) fail("Refresh trigger events must be a bounded array.", "INVALID_REFRESH_TRIGGER_EVENTS");
@@ -162,7 +167,7 @@ export function buildRefreshTriggerBatch({
   const discarded = new Map();
   const unique = new Map();
   for (let index = 0; index < events.length; index += 1) {
-    const normalized = normalizeTriggerEvent(events[index], index, managedRootFiles);
+    const normalized = normalizeTriggerEvent(events[index], index, managedRootFiles, storage);
     if (normalized.ignored) {
       addCount(discarded, "excluded-or-managed-path");
       continue;
@@ -182,7 +187,7 @@ export function buildRefreshTriggerBatch({
   const payload = {
     schemaVersion: SCHEMA_VERSION,
     kind: "RefreshTriggerBatch",
-    protocol: { name: "head-agent-core-refresh-trigger", version: REFRESH_TRIGGER_VERSION },
+    protocol: { name: format.protocol("head-agent-core-refresh-trigger"), version: REFRESH_TRIGGER_VERSION },
     projectId,
     source: {
       kind: source,
@@ -208,15 +213,16 @@ export function buildRefreshTriggerBatch({
   return { ...payload, triggerBatchId: batchIdentity.id, triggerBatchHash: batchIdentity.hash };
 }
 
-export function verifyRefreshTriggerBatch(batch) {
+export function verifyRefreshTriggerBatch(batch, expectedOwner = null) {
+  const format = familyFormatForOriginal("head-agent-core-refresh-trigger", batch, expectedOwner);
   assertFields(batch, ["schemaVersion", "kind", "protocol", "projectId", "source", "events", "eventSummary", "requiresRescan", "rescanPolicy", "authority", "instructionAuthority", "promotionAuthority", "canonMutationAuthority", "triggerBatchId", "triggerBatchHash"], "Refresh trigger batch");
   assertFields(batch.source, ["kind", "adapter", "adapterVersion"], "Refresh trigger source");
   assertFields(batch.eventSummary, ["inputEventCount", "acceptedEventCount", "coalescedEventCount", "droppedEventCount", "discardedReasons"], "Refresh trigger event summary");
   const protocolVersion = batch.protocol?.version;
   if (batch.schemaVersion !== SCHEMA_VERSION || batch.kind !== "RefreshTriggerBatch"
-    || batch.protocol?.name !== "head-agent-core-refresh-trigger"
+    || !format
     || ![LEGACY_REFRESH_TRIGGER_VERSION, REFRESH_TRIGGER_VERSION].includes(protocolVersion)
-    || !/^head-[a-f0-9]{20}$/.test(batch.projectId || "") || !BATCH_PATTERN.test(batch.triggerBatchId || "")
+    || !new RegExp(`^${format.projectPrefix}[a-f0-9]{20}$`).test(batch.projectId || "") || !BATCH_PATTERN.test(batch.triggerBatchId || "")
     || !SOURCE_KINDS.has(batch.source.kind) || batch.source.adapterVersion !== protocolVersion
     || batch.source.adapter !== (batch.source.kind === "filesystem" ? "node-filesystem-watch" : "structured-ci-event-file")
     || batch.rescanPolicy !== "complete-discovery-read-and-byte-hash; event paths are hints only"
@@ -316,7 +322,8 @@ function validBinding(binding, label) {
   }
 }
 
-export function verifyRefreshTriggerDelivery(delivery) {
+export function verifyRefreshTriggerDelivery(delivery, expectedOwner = null) {
+  const format = familyFormatForOriginal("head-agent-core-refresh-trigger", delivery, expectedOwner);
   assertFields(delivery, ["schemaVersion", "kind", "protocol", "projectId", "triggerBatchId", "triggerBatchHash", "sourceKind", "status", "base", "next", "incrementalRefresh", "serialization", "projectionDisposition", "authority", "instructionAuthority", "promotionAuthority", "canonMutation", "triggerDeliveryId", "triggerDeliveryHash"], "Refresh trigger delivery");
   assertFields(delivery.incrementalRefresh, ["refreshRequestId", "refreshReceiptId"], "Refresh trigger delivery incremental refresh");
   assertFields(delivery.projectionDisposition, ["graph", "documents"], "Refresh trigger delivery projection disposition");
@@ -326,9 +333,9 @@ export function verifyRefreshTriggerDelivery(delivery) {
   validBinding(delivery.base, "Refresh trigger delivery base");
   validBinding(delivery.next, "Refresh trigger delivery next");
   if (delivery.schemaVersion !== SCHEMA_VERSION || delivery.kind !== "RefreshTriggerDeliveryReceipt"
-    || delivery.protocol?.name !== "head-agent-core-refresh-trigger"
+    || !format
     || ![LEGACY_REFRESH_TRIGGER_VERSION, REFRESH_TRIGGER_VERSION].includes(protocolVersion)
-    || !/^head-[a-f0-9]{20}$/.test(delivery.projectId || "") || !BATCH_PATTERN.test(delivery.triggerBatchId || "")
+    || !new RegExp(`^${format.projectPrefix}[a-f0-9]{20}$`).test(delivery.projectId || "") || !BATCH_PATTERN.test(delivery.triggerBatchId || "")
     || !DELIVERY_PATTERN.test(delivery.triggerDeliveryId || "") || !SOURCE_KINDS.has(delivery.sourceKind)
     || !["ignored", "unchanged", "refreshed"].includes(delivery.status)
     || delivery.serialization !== "exclusive-project-world-model-writer-lease-and-expected-pointer-check"
@@ -367,22 +374,22 @@ export function verifyRefreshTriggerDelivery(delivery) {
   return delivery;
 }
 
-function triggerRoot(projectRoot) {
-  return path.join(projectRoot, ".head", "refresh", "triggers");
+function triggerRoot(projectRoot, storage = null) {
+  return path.join(projectRoot, formatForVerifiedOwner(storage).directory, "refresh", "triggers");
 }
 
-function batchFile(projectRoot, batchId) {
+function batchFile(projectRoot, batchId, storage = null) {
   if (!BATCH_PATTERN.test(batchId || "")) fail("Refresh trigger batch id is invalid.", "INVALID_REFRESH_TRIGGER_BATCH_ID");
-  return path.join(triggerRoot(projectRoot), "batches", `${batchId}.json`);
+  return path.join(triggerRoot(projectRoot, storage), "batches", `${batchId}.json`);
 }
 
-function deliveryFile(projectRoot, deliveryId) {
+function deliveryFile(projectRoot, deliveryId, storage = null) {
   if (!DELIVERY_PATTERN.test(deliveryId || "")) fail("Refresh trigger delivery id is invalid.", "INVALID_REFRESH_TRIGGER_DELIVERY_ID");
-  return path.join(triggerRoot(projectRoot), "deliveries", `${deliveryId}.json`);
+  return path.join(triggerRoot(projectRoot, storage), "deliveries", `${deliveryId}.json`);
 }
 
-function currentFile(projectRoot) {
-  return path.join(triggerRoot(projectRoot), "current.json");
+function currentFile(projectRoot, storage = null) {
+  return path.join(triggerRoot(projectRoot, storage), "current.json");
 }
 
 function persistImmutable(file, document, verifier, label) {
@@ -411,10 +418,11 @@ function buildPointer(delivery) {
   return { ...payload, triggerPointerId: pointerIdentity.id, triggerPointerHash: pointerIdentity.hash };
 }
 
-function verifyPointer(pointer) {
+function verifyPointer(pointer, storage = null) {
+  const format = formatForVerifiedOwner(storage);
   assertFields(pointer, ["schemaVersion", "kind", "projectId", "triggerBatchId", "triggerDeliveryId", "worldModelId", "sourceSnapshotId", "triggerPointerId", "triggerPointerHash"], "Refresh trigger pointer");
   if (pointer.schemaVersion !== SCHEMA_VERSION || pointer.kind !== "RefreshTriggerPointer"
-    || !/^head-[a-f0-9]{20}$/.test(pointer.projectId || "") || !BATCH_PATTERN.test(pointer.triggerBatchId || "")
+    || !new RegExp(`^${format.projectPrefix}[a-f0-9]{20}$`).test(pointer.projectId || "") || !BATCH_PATTERN.test(pointer.triggerBatchId || "")
     || !DELIVERY_PATTERN.test(pointer.triggerDeliveryId || "") || !/^world-model-[a-f0-9]{24}$/.test(pointer.worldModelId || "")
     || !/^source-snapshot-[a-f0-9]{24}$/.test(pointer.sourceSnapshotId || "")) fail("Refresh trigger pointer is invalid.", "INVALID_REFRESH_TRIGGER_POINTER");
   const payload = { ...pointer };
@@ -429,18 +437,18 @@ function verifyPointer(pointer) {
 
 export function readRefreshTriggerBatch({ root = ".", triggerBatchId } = {}) {
   const inspected = readyProject(root);
-  const file = batchFile(inspected.project.projectRoot, triggerBatchId);
+  const file = batchFile(inspected.project.projectRoot, triggerBatchId, inspected.storage);
   if (!fs.existsSync(file)) fail(`Refresh trigger batch is missing: ${triggerBatchId}`, "REFRESH_TRIGGER_BATCH_NOT_FOUND");
-  const batch = verifyRefreshTriggerBatch(readJson(file, "Refresh trigger batch"));
+  const batch = verifyRefreshTriggerBatch(readJson(file, "Refresh trigger batch"), inspected.storage);
   if (batch.projectId !== inspected.project.projectId) fail("Refresh trigger batch belongs to another project.", "REFRESH_TRIGGER_PROJECT_MISMATCH");
   return { status: "verified", file, batch };
 }
 
 export function readRefreshTriggerDelivery({ root = ".", triggerDeliveryId, storeAdapter = null, documentProjectionAdapter = null } = {}) {
   const inspected = readyProject(root);
-  const file = deliveryFile(inspected.project.projectRoot, triggerDeliveryId);
+  const file = deliveryFile(inspected.project.projectRoot, triggerDeliveryId, inspected.storage);
   if (!fs.existsSync(file)) fail(`Refresh trigger delivery is missing: ${triggerDeliveryId}`, "REFRESH_TRIGGER_DELIVERY_NOT_FOUND");
-  const delivery = verifyRefreshTriggerDelivery(readJson(file, "Refresh trigger delivery"));
+  const delivery = verifyRefreshTriggerDelivery(readJson(file, "Refresh trigger delivery"), inspected.storage);
   if (delivery.projectId !== inspected.project.projectId) fail("Refresh trigger delivery belongs to another project.", "REFRESH_TRIGGER_PROJECT_MISMATCH");
   const batchEntry = readRefreshTriggerBatch({ root: inspected.project.projectRoot, triggerBatchId: delivery.triggerBatchId });
   if (batchEntry.batch.triggerBatchHash !== delivery.triggerBatchHash || batchEntry.batch.source.kind !== delivery.sourceKind) {
@@ -490,16 +498,16 @@ export function readRefreshTriggerDelivery({ root = ".", triggerDeliveryId, stor
 
 export function inspectRefreshTriggers({ root = ".", storeAdapter = null, documentProjectionAdapter = null } = {}) {
   const inspected = readyProject(root);
-  const file = currentFile(inspected.project.projectRoot);
+  const file = currentFile(inspected.project.projectRoot, inspected.storage);
   const world = readWorldModel({ root: inspected.project.projectRoot, storeAdapter });
-  const writer = inspectRefreshWriterLease({ projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId });
+  const writer = inspectRefreshWriterLease({ projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId, storage: inspected.storage });
   if (!fs.existsSync(file)) return {
     status: "not-triggered",
     currentWorldModelId: world.snapshot.worldModelId,
     currentSourceSnapshotId: world.snapshot.temporalProvenanceGraph.sourceSnapshotId,
     writer,
   };
-  const pointer = verifyPointer(readJson(file, "Refresh trigger pointer"));
+  const pointer = verifyPointer(readJson(file, "Refresh trigger pointer"), inspected.storage);
   if (pointer.projectId !== inspected.project.projectId) fail("Refresh trigger pointer belongs to another project.", "REFRESH_TRIGGER_PROJECT_MISMATCH");
   const deliveryEntry = readRefreshTriggerDelivery({ root: inspected.project.projectRoot, triggerDeliveryId: pointer.triggerDeliveryId, storeAdapter, documentProjectionAdapter });
   if (deliveryEntry.delivery.triggerBatchId !== pointer.triggerBatchId || deliveryEntry.delivery.next.worldModelId !== pointer.worldModelId
@@ -537,13 +545,13 @@ async function processRefreshTriggerBatchInternal({
     projectId: inspected.project.projectId,
     sourceKind,
     events,
-    managedRootFiles: managedRootFilesForProject(inspected.project),
+    managedRootFiles: managedRootFilesForProject(inspected.project, inspected.storage),
     maxEvents,
     overflowEventCount,
     overflowRescanRequired,
-  });
-  const batchEntry = persistImmutable(batchFile(projectRoot, batch.triggerBatchId), batch, verifyRefreshTriggerBatch, "Refresh trigger batch");
-  return withRefreshWriterLease({ projectRoot, projectId: inspected.project.projectId }, async (writerLease) => {
+  }, inspected.storage);
+  const batchEntry = persistImmutable(batchFile(projectRoot, batch.triggerBatchId, inspected.storage), batch, (record) => verifyRefreshTriggerBatch(record, inspected.storage), "Refresh trigger batch");
+  return withRefreshWriterLease({ projectRoot, projectId: inspected.project.projectId, storage: inspected.storage }, async (writerLease) => {
     const before = readWorldModel({ root: projectRoot, storeAdapter }).snapshot;
     let refresh = null;
     if (batch.requiresRescan) {
@@ -573,16 +581,16 @@ async function processRefreshTriggerBatchInternal({
       refreshReceiptId: refresh?.receipt.refreshReceiptId || null,
       postRefreshProjection: refresh?.postRefreshProjection || null,
     });
-    const deliveryEntry = persistImmutable(deliveryFile(projectRoot, delivery.triggerDeliveryId), delivery, verifyRefreshTriggerDelivery, "Refresh trigger delivery");
+    const deliveryEntry = persistImmutable(deliveryFile(projectRoot, delivery.triggerDeliveryId, inspected.storage), delivery, (record) => verifyRefreshTriggerDelivery(record, inspected.storage), "Refresh trigger delivery");
     const pointer = buildPointer(delivery);
-    atomicWrite(currentFile(projectRoot), json(pointer));
-    const storedPointer = verifyPointer(readJson(currentFile(projectRoot), "Refresh trigger pointer"));
+    atomicWrite(currentFile(projectRoot, inspected.storage), json(pointer));
+    const storedPointer = verifyPointer(readJson(currentFile(projectRoot, inspected.storage), "Refresh trigger pointer"), inspected.storage);
     if (canonicalJson(storedPointer) !== canonicalJson(pointer)) fail("Refresh trigger pointer changed during persistence.", "REFRESH_TRIGGER_POINTER_WRITE_MISMATCH");
     return {
       status: delivery.status,
       batchFile: batchEntry.file,
       deliveryFile: deliveryEntry.file,
-      pointerFile: currentFile(projectRoot),
+      pointerFile: currentFile(projectRoot, inspected.storage),
       batch,
       delivery,
       pointer,
@@ -612,7 +620,8 @@ export class DebouncedRefreshTriggerQueue {
     if (typeof deliverBatch !== "function" || typeof onDelivery !== "function" || typeof onError !== "function") fail("Refresh queue callbacks are invalid.", "INVALID_REFRESH_TRIGGER_QUEUE");
     this.root = inspected.project.projectRoot;
     this.projectId = inspected.project.projectId;
-    this.managedRootFiles = managedRootFilesForProject(inspected.project);
+    this.storage = inspected.storage;
+    this.managedRootFiles = managedRootFilesForProject(inspected.project, inspected.storage);
     this.sourceKind = normalizedSourceKind(sourceKind);
     this.debounceMs = debounceMs;
     this.maxEvents = normalizedEventLimit(maxEvents);
@@ -645,7 +654,7 @@ export class DebouncedRefreshTriggerQueue {
 
   enqueue(event) {
     if (this.closed) fail("Refresh trigger queue is closed.", "REFRESH_TRIGGER_QUEUE_CLOSED");
-    const normalized = normalizeTriggerEvent(event, 0, this.managedRootFiles);
+    const normalized = normalizeTriggerEvent(event, 0, this.managedRootFiles, this.storage);
     const affectsProject = !normalized.ignored;
     this.totalInputEvents += 1;
     if (this.buffer.length < this.maxEvents) this.buffer.push(event);
@@ -664,7 +673,7 @@ export class DebouncedRefreshTriggerQueue {
       clearTimeout(this.timer);
       this.timer = null;
     }
-    const hasRescanSignal = this.buffer.some((event, index) => !normalizeTriggerEvent(event, index, this.managedRootFiles).ignored) || this.overflowRescanRequired;
+    const hasRescanSignal = this.buffer.some((event, index) => !normalizeTriggerEvent(event, index, this.managedRootFiles, this.storage).ignored) || this.overflowRescanRequired;
     if (!hasRescanSignal) return Promise.resolve(null);
     const events = this.buffer;
     const overflowEventCount = this.overflowEventCount;

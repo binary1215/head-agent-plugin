@@ -48,7 +48,7 @@ function plan(options = {}) {
 }
 
 function fixture(t) {
-  const parent = fs.realpathSync(process.env.HEAD_AGENT_TEST_TMP || os.tmpdir());
+  const parent = fs.realpathSync(process.env.LODE_AGENT_TEST_TMP || process.env.HEAD_AGENT_TEST_TMP || os.tmpdir());
   const directory = fs.mkdtempSync(path.join(parent, "head-codex-installed-policy-"));
   const schemaDirectory = path.join(directory, "schemas");
   fs.mkdirSync(path.join(schemaDirectory, "v2"), { recursive: true });
@@ -185,13 +185,13 @@ test("malformed, oversized and linked snapshot files fail closed without runtime
   assert.throws(() => f.inspect({ schemaDirectory: "relative-schema-root" }), { code: "INVALID_CODEX_INSTALLED_POLICY_SNAPSHOT" });
 });
 
-const installedDirectory = process.env.HEAD_AGENT_CODEX_INSTALLED_POLICY_SCHEMA_DIRECTORY;
-const installedExecutable = process.env.HEAD_AGENT_CODEX_INSTALLED_POLICY_EXECUTABLE;
+const installedDirectory = (process.env.LODE_AGENT_CODEX_INSTALLED_POLICY_SCHEMA_DIRECTORY || process.env.HEAD_AGENT_CODEX_INSTALLED_POLICY_SCHEMA_DIRECTORY);
+const installedExecutable = (process.env.LODE_AGENT_CODEX_INSTALLED_POLICY_EXECUTABLE || process.env.HEAD_AGENT_CODEX_INSTALLED_POLICY_EXECUTABLE);
 test("optional developer preflight recognizes retained installed bytes but still issues no proof", {
   skip: !installedDirectory || !installedExecutable,
 }, () => {
   const diagnostic = inspectCodexInstalledPolicySnapshot({ schemaDirectory: installedDirectory, executablePath: installedExecutable,
-    execHelpFile: process.env.HEAD_AGENT_CODEX_INSTALLED_POLICY_EXEC_HELP });
+    execHelpFile: (process.env.LODE_AGENT_CODEX_INSTALLED_POLICY_EXEC_HELP || process.env.HEAD_AGENT_CODEX_INSTALLED_POLICY_EXEC_HELP) });
   assert.equal(diagnostic.audit.status, "recognized-retained-schema-snapshot");
   assert.ok(diagnostic.obligations.every(row => row.controls.every(control => control.present)));
   assert.ok(diagnostic.obligations.every(row => row.apiObservation === "not-established-by-installed-api"));

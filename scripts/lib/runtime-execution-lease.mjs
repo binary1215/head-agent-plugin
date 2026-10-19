@@ -1,3 +1,6 @@
+import { formatForVerifiedOwner, familyFormatForOriginal } from "./project-storage-format.mjs";
+const originalFormat = record => familyFormatForOriginal({ sessionIdentity: true }, record);
+const sessionIdOf = record => { const format = originalFormat(record); return format ? record?.[format.sessionIdField] : undefined; };
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -67,11 +70,12 @@ function assertFields(value, fields, label, code = "INVALID_RUNTIME_EXECUTION_LE
 }
 
 function requireAuthorizationShape(authorization) {
+  const format = originalFormat(authorization);
   if (!authorization || typeof authorization !== "object" || Array.isArray(authorization)
     || !/^execution-authorization-[a-f0-9]{24}$/.test(authorization.authorizationId || "")
     || !/^[a-f0-9]{64}$/.test(authorization.authorizationHash || "")
-    || !/^head-[a-f0-9]{20}$/.test(authorization.projectId || "")
-    || !/^session-[A-Fa-f0-9-]{36}$/.test(authorization.headSessionId || "")
+    || (!format || !new RegExp(`^${format.projectPrefix}[a-f0-9]{20}$`).test(authorization.projectId || ""))
+    || !/^session-[A-Fa-f0-9-]{36}$/.test(sessionIdOf(authorization) || "")
     || !new Set(["session", "run"]).has(authorization.scope?.kind)
     || authorization.scope.kind === "run" && (!/^run-[0-9]+-[a-f0-9]{6}$/.test(authorization.scope.runId || "")
       || !/^execution-contract-[a-f0-9]{24}$/.test(authorization.scope.executionContractId || ""))
@@ -95,7 +99,7 @@ function requireAuthorizationShape(authorization) {
 function verifyPersistedAuthorization(projectRoot, authorization) {
   const file = path.join(
     path.resolve(projectRoot),
-    ".head",
+    originalFormat(authorization)?.directory || ".head",
     "runtime",
     "execution-authorizations",
     `${authorization.authorizationId}.json`,
@@ -116,30 +120,64 @@ function verifyPersistedAuthorization(projectRoot, authorization) {
   return stored;
 }
 
-function durableLeaseDirectory(projectRoot, authorizationId) {
-  return path.join(path.resolve(projectRoot), ".head", "runtime", "execution-leases", authorizationId);
+function durableLeaseDirectory(projectRoot, authorizationId, storage) {
+  return path.join(path.resolve(projectRoot), formatForVerifiedOwner(storage).directory, "runtime", "execution-leases", authorizationId);
 }
 
-function configuredOperationalStateRoot({ environment = process.env, platform = process.platform, homeDirectory = os.homedir() } = {}) {
-  const override = String(environment?.[RUNTIME_OPERATIONAL_STATE_ENV] || "").trim();
-  if (override) {
-    if (!path.isAbsolute(override)) fail(`${RUNTIME_OPERATIONAL_STATE_ENV} must be an absolute path.`, "INVALID_RUNTIME_OPERATIONAL_STATE_ROOT");
-    return path.resolve(override);
+function configuredOperationalStateRoot({ environment = process.env, platform = process.platform, homeDirectory = os.homedir(), storage, resolvedProject } = {}) {
+  const canonicalEnvironment = "LODE_AGENT_OPERATIONAL_STATE_ROOT";
+  const legacyOverride = String(environment?.[RUNTIME_OPERATIONAL_STATE_ENV] || "").trim();
+  const canonicalOverride = String(environment?.[canonicalEnvironment] || "").trim();
+  for (const [name, override] of [[RUNTIME_OPERATIONAL_STATE_ENV, legacyOverride], [canonicalEnvironment, canonicalOverride]]) {
+    if (override && !path.isAbsolute(override)) fail(`${name} must be an absolute path.`, "INVALID_RUNTIME_OPERATIONAL_STATE_ROOT");
   }
+  if (legacyOverride && canonicalOverride) {
+    const legacy = resolvedOperationalAlias(path.resolve(legacyOverride), resolvedProject);
+    const canonical = resolvedOperationalAlias(path.resolve(canonicalOverride), resolvedProject);
+    if (legacy !== canonical) fail("Runtime operational state aliases refer to different host-local roots.", "RUNTIME_OPERATIONAL_STATE_ROOT_CONFLICT");
+    return legacy;
+  }
+  if (legacyOverride || canonicalOverride) return resolvedOperationalAlias(path.resolve(legacyOverride || canonicalOverride), resolvedProject);
+  const packageDirectory = formatForVerifiedOwner(storage).dialect === "lode" ? "lode-agent-core" : "head-agent-core";
   if (platform === "win32") {
     const localAppData = String(environment?.LOCALAPPDATA || environment?.LocalAppData || "").trim();
     if (!localAppData || !path.isAbsolute(localAppData)) {
       fail("Windows runtime operational state requires an absolute LOCALAPPDATA path or explicit host override.", "RUNTIME_OPERATIONAL_STATE_ROOT_UNAVAILABLE");
     }
-    return path.resolve(localAppData, "head-agent-core", "operational-state");
+    return path.resolve(localAppData, packageDirectory, "operational-state");
   }
   const xdgStateHome = String(environment?.XDG_STATE_HOME || "").trim();
   if (xdgStateHome) {
     if (!path.isAbsolute(xdgStateHome)) fail("XDG_STATE_HOME must be an absolute path.", "INVALID_RUNTIME_OPERATIONAL_STATE_ROOT");
-    return path.resolve(xdgStateHome, "head-agent-core");
+    return path.resolve(xdgStateHome, packageDirectory);
   }
   if (!homeDirectory || !path.isAbsolute(homeDirectory)) fail("Runtime operational state home is unavailable.", "RUNTIME_OPERATIONAL_STATE_ROOT_UNAVAILABLE");
-  return path.resolve(homeDirectory, ".local", "state", "head-agent-core");
+  return path.resolve(homeDirectory, ".local", "state", packageDirectory);
+}
+
+// Compare trusted explicit aliases before creating anything. Resolve an absent
+// suffix through its existing real ancestor; never turn permission/read errors
+// into absence or fall back to a fresh operational domain.
+function resolvedOperationalAlias(target, projectRoot) {
+  const unsafe = value => value === path.parse(value).root || isWithin(projectRoot, value) || isWithin(value, projectRoot);
+  if (unsafe(target)) fail("Runtime operational state root must be a dedicated host-local directory outside the project tree.", "UNSAFE_RUNTIME_OPERATIONAL_STATE_ROOT");
+  let ancestor = target;
+  const missing = [];
+  for (;;) {
+    let stat;
+    try { stat = fs.lstatSync(ancestor); }
+    catch (error) {
+      if (error.code !== "ENOENT") throw error;
+      const parent = path.dirname(ancestor);
+      if (parent === ancestor) throw error;
+      missing.unshift(path.basename(ancestor)); ancestor = parent; continue;
+    }
+    if (!(stat.isDirectory() || ancestor !== target && stat.isSymbolicLink() && fs.statSync(ancestor).isDirectory()) || ancestor === target && stat.isSymbolicLink()) fail("Runtime operational state root is unsafe.", "UNSAFE_RUNTIME_OPERATIONAL_STATE_ROOT");
+    break;
+  }
+  const resolved = path.resolve(fs.realpathSync(ancestor), ...missing);
+  if (unsafe(resolved)) fail("Runtime operational state root must be a dedicated host-local directory outside the project tree.", "UNSAFE_RUNTIME_OPERATIONAL_STATE_ROOT");
+  return resolved;
 }
 
 function isWithin(parent, child) {
@@ -152,10 +190,10 @@ export function resolveRuntimeOperationalStateRoot({
   environment = process.env,
   platform = process.platform,
   homeDirectory = os.homedir(),
-  create = true,
+  create = true, storage,
 } = {}) {
   const resolvedProject = fs.realpathSync(path.resolve(projectRoot));
-  const configured = configuredOperationalStateRoot({ environment, platform, homeDirectory });
+  const configured = resolvedOperationalAlias(configuredOperationalStateRoot({ environment, platform, homeDirectory, storage, resolvedProject }), resolvedProject);
   if (configured === path.parse(configured).root || isWithin(resolvedProject, configured) || isWithin(configured, resolvedProject)) {
     fail("Runtime operational state root must be a dedicated host-local directory outside the project tree.", "UNSAFE_RUNTIME_OPERATIONAL_STATE_ROOT");
   }
@@ -187,25 +225,25 @@ function ownerFile(operationalStateRoot, projectId, authorizationId) {
   return path.join(lockDirectory(operationalStateRoot, projectId, authorizationId), "owner.json");
 }
 
-function consumptionFile(projectRoot, authorizationId) {
-  return path.join(durableLeaseDirectory(projectRoot, authorizationId), "consumption.json");
+function consumptionFile(projectRoot, authorizationId, storage) {
+  return path.join(durableLeaseDirectory(projectRoot, authorizationId, storage), "consumption.json");
 }
 
-function releaseFile(projectRoot, authorizationId) {
-  return path.join(durableLeaseDirectory(projectRoot, authorizationId), "release.json");
+function releaseFile(projectRoot, authorizationId, storage) {
+  return path.join(durableLeaseDirectory(projectRoot, authorizationId, storage), "release.json");
 }
 
-function legacyProjectLockDirectory(projectRoot, authorizationId) {
-  return path.join(durableLeaseDirectory(projectRoot, authorizationId), "owner.lock");
+function legacyProjectLockDirectory(projectRoot, authorizationId, storage) {
+  return path.join(durableLeaseDirectory(projectRoot, authorizationId, storage), "owner.lock");
 }
 
-function verifyConfinedDurableLeaseDirectory(projectRoot, authorizationId) {
+function verifyConfinedDurableLeaseDirectory(projectRoot, authorizationId, storage) {
   const resolvedProject = fs.realpathSync(path.resolve(projectRoot));
   const fixedSegments = [
-    path.join(resolvedProject, ".head"),
-    path.join(resolvedProject, ".head", "runtime"),
-    path.join(resolvedProject, ".head", "runtime", "execution-leases"),
-    path.join(resolvedProject, ".head", "runtime", "execution-leases", authorizationId),
+    path.join(resolvedProject, formatForVerifiedOwner(storage).directory),
+    path.join(resolvedProject, formatForVerifiedOwner(storage).directory, "runtime"),
+    path.join(resolvedProject, formatForVerifiedOwner(storage).directory, "runtime", "execution-leases"),
+    path.join(resolvedProject, formatForVerifiedOwner(storage).directory, "runtime", "execution-leases", authorizationId),
   ];
   for (const segment of fixedSegments) {
     const stat = fs.lstatSync(segment);
@@ -264,8 +302,9 @@ function processState(pid) {
 }
 
 function verifyOwner(owner, { authorization, token = "" } = {}) {
+  const format = originalFormat(owner);
   assertFields(owner, [
-    "schemaVersion", "kind", "protocolVersion", "authorizationId", "projectId", "headSessionId", "scopeKind", "runId",
+    "schemaVersion", "kind", "protocolVersion", "authorizationId", "projectId", (format?.sessionIdField || "headSessionId"), "scopeKind", "runId",
     "executionContractId", "runtime", "pid", "token", "ownerFenceDigest", "claimedAt", "holdDeadlineAt",
     "authority", "instructionAuthority", "promotionAuthority", "mutatesCanon",
   ], "Runtime execution lease owner");
@@ -274,8 +313,8 @@ function verifyOwner(owner, { authorization, token = "" } = {}) {
   if (owner.schemaVersion !== 1 || owner.kind !== "RuntimeExecutionLeaseOwner"
     || owner.protocolVersion !== RUNTIME_EXECUTION_LEASE_VERSION
     || !/^execution-authorization-[a-f0-9]{24}$/.test(owner.authorizationId || "")
-    || !/^head-[a-f0-9]{20}$/.test(owner.projectId || "")
-    || !/^session-[A-Fa-f0-9-]{36}$/.test(owner.headSessionId || "")
+    || (!format || !new RegExp(`^${format.projectPrefix}[a-f0-9]{20}$`).test(owner.projectId || ""))
+    || !/^session-[A-Fa-f0-9-]{36}$/.test(sessionIdOf(owner) || "")
     || !new Set(["session", "run"]).has(owner.scopeKind)
     || owner.scopeKind === "run" && (!/^run-[0-9]+-[a-f0-9]{6}$/.test(owner.runId || "")
       || !/^execution-contract-[a-f0-9]{24}$/.test(owner.executionContractId || ""))
@@ -293,7 +332,7 @@ function verifyOwner(owner, { authorization, token = "" } = {}) {
     const expected = {
       authorizationId: authorization.authorizationId,
       projectId: authorization.projectId,
-      headSessionId: authorization.headSessionId,
+      [originalFormat(authorization).sessionIdField]: sessionIdOf(authorization),
       scopeKind: authorization.scope.kind,
       runId: authorization.scope.runId,
       executionContractId: authorization.scope.executionContractId,
@@ -408,13 +447,13 @@ export function reconcileUnconsumedWorkerLease({ projectRoot, authorization }) {
   return withProjectMutation({ root: projectRoot, scope: "worker-member-authorization" }, () => {
     verifyPersistedAuthorization(projectRoot, verified);
     requireCurrentWorkerMember(projectRoot, verified);
-    const state = inspectRuntimeExecutionLease({ projectRoot, projectId: verified.projectId, authorizationId: verified.authorizationId });
+    const state = inspectRuntimeExecutionLease({ projectRoot, projectId: verified.projectId, authorizationId: verified.authorizationId, storage: originalFormat(verified) });
     if (state.status !== "claimed" || state.singleUseConsumed) return state;
-    const operationalStateRoot = resolveRuntimeOperationalStateRoot({ projectRoot, create: false });
+    const operationalStateRoot = resolveRuntimeOperationalStateRoot({ projectRoot, storage: originalFormat(verified), create: false });
     // Only exact proven-absent owners are reclaimed. The public
     // stale-or-unknown label is never sufficient evidence of owner death.
     recoverDeadOwner(operationalStateRoot, verified);
-    return inspectRuntimeExecutionLease({ projectRoot, projectId: verified.projectId, authorizationId: verified.authorizationId });
+    return inspectRuntimeExecutionLease({ projectRoot, projectId: verified.projectId, authorizationId: verified.authorizationId, storage: originalFormat(verified) });
   });
 }
 
@@ -422,16 +461,16 @@ function acquire({ projectRoot, operationalStateRoot, authorization, ownerFenceD
   const verified = requireAuthorizationShape(authorization);
   verifyPersistedAuthorization(projectRoot, verified);
   if (!/^[a-f0-9]{64}$/.test(ownerFenceDigest || "")) fail("Runtime execution owner fence digest is invalid.", "INVALID_RUNTIME_EXECUTION_OWNER_FENCE");
-  const directory = durableLeaseDirectory(projectRoot, verified.authorizationId);
+  const directory = durableLeaseDirectory(projectRoot, verified.authorizationId, originalFormat(verified));
   const operationalDirectory = operationalLeaseDirectory(operationalStateRoot, verified.projectId, verified.authorizationId);
   const lock = lockDirectory(operationalStateRoot, verified.projectId, verified.authorizationId);
   fs.mkdirSync(directory, { recursive: true });
-  verifyConfinedDurableLeaseDirectory(projectRoot, verified.authorizationId);
-  if (fs.existsSync(legacyProjectLockDirectory(projectRoot, verified.authorizationId))) {
+  verifyConfinedDurableLeaseDirectory(projectRoot, verified.authorizationId, originalFormat(verified));
+  if (fs.existsSync(legacyProjectLockDirectory(projectRoot, verified.authorizationId, originalFormat(verified)))) {
     fail("A legacy project-local runtime owner lock requires explicit recovery before execution.", "LEGACY_PROJECT_OPERATIONAL_STATE_REQUIRES_RECOVERY");
   }
-  if (fs.existsSync(consumptionFile(projectRoot, verified.authorizationId))) {
-    verifyRuntimeExecutionLeaseConsumption(readJson(consumptionFile(projectRoot, verified.authorizationId), "Runtime execution lease consumption"));
+  if (fs.existsSync(consumptionFile(projectRoot, verified.authorizationId, originalFormat(verified)))) {
+    verifyRuntimeExecutionLeaseConsumption(readJson(consumptionFile(projectRoot, verified.authorizationId, originalFormat(verified)), "Runtime execution lease consumption"));
     fail("Runtime invocation authorization was already consumed.", "RUNTIME_INVOCATION_AUTHORIZATION_ALREADY_CONSUMED");
   }
   fs.mkdirSync(operationalDirectory, { recursive: true });
@@ -447,7 +486,7 @@ function acquire({ projectRoot, operationalStateRoot, authorization, ownerFenceD
         protocolVersion: RUNTIME_EXECUTION_LEASE_VERSION,
         authorizationId: verified.authorizationId,
         projectId: verified.projectId,
-        headSessionId: verified.headSessionId,
+        [originalFormat(verified).sessionIdField]: sessionIdOf(verified),
         scopeKind: verified.scope.kind,
         runId: verified.scope.runId,
         executionContractId: verified.scope.executionContractId,
@@ -464,7 +503,7 @@ function acquire({ projectRoot, operationalStateRoot, authorization, ownerFenceD
       }, { authorization: verified });
       try {
         fs.writeFileSync(ownerFile(operationalStateRoot, verified.projectId, verified.authorizationId), json(owner), { encoding: "utf8", flag: "wx" });
-        if (fs.existsSync(consumptionFile(projectRoot, verified.authorizationId))) {
+        if (fs.existsSync(consumptionFile(projectRoot, verified.authorizationId, originalFormat(verified)))) {
           removeOwnedLock(operationalStateRoot, verified, owner);
           fail("Runtime invocation authorization was already consumed.", "RUNTIME_INVOCATION_AUTHORIZATION_ALREADY_CONSUMED");
         }
@@ -492,9 +531,10 @@ function acquire({ projectRoot, operationalStateRoot, authorization, ownerFenceD
 }
 
 export function verifyRuntimeExecutionLeaseConsumption(document) {
+  const format = originalFormat(document);
   assertFields(document, [
     "schemaVersion", "kind", "protocolVersion", "authorizationId", "authorizationHash", "projectId",
-    "headSessionId", "scopeKind", "runId", "executionContractId", "runtime", "ownerFenceDigest", "claimedAt", "consumedAt",
+    (format?.sessionIdField || "headSessionId"), "scopeKind", "runId", "executionContractId", "runtime", "ownerFenceDigest", "claimedAt", "consumedAt",
     "holdDeadlineAt", "singleUseBoundary", "authority", "instructionAuthority", "promotionAuthority", "mutatesCanon",
     "consumptionId", "consumptionHash",
   ], "Runtime execution lease consumption");
@@ -505,12 +545,12 @@ export function verifyRuntimeExecutionLeaseConsumption(document) {
   const claimedAt = Date.parse(document.claimedAt);
   const consumedAt = Date.parse(document.consumedAt);
   const deadline = Date.parse(document.holdDeadlineAt);
-  if (document.schemaVersion !== 1 || document.kind !== "RuntimeExecutionLeaseConsumption"
+  if (!format || document.schemaVersion !== 1 || document.kind !== "RuntimeExecutionLeaseConsumption"
     || !SUPPORTED_DURABLE_LEASE_VERSIONS.has(document.protocolVersion)
     || !/^execution-authorization-[a-f0-9]{24}$/.test(document.authorizationId || "")
     || !/^[a-f0-9]{64}$/.test(document.authorizationHash || "")
-    || !/^head-[a-f0-9]{20}$/.test(document.projectId || "")
-    || !/^session-[A-Fa-f0-9-]{36}$/.test(document.headSessionId || "")
+    || !new RegExp(`^${format.projectPrefix}[a-f0-9]{20}$`).test(document.projectId || "")
+    || !/^session-[A-Fa-f0-9-]{36}$/.test(sessionIdOf(document) || "")
     || !new Set(["session", "run"]).has(document.scopeKind)
     || document.scopeKind === "run" && (!/^run-[0-9]+-[a-f0-9]{6}$/.test(document.runId || "")
       || !/^execution-contract-[a-f0-9]{24}$/.test(document.executionContractId || ""))
@@ -559,7 +599,7 @@ function consumeCurrent(projectRoot, authorization, owner) {
     authorizationId: authorization.authorizationId,
     authorizationHash: authorization.authorizationHash,
     projectId: authorization.projectId,
-    headSessionId: authorization.headSessionId,
+    [originalFormat(authorization).sessionIdField]: sessionIdOf(authorization),
     scopeKind: authorization.scope.kind,
     runId: authorization.scope.runId,
     executionContractId: authorization.scope.executionContractId,
@@ -586,7 +626,7 @@ function consumeCurrent(projectRoot, authorization, owner) {
     "consumptionId",
     "consumptionHash",
   ));
-  atomicWriteExclusive(consumptionFile(projectRoot, authorization.authorizationId), json(receipt));
+  atomicWriteExclusive(consumptionFile(projectRoot, authorization.authorizationId, originalFormat(authorization)), json(receipt));
   return receipt;
 }
 
@@ -604,7 +644,7 @@ export function verifyRuntimeExecutionLeaseRelease(document) {
     || !SUPPORTED_DURABLE_LEASE_VERSIONS.has(document.protocolVersion)
     || !/^execution-authorization-[a-f0-9]{24}$/.test(document.authorizationId || "")
     || !/^runtime-execution-consumption-[a-f0-9]{24}$/.test(document.consumptionId || "")
-    || !/^head-[a-f0-9]{20}$/.test(document.projectId || "")
+    || !/^(?:head|lode)-[a-f0-9]{20}$/.test(document.projectId || "")
     || !new Set(["session", "run"]).has(document.scopeKind)
     || document.scopeKind === "run" && (!/^run-[0-9]+-[a-f0-9]{6}$/.test(document.runId || "")
       || !/^execution-contract-[a-f0-9]{24}$/.test(document.executionContractId || ""))
@@ -666,13 +706,13 @@ function recordRelease({ projectRoot, authorization, consumption, operationStatu
     "releaseId",
     "releaseHash",
   ));
-  atomicWriteExclusive(releaseFile(projectRoot, authorization.authorizationId), json(receipt));
+  atomicWriteExclusive(releaseFile(projectRoot, authorization.authorizationId, originalFormat(authorization)), json(receipt));
   return receipt;
 }
 
 export function verifyRuntimeExecutionLeaseOwnership({ projectRoot, operationalStateRoot = null, authorization, lease, consumption = null }) {
   const verified = requireAuthorizationShape(authorization);
-  const operationalRoot = operationalStateRoot || resolveRuntimeOperationalStateRoot({ projectRoot, create: false });
+  const operationalRoot = operationalStateRoot || resolveRuntimeOperationalStateRoot({ projectRoot, storage: originalFormat(verified), create: false });
   const owner = verifyOwner(lease, { authorization: verified, token: lease?.token || "" });
   if (owner.pid !== process.pid) fail("Runtime execution lease is not owned by this process.", "RUNTIME_EXECUTION_LEASE_NOT_OWNED");
   verifySafeLockDirectory(operationalRoot, verified.projectId, verified.authorizationId);
@@ -688,7 +728,7 @@ export function verifyRuntimeExecutionLeaseOwnership({ projectRoot, operationalS
       fail("Runtime execution lease consumption does not match the active owner.", "RUNTIME_EXECUTION_LEASE_CONSUMPTION_MISMATCH");
     }
     const persisted = verifyRuntimeExecutionLeaseConsumption(readJson(
-      consumptionFile(projectRoot, verified.authorizationId),
+      consumptionFile(projectRoot, verified.authorizationId, originalFormat(verified)),
       "Runtime execution lease consumption",
     ));
     if (persisted.consumptionHash !== verifiedConsumption.consumptionHash) {
@@ -708,7 +748,7 @@ export async function withRuntimeExecutionLease(
     fail("Runtime pre-consume gate capability is invalid.", "INVALID_RUNTIME_PRE_CONSUME_GATE");
   }
   const verified = requireAuthorizationShape(authorization);
-  const operationalStateRoot = resolveRuntimeOperationalStateRoot({ projectRoot, create: true });
+  const operationalStateRoot = resolveRuntimeOperationalStateRoot({ projectRoot, storage: originalFormat(verified), create: true });
   const acquireCurrent = () => {
     requireCurrentWorkerMember(projectRoot, verified);
     assertAuthorizationProjectDirection(projectRoot, verified);
@@ -791,18 +831,18 @@ export function recordRuntimeInvocationStartFailure({ projectRoot, authorization
     authorizationHash: authorization.authorizationHash, consumptionId: consumption.consumptionId,
     errorCodeDigest: digest(String(errorCode)), providerStarted: false, authority: "operational-start-evidence-only" };
   const record = identify(payload, "runtime-start-failure", "failureId", "failureHash");
-  atomicWriteExclusive(path.join(durableLeaseDirectory(projectRoot, authorization.authorizationId), "start-failure.json"), json(record));
+  atomicWriteExclusive(path.join(durableLeaseDirectory(projectRoot, authorization.authorizationId, originalFormat(authorization)), "start-failure.json"), json(record));
   return record;
 }
 
 export function verifyRuntimeInvocationNeverStarted({ projectRoot, authorization }) {
-  const lease = inspectRuntimeExecutionLease({ projectRoot, projectId: authorization.projectId, authorizationId: authorization.authorizationId });
+  const lease = inspectRuntimeExecutionLease({ projectRoot, projectId: authorization.projectId, authorizationId: authorization.authorizationId, storage: originalFormat(authorization) });
   if (lease.status !== "consumed-released" || lease.release?.operationStatus !== "threw") return false;
   // Inspection is a bounded public projection; compare private evidence against
   // the verified durable release rather than relying on omitted fields.
-  const release = verifyRuntimeExecutionLeaseRelease(readJson(releaseFile(projectRoot, authorization.authorizationId), "Runtime execution lease release"));
+  const release = verifyRuntimeExecutionLeaseRelease(readJson(releaseFile(projectRoot, authorization.authorizationId, originalFormat(authorization)), "Runtime execution lease release"));
   if (release.releaseId !== lease.release.releaseId) return false;
-  const file = path.join(durableLeaseDirectory(projectRoot, authorization.authorizationId), "start-failure.json");
+  const file = path.join(durableLeaseDirectory(projectRoot, authorization.authorizationId, originalFormat(authorization)), "start-failure.json");
   if (!fs.existsSync(file)) return false;
   const record = readJson(file, "Runtime start failure");
   assertFields(record, ["kind", "authorizationId", "authorizationHash", "consumptionId", "errorCodeDigest", "providerStarted", "authority", "failureId", "failureHash"], "Runtime start failure");
@@ -813,24 +853,24 @@ export function verifyRuntimeInvocationNeverStarted({ projectRoot, authorization
     && record.authority === "operational-start-evidence-only";
 }
 
-export function inspectRuntimeExecutionLease({ projectRoot, projectId, authorizationId }) {
-  if (!/^head-[a-f0-9]{20}$/.test(projectId || "")
+export function inspectRuntimeExecutionLease({ projectRoot, projectId, authorizationId, storage }) {
+  if (!new RegExp(`^${formatForVerifiedOwner(storage).projectPrefix}[a-f0-9]{20}$`).test(projectId || "")
     || !/^execution-authorization-[a-f0-9]{24}$/.test(authorizationId || "")) {
     fail("Runtime execution lease inspection input is invalid.", "INVALID_RUNTIME_EXECUTION_LEASE_INSPECTION");
   }
-  const operationalStateRoot = resolveRuntimeOperationalStateRoot({ projectRoot, create: false });
-  const directory = durableLeaseDirectory(projectRoot, authorizationId);
+  const operationalStateRoot = resolveRuntimeOperationalStateRoot({ projectRoot, storage, create: false });
+  const directory = durableLeaseDirectory(projectRoot, authorizationId, storage);
   const durableStateExists = fs.existsSync(directory);
   if (durableStateExists) {
     const stat = fs.lstatSync(directory);
     if (!stat.isDirectory() || stat.isSymbolicLink()) fail("Runtime execution lease path is unsafe.", "UNSAFE_RUNTIME_EXECUTION_LEASE");
-    verifyConfinedDurableLeaseDirectory(projectRoot, authorizationId);
-    if (fs.existsSync(legacyProjectLockDirectory(projectRoot, authorizationId))) {
+    verifyConfinedDurableLeaseDirectory(projectRoot, authorizationId, storage);
+    if (fs.existsSync(legacyProjectLockDirectory(projectRoot, authorizationId, storage))) {
       fail("A legacy project-local runtime owner lock requires explicit recovery before lease inspection.", "LEGACY_PROJECT_OPERATIONAL_STATE_REQUIRES_RECOVERY");
     }
   }
-  const consumptionPath = consumptionFile(projectRoot, authorizationId);
-  const releasePath = releaseFile(projectRoot, authorizationId);
+  const consumptionPath = consumptionFile(projectRoot, authorizationId, storage);
+  const releasePath = releaseFile(projectRoot, authorizationId, storage);
   const operationalDirectory = operationalLeaseDirectory(operationalStateRoot, projectId, authorizationId);
   if (fs.existsSync(operationalDirectory)) verifyConfinedOperationalLeaseDirectory(operationalStateRoot, projectId, authorizationId);
   const consumption = durableStateExists && fs.existsSync(consumptionPath)
@@ -896,11 +936,11 @@ export function inspectRuntimeExecutionLease({ projectRoot, projectId, authoriza
 // consumes a lease, infers a release, or rechecks current execution direction.
 export function readRuntimeExecutionSettlement({ projectRoot, authorization }) {
   const verified = verifyPersistedAuthorization(projectRoot, authorization);
-  const status = inspectRuntimeExecutionLease({ projectRoot, projectId: verified.projectId, authorizationId: verified.authorizationId });
+  const status = inspectRuntimeExecutionLease({ projectRoot, projectId: verified.projectId, authorizationId: verified.authorizationId, storage: originalFormat(verified) });
   if (status.status !== "consumed-released") return null;
-  const consumption = verifyRuntimeExecutionLeaseConsumption(readJson(consumptionFile(projectRoot, verified.authorizationId), "Runtime consumption"));
-  const release = verifyRuntimeExecutionLeaseRelease(readJson(releaseFile(projectRoot, verified.authorizationId), "Runtime release"));
-  if (consumption.authorizationHash !== verified.authorizationHash || consumption.headSessionId !== verified.headSessionId
+  const consumption = verifyRuntimeExecutionLeaseConsumption(readJson(consumptionFile(projectRoot, verified.authorizationId, originalFormat(verified)), "Runtime consumption"));
+  const release = verifyRuntimeExecutionLeaseRelease(readJson(releaseFile(projectRoot, verified.authorizationId, originalFormat(verified)), "Runtime release"));
+  if (consumption.authorizationHash !== verified.authorizationHash || sessionIdOf(consumption) !== sessionIdOf(verified)
     || consumption.scopeKind !== verified.scope.kind || consumption.runId !== verified.scope.runId
     || consumption.executionContractId !== verified.scope.executionContractId
     || consumption.consumptionId !== status.consumption.consumptionId || release.releaseId !== status.release.releaseId) {

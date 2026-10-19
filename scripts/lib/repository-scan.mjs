@@ -20,6 +20,7 @@ import {
   SOURCE_ANALYSIS_VERSION,
 } from "./source-analysis.mjs";
 import { GoWorkerComputeAdapter } from "./go-worker-adapter.mjs";
+import { familyFormatForOriginal, formatForVerifiedOwner } from "./project-storage-format.mjs";
 import {
   buildRepositorySourceScope,
   pathWithinRepositorySourceScope,
@@ -108,21 +109,22 @@ function normalizeManagedRootFiles(values) {
   return normalized.sort(compareText);
 }
 
-export function managedRootFilesForProject(project) {
+export function managedRootFilesForProject(project, storage = project?.storage) {
   const values = [];
+  if (formatForVerifiedOwner(storage).dialect === "lode") values.push(".lode");
   if (project?.integrations?.codex?.status === "managed") values.push("AGENTS.md");
   if (project?.integrations?.opencode?.status === "managed") values.push("opencode.json");
   return values.sort(compareText);
 }
 
-export function buildRepositoryScanInput({ projectRoot, managedRootFiles = [], sourceScope = buildRepositorySourceScope() } = {}) {
+export function buildRepositoryScanInput({ projectRoot, managedRootFiles = [], storage, sourceScope = buildRepositorySourceScope({ storage }) } = {}) {
   if (typeof projectRoot !== "string" || !projectRoot.trim() || projectRoot.includes("\0")) fail("projectRoot is required.", "INVALID_REPOSITORY_SCAN_INPUT");
   return {
     schemaVersion: 1,
     kind: "RepositoryScanInput",
     projectRoot: path.resolve(projectRoot),
     managedRootFiles: normalizeManagedRootFiles(managedRootFiles),
-    sourceScope: verifyRepositorySourceScope(sourceScope),
+    sourceScope: verifyRepositorySourceScope(sourceScope, { storage }),
   };
 }
 
@@ -135,6 +137,30 @@ export function validateRepositoryScanInput(input) {
 
 function normalizePath(root, file) {
   return path.relative(root, file).replaceAll("\\", "/");
+}
+
+function scanFormat(input) {
+  return familyFormatForOriginal("head-agent-core-repository-source-scope", input.sourceScope);
+}
+
+function semanticProducerFor(storage) {
+  return { name: formatForVerifiedOwner(storage).protocol("head-agent-core-repository-scan"), version: REPOSITORY_SCAN_VERSION };
+}
+
+function excludesManagedRootDirectory(relative, input) {
+  if (scanFormat(input)?.dialect !== "lode" || !input.managedRootFiles.includes(".lode")) return false;
+  if (relative === ".lode") return true;
+  // A Windows directory can retain another spelling while the verified root
+  // token resolves to it. Case folding only identifies a possible alias: it
+  // never proves ownership on a case-sensitive Windows directory.
+  if (process.platform !== "win32" || relative.toLowerCase() !== ".lode") return false;
+  const candidate = fs.lstatSync(path.join(input.projectRoot, relative), { bigint: true });
+  let selected;
+  try { selected = fs.lstatSync(path.join(input.projectRoot, ".lode"), { bigint: true }); }
+  catch (error) { if (error.code === "ENOENT") return false; throw error; }
+  return candidate.isDirectory() && selected.isDirectory()
+    && candidate.ino !== 0n && selected.ino !== 0n && candidate.dev !== 0n && selected.dev !== 0n
+    && candidate.ino === selected.ino && candidate.dev === selected.dev;
 }
 
 function scanPayload(input, limits, { previousResult = null, reuseDiagnostics = null } = {}) {
@@ -159,7 +185,7 @@ function scanPayload(input, limits, { previousResult = null, reuseDiagnostics = 
       const relative = normalizePath(root, absolute);
       if (entry.isSymbolicLink()) { skipped.symlink += 1; continue; }
       if (entry.isDirectory()) {
-        if (EXCLUDED_DIRECTORIES.has(entry.name.toLowerCase())) skipped.excludedDirectory += 1;
+        if (EXCLUDED_DIRECTORIES.has(entry.name.toLowerCase()) || excludesManagedRootDirectory(relative, input)) skipped.excludedDirectory += 1;
         else if (!pathWithinRepositorySourceScope(relative, input.sourceScope, { directory: true })) skipped.outsideSourceScope += 1;
         else stack.push(absolute);
         continue;
@@ -221,7 +247,7 @@ function scanPayload(input, limits, { previousResult = null, reuseDiagnostics = 
   return {
     schemaVersion: 1,
     kind: "RepositoryScanResult",
-    protocol: { name: "head-agent-core-repository-scan", version: REPOSITORY_SCAN_VERSION },
+    protocol: semanticProducerFor(scanFormat(input)),
     sourceAnalysisVersion: SOURCE_ANALYSIS_VERSION,
     authority: "derived-evidence-only",
     instructionAuthority: false,
@@ -250,8 +276,8 @@ export function scanRepositoryReference(input, { limits = DEFAULT_COMPUTE_LIMITS
   return validateRepositoryScanResult(result);
 }
 
-export function inspectRepositoryScanFreshness({ projectRoot, managedRootFiles = [], sourceScope = buildRepositorySourceScope(), storedFiles = [], limits = {} } = {}) {
-  const input = buildRepositoryScanInput({ projectRoot, managedRootFiles, sourceScope });
+export function inspectRepositoryScanFreshness({ projectRoot, managedRootFiles = [], storage, sourceScope = buildRepositorySourceScope({ storage }), storedFiles = [], limits = {} } = {}) {
+  const input = buildRepositoryScanInput({ projectRoot, managedRootFiles, sourceScope, storage });
   const normalizedLimits = normalizeComputeLimits(limits);
   if (!Array.isArray(storedFiles)) fail("storedFiles must be an array.", "INVALID_REPOSITORY_SCAN_INPUT");
   const managed = new Set(input.managedRootFiles);
@@ -266,7 +292,8 @@ export function inspectRepositoryScanFreshness({ projectRoot, managedRootFiles =
       const relative = normalizePath(input.projectRoot, absolute);
       if (entry.isSymbolicLink()) continue;
       if (entry.isDirectory()) {
-        if (!EXCLUDED_DIRECTORIES.has(entry.name.toLowerCase()) && pathWithinRepositorySourceScope(relative, input.sourceScope, { directory: true })) stack.push(absolute);
+        if (!EXCLUDED_DIRECTORIES.has(entry.name.toLowerCase()) && !excludesManagedRootDirectory(relative, input)
+          && pathWithinRepositorySourceScope(relative, input.sourceScope, { directory: true })) stack.push(absolute);
         continue;
       }
       if (!entry.isFile() || !pathWithinRepositorySourceScope(relative, input.sourceScope) || managed.has(relative)) continue;
@@ -333,13 +360,13 @@ export function repositoryScanResultFromWorldModel(snapshot) {
   return validateRepositoryScanResult(resultFromWorldModelSnapshot(snapshot));
 }
 
-export function validateRepositoryScanExecution(execution, { projectRoot, managedRootFiles = [], sourceScope = buildRepositorySourceScope() } = {}) {
+export function validateRepositoryScanExecution(execution, { projectRoot, managedRootFiles = [], storage, sourceScope = buildRepositorySourceScope({ storage }) } = {}) {
   if (!execution || typeof execution !== "object" || Array.isArray(execution)) fail("Repository scan execution is required.", "INVALID_REPOSITORY_SCAN_EXECUTION");
-  const expectedInput = buildRepositoryScanInput({ projectRoot, managedRootFiles, sourceScope });
+  const expectedInput = buildRepositoryScanInput({ projectRoot, managedRootFiles, sourceScope, storage });
   validateComputeRequest(execution.request);
   validateComputeResponse(execution.request, execution.response);
   if (execution.request.operation !== REPOSITORY_SCAN_OPERATION
-    || canonicalJson(execution.request.semanticProducer) !== canonicalJson(REPOSITORY_SCAN_SEMANTIC_PRODUCER)
+    || canonicalJson(execution.request.semanticProducer) !== canonicalJson(semanticProducerFor(scanFormat(expectedInput)))
     || canonicalJson(execution.request.input) !== canonicalJson(expectedInput)
     || execution.response.status !== "ok"
     || canonicalJson(execution.response.result) !== canonicalJson(execution.result)) {
@@ -349,13 +376,14 @@ export function validateRepositoryScanExecution(execution, { projectRoot, manage
   return execution;
 }
 
-export async function executeIncrementalRepositoryScan({ projectRoot, managedRootFiles = [], sourceScope = buildRepositorySourceScope(), previousSnapshot, limits = {} } = {}) {
+export async function executeIncrementalRepositoryScan({ projectRoot, managedRootFiles = [], storage, sourceScope = buildRepositorySourceScope({ storage }), previousSnapshot, limits = {} } = {}) {
   const previousResult = repositoryScanResultFromWorldModel(previousSnapshot);
-  const input = buildRepositoryScanInput({ projectRoot, managedRootFiles, sourceScope });
+  const input = buildRepositoryScanInput({ projectRoot, managedRootFiles, sourceScope, storage });
   const request = buildComputeRequest({
     operation: REPOSITORY_SCAN_OPERATION,
     input,
-    semanticProducer: REPOSITORY_SCAN_SEMANTIC_PRODUCER,
+    semanticProducer: semanticProducerFor(scanFormat(input)),
+    storage,
     limits,
   });
   const reuse = { reusedPaths: [], analyzedPaths: [], removedPaths: [] };
@@ -386,7 +414,7 @@ export async function executeIncrementalRepositoryScan({ projectRoot, managedRoo
       removedPaths: reuse.removedPaths,
       changes,
     },
-  }, { projectRoot, managedRootFiles, sourceScope });
+  }, { projectRoot, managedRootFiles, sourceScope, storage });
 }
 
 function assertOrderedUnique(values, identity, label) {
@@ -406,19 +434,20 @@ function validateLineRecord(record, fields, label) {
 }
 
 export function validateRepositoryScanResult(result) {
+  const format = familyFormatForOriginal("head-agent-core-repository-scan", result);
   // 0.5.0 has the same declaration schema; only scan eligibility changed.
   const currentProtocol = [REPOSITORY_SCAN_VERSION, "0.5.0"].includes(result?.protocol?.version);
   const scopedProtocol = currentProtocol || new Set(["0.3.0", "0.4.0"]).has(result?.protocol?.version);
   const legacyProtocol = new Set(["0.2.0", "0.3.0", "0.4.0"]).has(result?.protocol?.version);
   assertFields(result, ["schemaVersion", "kind", "protocol", "sourceAnalysisVersion", "authority", "instructionAuthority", "promotionAuthority", ...(scopedProtocol ? ["sourceScope"] : []), "files", "skipped", "summary", "scanId", "scanHash"], "Repository scan result");
   if (result.schemaVersion !== 1 || result.kind !== "RepositoryScanResult"
-    || result.protocol?.name !== "head-agent-core-repository-scan" || (!currentProtocol && !legacyProtocol)
+    || !format || (!currentProtocol && !legacyProtocol)
     || (currentProtocol ? result.sourceAnalysisVersion !== SOURCE_ANALYSIS_VERSION : !["0.1.0", "0.2.0"].includes(result.sourceAnalysisVersion))
     || result.authority !== "derived-evidence-only"
     || result.instructionAuthority !== false || result.promotionAuthority !== false || !Array.isArray(result.files)) {
     fail("Repository scan result contract is invalid.", "INVALID_REPOSITORY_SCAN_RESULT");
   }
-  if (scopedProtocol) verifyRepositorySourceScope(result.sourceScope);
+  if (scopedProtocol) verifyRepositorySourceScope(result.sourceScope, { storage: format });
   assertOrderedUnique(result.files, (file) => file.path, "Repository scan files");
   for (const [index, file] of result.files.entries()) {
     const label = `files[${index}]`;
@@ -500,20 +529,22 @@ export function createRepositoryScanReferenceAdapter() {
   });
 }
 
-export function createRepositoryScanComputeAdapter({ pluginRoot = path.resolve(import.meta.dirname, "../..") } = {}) {
+export function createRepositoryScanComputeAdapter({ pluginRoot = path.resolve(import.meta.dirname, "../.."), storage } = {}) {
   return new GoWorkerComputeAdapter({
     pluginRoot,
+    storage,
     fallbackAdapter: createRepositoryScanReferenceAdapter(),
   });
 }
 
-export async function executeRepositoryScan({ adapter = createRepositoryScanComputeAdapter(), projectRoot, managedRootFiles = [], sourceScope = buildRepositorySourceScope(), limits = {} } = {}) {
-  const input = buildRepositoryScanInput({ projectRoot, managedRootFiles, sourceScope });
+export async function executeRepositoryScan({ storage, adapter = createRepositoryScanComputeAdapter({ storage }), projectRoot, managedRootFiles = [], sourceScope = buildRepositorySourceScope({ storage }), limits = {} } = {}) {
+  const input = buildRepositoryScanInput({ projectRoot, managedRootFiles, sourceScope, storage });
   const execution = await executeComputeOperation({
     adapter,
     operation: REPOSITORY_SCAN_OPERATION,
     input,
-    semanticProducer: REPOSITORY_SCAN_SEMANTIC_PRODUCER,
+    semanticProducer: semanticProducerFor(scanFormat(input)),
+    storage,
     limits,
   });
   validateRepositoryScanResult(execution.result);

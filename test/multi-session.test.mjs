@@ -6,6 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import { EventEmitter } from "node:events";
 import { initializeProject, inspectProject } from "../scripts/lib/head-core.mjs";
+import { formatForVerifiedOwner } from "../scripts/lib/project-storage-format.mjs";
 import { createHeadSession, listHeadSessions, withSessionRoute, sessionStatePath, sessionDataPath } from "../scripts/lib/session-routing.mjs";
 import { readProjectDirection, updateProjectDirection, assertProjectActionsCurrent, assertAuthorizationProjectDirection } from "../scripts/lib/project-direction.mjs";
 import { createRecoveryCheckpoint, prepareCompaction, inspectCompaction, verifyCompaction, continueCompaction, inspectRecoveryCheckpointBasis, syncRecoveryCheckpoint } from "../scripts/lib/compaction-recovery.mjs";
@@ -27,14 +28,16 @@ const pluginRoot = path.resolve(import.meta.dirname, "..");
 function project(t) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "head-multi-session-")));
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const storage = inspectProject(root).storage;
+  const layout = formatForVerifiedOwner(storage);
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  return root;
+  return { root, storage, layout };
 }
 const direction = (suffix) => ({ purpose: `Session purpose ${suffix}`, currentPosition: `Position ${suffix}`, nextExpectedResult: `Result ${suffix}` });
 const read = (file) => JSON.parse(fs.readFileSync(file, "utf8"));
 
 test("independent async routes preserve original identity, unknown execution and approval bytes", async (t) => {
-  const root = project(t);
+  const { root, layout } = project(t);
   const originalFile = sessionStatePath(root);
   const existing = read(originalFile);
   existing.unknownExternalOutcome = { action: "deploy", replayAllowed: false };
@@ -66,7 +69,7 @@ test("independent async routes preserve original identity, unknown execution and
 });
 
 test("common current cancellation survives every Session restore without rewriting checkpoints", (t) => {
-  const root = project(t);
+  const { root, layout } = project(t);
   const a = createHeadSession({ root, purpose: "Deployment investigation" });
   const b = createHeadSession({ root, purpose: "Independent docs" });
   withSessionRoute(root, a.sessionId, () => createRecoveryCheckpoint({ root, ...direction("deployment") }));
@@ -83,7 +86,7 @@ test("common current cancellation survives every Session restore without rewriti
 });
 
 test("per-session compaction pointers and token consumption never collide", (t) => {
-  const root = project(t);
+  const { root, layout } = project(t);
   const a = createHeadSession({ root }); const b = createHeadSession({ root });
   const prepare = (id) => withSessionRoute(root, id, () => prepareCompaction({ root, runtime: "codex", userTurnIdAtPrepare: 7, ...direction(id) }));
   const aa = prepare(a.sessionId); const bb = prepare(b.sessionId);
@@ -100,7 +103,7 @@ test("per-session compaction pointers and token consumption never collide", (t) 
 });
 
 test("routing rejects escape, foreign identity and divergent create without default mutation", (t) => {
-  const root = project(t); const foreign = project(t);
+  const { root, layout } = project(t); const { root: foreign } = project(t);
   const a = createHeadSession({ root, purpose: "A" });
   assert.throws(() => withSessionRoute(root, "../../outside", () => {}), { code: "INVALID_HEAD_SESSION_ID" });
   assert.throws(() => createHeadSession({ root, sessionId: a.sessionId, purpose: "B" }), { code: "HEAD_SESSION_CREATE_CONFLICT" });
@@ -112,7 +115,7 @@ test("routing rejects escape, foreign identity and divergent create without defa
 });
 
 test("default project onboarding remains readable within a new logical Session", (t) => {
-  const root = project(t); const before = inspectOptionalOnboarding({ root });
+  const { root, layout } = project(t); const before = inspectOptionalOnboarding({ root });
   const a = createHeadSession({ root });
   const after = withSessionRoute(root, a.sessionId, () => inspectOptionalOnboarding({ root }));
   assert.equal(after.state.sessionId, before.state.sessionId);
@@ -120,7 +123,7 @@ test("default project onboarding remains readable within a new logical Session",
 });
 
 test("new common direction invalidates stale checkpoint publication basis", (t) => {
-  const root = project(t); const basis = inspectRecoveryCheckpointBasis({ root }).basis;
+  const { root, layout } = project(t); const basis = inspectRecoveryCheckpointBasis({ root }).basis;
   updateProjectDirection({ root, input: { goal: "Changed by user" } });
   const result = syncRecoveryCheckpoint({ root, expectedRecoveryBasisId: basis.basisId, ...direction("old") });
   assert.equal(result.status, "recovery_checkpoint_sync_conflict");
@@ -128,7 +131,7 @@ test("new common direction invalidates stale checkpoint publication basis", (t) 
 });
 
 test("active Runs stay Session-owned and another route cannot finish a copied pointer", (t) => {
-  const root = project(t); const a = createHeadSession({ root }); const b = createHeadSession({ root });
+  const { root, layout } = project(t); const a = createHeadSession({ root }); const b = createHeadSession({ root });
   const started = withSessionRoute(root, a.sessionId, () => {
     const capsule = compileContext({ root, task: "Synthetic source work", budget: 32768, persist: true }).capsule;
     const plan = createWholePlanSnapshot({ root, objective: "Synthetic work", plan: [{ id: "work", outcome: "Done" }] }).artifact;
@@ -143,17 +146,17 @@ test("active Runs stay Session-owned and another route cannot finish a copied po
 });
 
 test("lost direction response converges without another revision or approval", (t) => {
-  const root = project(t); const input = { goal: "Current user direction" };
+  const { root, layout } = project(t); const input = { goal: "Current user direction" };
   const first = updateProjectDirection({ root, expectedDirectionId: null, input });
   const retry = updateProjectDirection({ root, expectedDirectionId: null, input });
   assert.equal(retry.status, "reused");
   assert.equal(retry.direction.directionId, first.direction.directionId);
-  assert.equal(fs.readdirSync(path.join(root, ".head/project-direction/revisions")).length, 1);
+  assert.equal(fs.readdirSync(path.join(root, layout.directory, "project-direction/revisions")).length, 1);
   assert.throws(() => updateProjectDirection({ root, expectedDirectionId: null, input: { goal: "Different user direction" } }), { code: "PROJECT_DIRECTION_CONFLICT" });
 });
 
 test("direction constraint changes invalidate old effects while unknown outcomes remain unchanged", (t) => {
-  const root = project(t); const file = sessionStatePath(root);
+  const { root, layout } = project(t); const file = sessionStatePath(root);
   const original = { ...read(file), externalEffect: { status: "unknown", replayAllowed: false } };
   fs.writeFileSync(file, JSON.stringify(original));
   const before = fs.readFileSync(file);
@@ -166,7 +169,7 @@ test("direction constraint changes invalidate old effects while unknown outcomes
 });
 
 test("selected route remains bound to its original path despite default identity tamper", (t) => {
-  const root = project(t); const defaultFile = sessionStatePath(root);
+  const { root, layout } = project(t); const defaultFile = sessionStatePath(root);
   const original = fs.readFileSync(defaultFile);
   const a = createHeadSession({ root });
   withSessionRoute(root, a.sessionId, () => {
@@ -193,7 +196,7 @@ function capabilityFixture(_command, args) {
 }
 
 test("authorization and actual prepared input bind routed Session and current common constraints", async (t) => {
-  const root = project(t); const a = createHeadSession({ root }); const b = createHeadSession({ root });
+  const { root, layout } = project(t); const a = createHeadSession({ root }); const b = createHeadSession({ root });
   const bin = path.join(root, "fixture-bin"); fs.mkdirSync(bin);
   const marker = path.join(bin, process.platform === "win32" ? "codex.exe" : "codex");
   fs.writeFileSync(marker, "Fixture marker; never executed");
@@ -221,7 +224,7 @@ test("authorization and actual prepared input bind routed Session and current co
 });
 
 test("explicit resume initializes only a missing index and preserves existing inventory on unchanged replay", async (t) => {
-  const root = project(t); const index = path.join(root, ".head/graph-discovery/index.json");
+  const { root, layout } = project(t); const index = path.join(root, layout.directory, "graph-discovery/index.json");
   const existing = fs.readFileSync(index);
   const state = read(sessionStatePath(root));
   fs.writeFileSync(sessionStatePath(root), JSON.stringify({ ...state, currentPosition: "An existing caller-authored update" }));
@@ -239,7 +242,7 @@ test("explicit resume initializes only a missing index and preserves existing in
 });
 
 test("absent common direction preserves consumed prior-shape authorization and unknown outcomes without a sibling gate", async (t) => {
-  const root = project(t);
+  const { root, layout } = project(t);
   const operationalRoot = fs.mkdtempSync(path.join(os.tmpdir(), "head-multi-session-operational-"));
   const previousEnvironment = process.env[RUNTIME_OPERATIONAL_STATE_ENV];
   process.env[RUNTIME_OPERATIONAL_STATE_ENV] = operationalRoot;
@@ -269,7 +272,7 @@ test("absent common direction preserves consumed prior-shape authorization and u
   delete payload.currentProjectDirectionId; delete payload.authorizationId; delete payload.authorizationHash;
   const hash = crypto.createHash("sha256").update(onboardingCanonicalJson(payload)).digest("hex");
   const prior = verifyRuntimeInvocationAuthorization({ ...payload, authorizationId: `execution-authorization-${hash.slice(0, 24)}`, authorizationHash: hash });
-  const authorizationFile = path.join(root, ".head/runtime/execution-authorizations", `${prior.authorizationId}.json`);
+  const authorizationFile = path.join(root, layout.directory, "runtime/execution-authorizations", `${prior.authorizationId}.json`);
   fs.mkdirSync(path.dirname(authorizationFile), { recursive: true }); fs.writeFileSync(authorizationFile, JSON.stringify(prior));
   const original = fs.readFileSync(authorizationFile);
   let calls = 0;
@@ -298,7 +301,7 @@ test("absent common direction preserves consumed prior-shape authorization and u
 });
 
 test("historical migration separates common onboarding identity from selected recovery and active effects without writes", async (t) => {
-  const root = project(t);
+  const { root, layout } = project(t);
   const started = await startOnboarding({ root, mode: "new", brief: { schemaVersion: 1, name: "Synthetic service",
     summary: "Deliver a reviewed message.", capabilities: [{ key: "delivery", name: "Delivery", description: "Deliver a message." }] } });
   await reviewOnboarding({ root, candidateSetId: started.candidateSet.candidateSetId, disposition: "accept-all", rationale: "Synthetic acceptance." });
@@ -320,7 +323,7 @@ test("historical migration separates common onboarding identity from selected re
     const checkpoint = checkpointResult.checkpoint;
     const selectedFile = sessionStatePath(root);
     fs.writeFileSync(selectedFile, JSON.stringify({ ...read(selectedFile), unknownExternalOutcome: { replayAllowed: false, action: "publish" } }));
-    const onboardingFile = path.join(root, ".head/onboarding/current.json");
+    const onboardingFile = path.join(root, layout.directory, "onboarding/current.json");
     const unchangedFiles = [defaultFile, selectedFile, onboardingFile, checkpointResult.file];
     const before = unchangedFiles.map(file => fs.readFileSync(file));
     const basis = captureHistoricalBoundaryApplicationBasis({ root });
@@ -354,7 +357,7 @@ test("historical migration separates common onboarding identity from selected re
       ["historical-review", "review-decisions", current.latestReviewDecisionId],
       ["historical-product-revision", "product-model-revisions", current.productModelId],
     ].map(([role, directory, artifactId]) => {
-      const relative = `.head/onboarding/${directory}/${artifactId}.json`;
+      const relative = `${layout.directory}/onboarding/${directory}/${artifactId}.json`;
       const bytes = fs.readFileSync(path.join(root, relative)); const document = JSON.parse(bytes);
       return { path: relative, role, artifactId, protocolFamily: document.protocol?.name || document.kind,
         protocolVersion: document.protocol?.version || "0.3.0", byteLength: bytes.length,

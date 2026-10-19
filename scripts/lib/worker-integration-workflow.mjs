@@ -1,6 +1,7 @@
-import { prepareWorkerPatchIntegration } from "./worker-patch-integration.mjs";
+import { publicToolName } from "./lode-artifact-composition.mjs";
+import { prepareWorkerPatchIntegration, validateWorkerPatchIntegrationPrepareInput } from "./worker-patch-integration.mjs";
 import { readWorkerPatchApplication, readOutstandingWorkerEffects, applyWorkerPatchIntegration,
-  reconcileWorkerPatchIntegration, settleIncompleteWorkerPatchIntegration } from "./worker-integration-application.mjs";
+  reconcileWorkerPatchIntegration, settleIncompleteWorkerPatchIntegration, validateWorkerIntegrationSettlementReason } from "./worker-integration-application.mjs";
 import { prepareWorkerIntegrationResult, publishWorkerIntegrationResult, readWorkerIntegrationResult } from "./worker-integration-result.mjs";
 
 const fail = message => { throw Object.assign(new Error(message), { code: "WORKER_INTEGRATION_INPUT_INVALID" }); };
@@ -30,21 +31,28 @@ function identities(input) {
   if (input.basisDigest !== undefined && (typeof input.basisDigest !== "string" || !digestPattern.test(input.basisDigest))) fail("Invalid worker integration basis digest.");
 }
 
-// One thin public composition for CLI and MCP. The request is evidence/HEAD
-// input only: no executable, transport, native selection, Host hook, or approval.
-export async function operateWorkerIntegration(request, { root = ".", onProcess } = {}) {
+export function validateWorkerIntegrationRequest(request) {
   const shape = typeof request?.action === "string" && Object.hasOwn(actions, request.action) ? actions[request.action] : null;
   if (!shape) fail("Unknown worker integration action.");
   fields(request, ["action", ...shape.required], shape.optional);
   identities(request);
   if (request.retryKnownNoWrite !== undefined && typeof request.retryKnownNoWrite !== "boolean") fail("retryKnownNoWrite must be a boolean.");
+  if (request.action === "prepare") validateWorkerPatchIntegrationPrepareInput(request);
+  if (request.action === "settle-incomplete") validateWorkerIntegrationSettlementReason(request.reason);
+  return request;
+}
+
+// One thin public composition for CLI and MCP. The request is evidence/HEAD
+// input only: no executable, transport, native selection, Host hook, or approval.
+export async function operateWorkerIntegration(request, { root = ".", onProcess, storage } = {}) {
+  validateWorkerIntegrationRequest(request);
   const { action, ...input } = request;
-  const result = await (action === "prepare" ? prepareWorkerPatchIntegration({ ...input, root }, { onProcess })
-    : action === "apply" ? applyWorkerPatchIntegration({ ...input, root }, { onProcess })
-      : action === "reconcile" ? reconcileWorkerPatchIntegration({ ...input, root }, { onProcess })
-        : action === "settle-incomplete" ? settleIncompleteWorkerPatchIntegration({ ...input, root })
-          : action === "prepare-result" ? prepareWorkerIntegrationResult({ ...input, root })
-            : publishWorkerIntegrationResult({ ...input, root }));
+  const result = await (action === "prepare" ? prepareWorkerPatchIntegration({ ...input, root, storage }, { onProcess })
+    : action === "apply" ? applyWorkerPatchIntegration({ ...input, root, storage }, { onProcess })
+      : action === "reconcile" ? reconcileWorkerPatchIntegration({ ...input, root, storage }, { onProcess })
+        : action === "settle-incomplete" ? settleIncompleteWorkerPatchIntegration({ ...input, root, storage })
+          : action === "prepare-result" ? prepareWorkerIntegrationResult({ ...input, root, storage })
+            : publishWorkerIntegrationResult({ ...input, root, storage }));
   if (!result.intent) return result;
   const { intent, ...view } = result;
   return { ...view, integration: summary(intent) };
@@ -75,7 +83,7 @@ function resultSummary(result) {
     } : null,
     resultPacket: packet ? { resultPacketId: packet.resultPacketId, artifactHash: packet.artifactHash,
       published: Boolean(result.resultPacket),
-      read: result.resultPacket ? { tool: "head_lineage_artifact", artifactId: packet.resultPacketId } : null } : null,
+      read: result.resultPacket ? { tool: publicToolName("head_lineage_artifact"), artifactId: packet.resultPacketId } : null } : null,
   };
 }
 function applicationSummary(application) {
@@ -83,14 +91,19 @@ function applicationSummary(application) {
     attemptCount: attempts?.length ?? (effect.started ? 1 : 0) })) };
 }
 
-// On-demand P4 status. Verification remains in the existing Core readers;
-// omit duplicate intents and raw patch contents, not evidence identities.
-export function inspectWorkerIntegration(request, { root = "." } = {}) {
+export function validateWorkerIntegrationStatusRequest(request) {
   fields(request, ["integrationId"], ["verificationId"]);
   identities(request);
-  const { intent, ...application } = readWorkerPatchApplication({ root, integrationId: request.integrationId });
-  const outstandingEffects = readOutstandingWorkerEffects({ root, integrationId: request.integrationId });
-  const result = readWorkerIntegrationResult({ root, ...request });
+  return request;
+}
+
+// On-demand P4 status. Verification remains in the existing Core readers;
+// omit duplicate intents and raw patch contents, not evidence identities.
+export function inspectWorkerIntegration(request, { root = ".", storage } = {}) {
+  validateWorkerIntegrationStatusRequest(request);
+  const { intent, ...application } = readWorkerPatchApplication({ root, integrationId: request.integrationId, storage });
+  const outstandingEffects = readOutstandingWorkerEffects({ root, integrationId: request.integrationId, storage });
+  const result = readWorkerIntegrationResult({ root, ...request, storage });
   return { integration: summary(intent), application: applicationSummary(application), outstandingEffects, result: resultSummary(result),
     authorityEffect: "none", instructionAuthority: false, promotionAuthority: false, recoveryAuthority: false,
     reviewDecisionCreated: false, mutatesCanon: false };

@@ -1,6 +1,7 @@
+import { formatForVerifiedOwner, familyFormatForOriginal, relativeProjectArtifact } from "./project-storage-format.mjs";
 import fs from "node:fs";
 import path from "node:path";
-import { inspectProject, SCHEMA_VERSION } from "./head-core.mjs";
+import { inspectProject, SCHEMA_VERSION } from "./lode-core.mjs";
 import { noteProjectGraphChange } from "./discovery-index.mjs";
 import { atomicCreateArtifact } from "./artifact-storage.mjs";
 import {
@@ -106,7 +107,8 @@ function receiptIdentity(payload) {
   return { ...payload, receiptId: `observation-receipt-${hash.slice(0, 24)}`, receiptHash: hash };
 }
 
-export function verifyObservationCollectionReceipt(document, projectId = "") {
+export function verifyObservationCollectionReceipt(document, projectId = "", storage) {
+  const format = familyFormatForOriginal("head-agent-core-observation", document, storage);
   if (!document || typeof document !== "object" || Array.isArray(document)) fail("ObservationCollectionReceipt is invalid.", "INVALID_OBSERVATION_RECEIPT");
   const expectedFields = ["schemaVersion", "kind", "protocol", "projectId", "observationId", "observationHash", "descriptorId", "adapterKey", "adapterVersion", "adapterDescriptorDigest", "sourceScopeDigest", "authority", "instructionAuthority", "promotionAuthority", "recoveryAuthority", "receiptId", "receiptHash"].sort();
   if (observationCanonicalJson(Object.keys(document).sort()) !== observationCanonicalJson(expectedFields)
@@ -115,7 +117,7 @@ export function verifyObservationCollectionReceipt(document, projectId = "") {
   const hash = observationDigest(payload);
   if (document.receiptId !== `observation-receipt-${hash.slice(0, 24)}` || document.receiptHash !== hash
     || document.schemaVersion !== SCHEMA_VERSION || document.kind !== "ObservationCollectionReceipt"
-    || document.protocol?.name !== "head-agent-core-observation" || document.protocol?.version !== OBSERVATION_PROTOCOL_VERSION
+    || !format || document.protocol?.version !== OBSERVATION_PROTOCOL_VERSION
     || projectId && document.projectId !== projectId || !/^observation-[a-f0-9]{24}$/.test(document.observationId || "")
     || !/^observation-type-[a-f0-9]{24}$/.test(document.descriptorId || "") || !/^[a-f0-9]{64}$/.test(document.observationHash || "")
     || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/.test(document.adapterKey || "") || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/.test(document.adapterVersion || "")
@@ -125,10 +127,10 @@ export function verifyObservationCollectionReceipt(document, projectId = "") {
   return document;
 }
 
-function descriptorMap(descriptors) {
+function descriptorMap(descriptors, storage) {
   const map = new Map();
   for (const descriptor of descriptors) {
-    verifyObservationTypeDescriptor(descriptor);
+    verifyObservationTypeDescriptor(descriptor, storage);
     if (map.has(descriptor.descriptorId)) fail("Duplicate ObservationTypeDescriptor.", "DUPLICATE_OBSERVATION_DESCRIPTOR");
     map.set(descriptor.descriptorId, descriptor);
   }
@@ -144,8 +146,9 @@ function sourceReplayKeyDigest(source) {
   });
 }
 
-function persistObservationRecord(projectRoot, record) {
-  const legacyFile = path.join(safeDirectory(projectRoot, OBSERVATION_RECORD_DIRECTORY), `${record.source.sourceEventKeyDigest}.json`);
+function persistObservationRecord(projectRoot, record, storage = null) {
+  const recordDirectory = relativeProjectArtifact(storage, "observations", "records", "by-source-key");
+  const legacyFile = path.join(safeDirectory(projectRoot, recordDirectory), `${record.source.sourceEventKeyDigest}.json`);
   if (fs.existsSync(legacyFile)) {
     const stat = fs.lstatSync(legacyFile);
     if (stat.isSymbolicLink() || !stat.isFile() || stat.size > LIMITS.maxArtifactBytes) fail("Legacy Observation record is unsafe or too large.", "OBSERVATION_STORE_LIMIT");
@@ -158,16 +161,17 @@ function persistObservationRecord(projectRoot, record) {
       return { status: "existing", file: legacyFile };
     }
   }
-  return persistCreateOnly(projectRoot, OBSERVATION_RECORD_DIRECTORY, `${sourceReplayKeyDigest(record.source)}.json`, record, "DIVERGENT_OBSERVATION_REPLAY");
+  return persistCreateOnly(projectRoot, recordDirectory, `${sourceReplayKeyDigest(record.source)}.json`, record, "DIVERGENT_OBSERVATION_REPLAY");
 }
 
-export function loadObservationArtifacts({ projectRoot, projectId } = {}) {
-  const descriptors = readDirectory(projectRoot, OBSERVATION_DESCRIPTOR_DIRECTORY, "ObservationTypeDescriptor");
-  const descriptorsById = descriptorMap(descriptors);
-  const observations = readDirectory(projectRoot, OBSERVATION_RECORD_DIRECTORY, "ObservationRecord").map((record) => {
+export function loadObservationArtifacts({ projectRoot, projectId, storage = null } = {}) {
+  storage = formatForVerifiedOwner(storage);
+  const descriptors = readDirectory(projectRoot, relativeProjectArtifact(storage, "observations", "descriptors"), "ObservationTypeDescriptor");
+  const descriptorsById = descriptorMap(descriptors, storage);
+  const observations = readDirectory(projectRoot, relativeProjectArtifact(storage, "observations", "records", "by-source-key"), "ObservationRecord").map((record) => {
     const descriptor = descriptorsById.get(record.descriptorId);
     if (!descriptor) fail("ObservationRecord references an unknown descriptor.", "UNKNOWN_OBSERVATION_DESCRIPTOR");
-    return verifyObservationRecord(record, descriptor, projectId);
+    return verifyObservationRecord(record, descriptor, projectId, storage);
   });
   const observationIds = new Map();
   const sourceKeys = new Map();
@@ -179,21 +183,22 @@ export function loadObservationArtifacts({ projectRoot, projectId } = {}) {
     observationIds.set(record.observationId, record);
     sourceKeys.set(replayKeyDigest, record.observationId);
   }
-  const derivedObservations = readDirectory(projectRoot, DERIVED_OBSERVATION_DIRECTORY, "DerivedObservationRecord").map((record) => {
+  const derivedObservations = readDirectory(projectRoot, relativeProjectArtifact(storage, "observations", "derived"), "DerivedObservationRecord").map((record) => {
     const descriptor = descriptorsById.get(record.descriptorId);
     if (!descriptor) fail("DerivedObservationRecord references an unknown descriptor.", "UNKNOWN_OBSERVATION_DESCRIPTOR");
-    verifyDerivedObservationRecord(record, descriptor, projectId);
+    verifyDerivedObservationRecord(record, descriptor, projectId, storage);
     for (const input of record.inputObservations) {
       const source = observationIds.get(input.observationId);
       if (!source || source.observationHash !== input.observationHash) fail("DerivedObservationRecord input is missing or changed.", "DERIVED_OBSERVATION_INPUT_MISMATCH");
     }
     return record;
   });
-  const receipts = readDirectory(projectRoot, OBSERVATION_RECEIPT_DIRECTORY, "ObservationCollectionReceipt").map((receipt) => verifyObservationCollectionReceipt(receipt, projectId));
+  const receipts = readDirectory(projectRoot, relativeProjectArtifact(storage, "observations", "receipts"), "ObservationCollectionReceipt").map((receipt) => verifyObservationCollectionReceipt(receipt, projectId, storage));
   const receiptObservationIds = new Set();
   for (const receipt of receipts) {
     const record = observationIds.get(receipt.observationId);
-    if (!record || record.observationHash !== receipt.observationHash || record.descriptorId !== receipt.descriptorId) fail("ObservationCollectionReceipt lineage is invalid.", "INVALID_OBSERVATION_RECEIPT_LINEAGE");
+    if (!record || record.observationHash !== receipt.observationHash || record.descriptorId !== receipt.descriptorId
+      || record.protocol.name !== receipt.protocol.name) fail("ObservationCollectionReceipt lineage is invalid.", "INVALID_OBSERVATION_RECEIPT_LINEAGE");
     if (receiptObservationIds.has(receipt.observationId)) fail("ObservationRecord has multiple collection receipts.", "DUPLICATE_OBSERVATION_RECEIPT");
     receiptObservationIds.add(receipt.observationId);
   }
@@ -208,8 +213,8 @@ export function loadObservationArtifacts({ projectRoot, projectId } = {}) {
 
 export function registerObservationType({ root = ".", descriptor } = {}) {
   const inspected = assertObservationProjectReady(root);
-  const normalized = descriptor?.kind === "ObservationTypeDescriptor" ? verifyObservationTypeDescriptor(descriptor) : createObservationTypeDescriptor(descriptor);
-  const persisted = persistCreateOnly(inspected.project.projectRoot, OBSERVATION_DESCRIPTOR_DIRECTORY, `${normalized.descriptorId}.json`, normalized);
+  const normalized = descriptor?.kind === "ObservationTypeDescriptor" ? verifyObservationTypeDescriptor(descriptor, inspected.storage) : createObservationTypeDescriptor(descriptor, inspected.storage);
+  const persisted = persistCreateOnly(inspected.project.projectRoot, relativeProjectArtifact(inspected.storage, "observations", "descriptors"), `${normalized.descriptorId}.json`, normalized);
   return { ...persisted, descriptor: normalized };
 }
 
@@ -231,12 +236,12 @@ function recordCollectedObservationInternal({ root = ".", descriptor, input, ada
       sourceEventKeyDigest: input.sourceEventKeyDigest,
       sourceEvidenceDigest: input.sourceEvidenceDigest,
     },
-  });
-  const recordPersisted = persistObservationRecord(inspected.project.projectRoot, record);
+  }, inspected.storage);
+  const recordPersisted = persistObservationRecord(inspected.project.projectRoot, record, inspected.storage);
   const receiptPayload = {
     schemaVersion: SCHEMA_VERSION,
     kind: "ObservationCollectionReceipt",
-    protocol: { name: "head-agent-core-observation", version: OBSERVATION_PROTOCOL_VERSION },
+    protocol: { name: formatForVerifiedOwner(inspected.storage).protocol("head-agent-core-observation"), version: OBSERVATION_PROTOCOL_VERSION },
     projectId: inspected.project.projectId,
     observationId: record.observationId,
     observationHash: record.observationHash,
@@ -250,10 +255,10 @@ function recordCollectedObservationInternal({ root = ".", descriptor, input, ada
     promotionAuthority: false,
     recoveryAuthority: false,
   };
-  const receipt = verifyObservationCollectionReceipt(receiptIdentity(receiptPayload), inspected.project.projectId);
-  const receiptPersisted = persistCreateOnly(inspected.project.projectRoot, OBSERVATION_RECEIPT_DIRECTORY, `${receipt.receiptId}.json`, receipt);
+  const receipt = verifyObservationCollectionReceipt(receiptIdentity(receiptPayload), inspected.project.projectId, inspected.storage);
+  const receiptPersisted = persistCreateOnly(inspected.project.projectRoot, relativeProjectArtifact(inspected.storage, "observations", "receipts"), `${receipt.receiptId}.json`, receipt);
   noteProjectGraphChange(inspected.project.projectRoot, [
-    `${OBSERVATION_DESCRIPTOR_DIRECTORY}/${registered.descriptorId}.json`,
+    `${relativeProjectArtifact(inspected.storage, "observations", "descriptors")}/${registered.descriptorId}.json`,
     path.relative(inspected.project.projectRoot, recordPersisted.file).replaceAll("\\", "/"),
     path.relative(inspected.project.projectRoot, receiptPersisted.file).replaceAll("\\", "/"),
   ]);
@@ -270,14 +275,14 @@ export function recordCollectedObservation({ root = ".", descriptor, input, adap
       "RESERVED_OBSERVATION_TYPE_REQUIRES_SPECIALIZED_WRITER",
     );
   }
-  return recordCollectedObservationInternal({ root, descriptor: verifiedDescriptor, input, adapterDescriptor, sourceScopeDigest });
+  return recordCollectedObservationInternal({ root, descriptor: descriptor?.kind === "ObservationTypeDescriptor" ? verifiedDescriptor : descriptor, input, adapterDescriptor, sourceScopeDigest });
 }
 
 export async function recordDeliveryCollectedObservation({ root = ".", descriptor, input, adapterDescriptor, sourceScopeDigest } = {}) {
   const inspected = assertObservationProjectReady(root);
   const verifiedDescriptor = descriptor?.kind === "ObservationTypeDescriptor"
     ? verifyObservationTypeDescriptor(descriptor)
-    : createObservationTypeDescriptor(descriptor);
+    : createObservationTypeDescriptor(descriptor, inspected.storage);
   if (verifiedDescriptor.typeKey !== "delivery.state") {
     fail("The dedicated delivery writer only accepts delivery.state.", "INVALID_SPECIALIZED_OBSERVATION_TYPE");
   }
@@ -324,23 +329,23 @@ export async function recordDeliveryCollectedObservation({ root = ".", descripto
 export function recordDerivedObservation({ root = ".", descriptor, input } = {}) {
   const inspected = assertObservationProjectReady(root);
   const registered = registerObservationType({ root: inspected.project.projectRoot, descriptor }).descriptor;
-  const current = loadObservationArtifacts({ projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId });
+  const current = loadObservationArtifacts({ projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId, storage: inspected.storage });
   const byId = new Map(current.observations.map((record) => [record.observationId, record]));
   const inputs = (input.inputObservationIds || []).map((id) => {
     const record = byId.get(id);
     if (!record) fail(`Derived Observation input not found: ${id}`, "OBSERVATION_NOT_FOUND");
     return { observationId: record.observationId, observationHash: record.observationHash };
   });
-  const derived = createDerivedObservationRecord({ projectId: inspected.project.projectId, descriptor: registered, subject: input.subject, temporalScope: input.temporalScope, inputObservations: inputs, algorithm: input.algorithm, coverage: input.coverage, payload: input.payload });
-  const persisted = persistCreateOnly(inspected.project.projectRoot, DERIVED_OBSERVATION_DIRECTORY, `${derived.derivedObservationId}.json`, derived);
-  noteProjectGraphChange(inspected.project.projectRoot, [`${OBSERVATION_DESCRIPTOR_DIRECTORY}/${registered.descriptorId}.json`,
+  const derived = createDerivedObservationRecord({ projectId: inspected.project.projectId, descriptor: registered, subject: input.subject, temporalScope: input.temporalScope, inputObservations: inputs, algorithm: input.algorithm, coverage: input.coverage, payload: input.payload }, inspected.storage);
+  const persisted = persistCreateOnly(inspected.project.projectRoot, relativeProjectArtifact(inspected.storage, "observations", "derived"), `${derived.derivedObservationId}.json`, derived);
+  noteProjectGraphChange(inspected.project.projectRoot, [`${relativeProjectArtifact(inspected.storage, "observations", "descriptors")}/${registered.descriptorId}.json`,
     path.relative(inspected.project.projectRoot, persisted.file).replaceAll("\\", "/")]);
   return { ...persisted, descriptor: registered, derivedObservation: derived };
 }
 
 export function readObservation({ root = ".", observationId } = {}) {
   const inspected = assertObservationProjectReady(root);
-  const artifacts = loadObservationArtifacts({ projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId });
+  const artifacts = loadObservationArtifacts({ projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId, storage: inspected.storage });
   const observation = artifacts.observations.find((item) => item.observationId === observationId) || null;
   const derivedObservation = artifacts.derivedObservations.find((item) => item.derivedObservationId === observationId) || null;
   if (!observation && !derivedObservation) fail(`Observation not found: ${observationId}`, "OBSERVATION_NOT_FOUND");

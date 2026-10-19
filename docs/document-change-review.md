@@ -103,7 +103,7 @@ Failure does not roll back an already applied approved Canon or blanket-restore 
 ## Artifacts
 
 ```text
-.head/document-changes/
+.lode/document-changes/
   candidate-sets/<document-change-candidate-set-id>.json
   review-decisions/<document-change-review-decision-id>.json
   product-model-revisions/<product-model-id>.json
@@ -135,9 +135,9 @@ head world-docs-application-read <project> --application <document-change-applic
 ## Read-only MCP
 
 ```text
-head_document_change_review_status
-head_document_change_review
-head_document_change_application
+lode_document_change_review_status
+lode_document_change_review
+lode_document_change_application
 ```
 
 MCP cannot record a review, apply one, write Canon, rebuild a graph, or publish documents.

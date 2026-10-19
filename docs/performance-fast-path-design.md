@@ -233,7 +233,7 @@ greater than 80 percent of the reference median after semantic parity passes.
 
 ## Philosophical fit
 
-This design preserves the original HEAD relationship: HEAD owns integration and
+This design preserves the original Lode relationship: Lode owns integration and
 completion judgment; the user owns consequential direction; canonical artifacts
 outlive provider sessions; derived graphs and caches are replaceable; bounded
 workers and adapters cannot acquire authority; and evidence must remain connected

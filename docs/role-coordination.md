@@ -1,9 +1,9 @@
 # Ordinary Host delegation and optional attachment
 
-HEAD owns the whole objective and delegates useful bounded outcomes through the
+Lode owns the whole objective and delegates useful bounded outcomes through the
 current Host's available task, message and progress controls. Workers receive
 the relevant context, ownership, constraints and completion evidence.
-Ordinary delegation creates no HEAD role token, generation, inbox, target hash
+Ordinary delegation creates no Lode role token, generation, inbox, target hash
 chain or coordination receipt. It is not a shared authorization or a swarm vote.
 
 Keep successful contributions and handle only unfinished work. Inspect unknown
@@ -14,13 +14,13 @@ when a contribution never started or has no unresolved effects.
 ## Optional exact endpoint attachment
 
 `VerifiedWorkspaceHostAdapter` is a narrow Host composition for an existing
-endpoint. Its boundary binds Project, logical HEAD Session, role and project
+endpoint. Its boundary binds Project, logical Lode Session, role and project
 root. Fresh Host snapshots verify the exact endpoint, canonical CWD and runtime.
 No binding token, generation or append-only target chain is needed.
 Host-specific pane, socket, executable and UI behavior stays outside Core.
 
 `session-continue` restores canonical P2 direction before an optional attachment.
-Endpoint loss returns a disclosed fresh-logical-HEAD fallback, not a recovery
+Endpoint loss returns a disclosed fresh-logical-Lode fallback, not a recovery
 failure or a new user setup ritual. Messages, provider identity and Host snapshots
 cannot write direction, approve a result or change Product Canon.
 
@@ -35,7 +35,7 @@ deleted; the retired APIs do not produce new records.
 A durable result with interruption recovery, uncertain effects or duplicate
 integration needs may use existing bounded execution. Each dispatch and lease
 remains independent. Operational worker success is evidence, not approval.
-HEAD assesses the whole outcome and explicitly supplies recovery direction.
+Lode assesses the whole outcome and explicitly supplies recovery direction.
 
 The source and local fixtures verify exact attachment, endpoint replacement,
 unavailable fallback and original checkpoint preservation. Historical live

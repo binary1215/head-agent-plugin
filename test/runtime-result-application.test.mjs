@@ -7,7 +7,7 @@ import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
 import { EventEmitter } from "node:events";
-import { initializeProject, inspectProject } from "../scripts/lib/head-core.mjs";
+import { initializeProject, inspectProject } from "../scripts/lib/lode-core.mjs";
 import { compileContext } from "../scripts/lib/context-compiler.mjs";
 import { createExecutionContract, createWholePlanSnapshot, readLineageArtifact } from "../scripts/lib/execution-lineage.mjs";
 import { finishRun, getPendingReviewContext, reviewRun, startRun } from "../scripts/lib/run-lineage.mjs";
@@ -29,9 +29,11 @@ import { readWorkerIntegrationBasis } from "../scripts/lib/worker-integration-ba
 import { executeCodexRuntimeInvocation } from "../scripts/lib/runtime-codex-exec.mjs";
 import { createBoundedWorkerWave, readBoundedWorkerWaveStatus, sealBoundedWorkerWave, waitForBoundedWorkerWave } from "../scripts/lib/bounded-worker-wave.mjs";
 import { formatCliResult, formatMcpToolContent } from "../scripts/lib/cli-presentation.mjs";
-import { runCommand } from "../scripts/head.mjs";
+import { runCommand } from "../scripts/lode.mjs";
 import { dispatch as dispatchMcp, catalogTools as mcpTools } from "../scripts/mcp-server.mjs";
 
+// head_* request inputs below deliberately exercise compatibility dispatch;
+// generated catalog and Hook assertions use the canonical Lode vocabulary.
 const pluginRoot = path.resolve(import.meta.dirname, "..");
 const hash = (value) => crypto.createHash("sha256").update(value).digest("hex");
 console.log(JSON.stringify({ event: "owned-runtime-application-test", pid: process.pid, parentPid: process.ppid, command: process.execPath, args: process.argv.slice(1), cwd: process.cwd(), ports: [], liveProviderInvoked: false }));
@@ -54,7 +56,7 @@ function fixedCapabilitySpawn(_command, args, options) {
 }
 
 async function fixture(t, { withWave = false, withWrite = false } = {}) {
-  const parent = process.env.HEAD_AGENT_TEST_TMP || os.tmpdir();
+  const parent = process.env.LODE_AGENT_TEST_TMP || process.env.HEAD_AGENT_TEST_TMP || os.tmpdir();
   fs.mkdirSync(parent, { recursive: true });
   const container = fs.mkdtempSync(path.join(parent, "head-runtime-application-"));
   // macOS temporary paths may be /var aliases of /private/var. Compare and
@@ -76,6 +78,10 @@ async function fixture(t, { withWave = false, withWrite = false } = {}) {
     fs.rmSync(container, { recursive: true, force: true });
   });
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const storage = inspectProject(root).storage;
+  assert.equal(storage.directory, ".lode");
+  assert.equal(fs.existsSync(path.resolve(root, ".lode/project.json")), true);
+  assert.equal(fs.existsSync(path.resolve(root, ".head/project.json")), false);
   const capsule = compileContext({ root, task: "Verify a synthetic completed record is applied to its own Run", persist: true }).capsule;
   const plan = createWholePlanSnapshot({ root, objective: "Verify exact application target", plan: [{ id: "apply", outcome: "Exact application evidence" }] }).artifact;
   const contract = createExecutionContract({ root, wholePlanId: plan.wholePlanId, capsuleId: capsule.capsuleId, scope: "Synthetic fixture A only", acceptanceCriteria: ["Preserve exact Run identity"], allowedActions: ["runtime.invoke", "project.read", ...(withWrite ? ["project.write"] : [])] }).artifact;
@@ -89,7 +95,7 @@ async function fixture(t, { withWave = false, withWrite = false } = {}) {
   const versionEvidence = await buildRuntimeVersionEvidence({ runtimes: ["codex"], environment, spawnImplementation: fixedCapabilitySpawn });
   const protocolEvidence = await buildRuntimeProtocolEvidence({ runtimes: ["codex"], environment, versionEvidence, spawnImplementation: fixedCapabilitySpawn });
   const inspected = inspectProject(root);
-  const projectBinding = buildRuntimeProjectBinding({ projectId: inspected.project.projectId, headSessionId: inspected.state.sessionId, projectRoot: root, projectStatus: "ready", versionEvidence, protocolEvidence });
+  const projectBinding = buildRuntimeProjectBinding({ storage, projectId: inspected.project.projectId, headSessionId: inspected.state.sessionId, projectRoot: root, projectStatus: "ready", versionEvidence, protocolEvidence });
   const authorization = buildRuntimeInvocationAuthorization({ root, runtime: "codex", protocolEvidence, projectBinding, scope: { kind: "run" }, persist: true }).authorization;
   assert.equal(authorization.projectRootDigest, hash(root));
   let wave = null;
@@ -112,22 +118,22 @@ async function fixture(t, { withWave = false, withWrite = false } = {}) {
   const receipt = leased.result.receipt;
   const draft = buildRuntimeResultPacketDraft({ authorization, receipt, leaseRelease: leased.release, providerResult });
   persistRuntimeInvocationRecord({ projectRoot: root, authorization, events, receipt, draft });
-  const record = readRuntimeInvocationRecord({ root, authorizationId: authorization.authorizationId });
+  const record = readRuntimeInvocationRecord({ root, storage, authorizationId: authorization.authorizationId });
   assert.equal(record.status, "verified");
   assert.equal(record.draft.draftId, draft.draftId);
-  return { root, operational, run, plan, capsule, contract, authorization, record, wave, protocolEvidence, projectBinding, beforeCleanup };
+  return { storage, root, operational, run, plan, capsule, contract, authorization, record, wave, protocolEvidence, projectBinding, beforeCleanup };
 }
 
 test("wave guidance separates seal readiness, wait cancellation, member failure and cleanup", async t => {
   const f = await fixture(t, { withWave: true });
   const input = { root: f.root, waveId: f.wave.waveId };
-  const pointer = path.join(f.root, ".head/sessions/current.json"), before = fs.readFileSync(pointer);
+  const pointer = path.join(f.root, f.storage.directory, "sessions/current.json"), before = fs.readFileSync(pointer);
   const status = () => readBoundedWorkerWaveStatus(input).projection;
   assert.equal(status().guidance.aggregateAvailable, false);
   assert.equal(status().guidance.canSeal, false);
   await assert.rejects(waitForBoundedWorkerWave(input), { code: "BOUNDED_WORKER_WAVE_NOT_SEALED" });
   const otherId = f.wave.members.find(m => m.authorizationId !== f.authorization.authorizationId).authorizationId;
-  const other = JSON.parse(fs.readFileSync(path.join(f.root, ".head/runtime/execution-authorizations", `${otherId}.json`)));
+  const other = JSON.parse(fs.readFileSync(path.join(f.root, f.storage.directory, "runtime/execution-authorizations", `${otherId}.json`)));
   let release, ready;
   const started = new Promise(resolve => { ready = resolve; });
   const hold = new Promise(resolve => { release = resolve; });
@@ -173,12 +179,13 @@ test("public detached job survives its CLI frontend and reconciles one lease wit
   fs.writeFileSync(runnerFile, `
     import fs from 'node:fs';
     import path from 'node:path';
+    const storage = ${JSON.stringify(f.storage)};
     import { executeBoundedWorkerDispatch } from ${JSON.stringify(moduleUrl("bounded-worker-dispatch.mjs"))};
     import { runRuntimeLifecycleConformance, buildRuntimeResultPacketDraft } from ${JSON.stringify(moduleUrl("runtime-invocation-lifecycle.mjs"))};
     import { persistRuntimeInvocationRecord } from ${JSON.stringify(moduleUrl("runtime-invocation-record.mjs"))};
     export default async function ({ root, executionRoot, authorization, signal, policy, onProcess }) {
       if (authorization.workerInput.executionBoundary) {
-        if (executionRoot === root || fs.existsSync(path.join(executionRoot, '.head'))) throw new Error('Canonical root leaked into child selection');
+        if (executionRoot === root || fs.existsSync(path.join(executionRoot, '.head')) || fs.existsSync(path.join(executionRoot, '.lode'))) throw new Error('Canonical root leaked into child selection');
         for (const source of authorization.workerInput.sourceBasis) if (fs.readFileSync(path.join(executionRoot, source.path)).toString('base64') !== source.contentBase64) throw new Error('Wrong child bytes');
       }
       if (policy.writeFixture) {
@@ -190,7 +197,7 @@ test("public detached job survives its CLI frontend and reconciles one lease wit
       if (policy.mode === 'publication-failure') {
         const rename = fs.renameSync;
         fs.renameSync = (from, to) => {
-          if (String(to) === path.join(root, '.head', 'runtime', 'invocations', authorization.authorizationId)) throw Object.assign(new Error('Synthetic result publication EIO'), {code:'EIO'});
+          if (String(to) === path.join(root, storage.directory, 'runtime', 'invocations', authorization.authorizationId)) throw Object.assign(new Error('Synthetic result publication EIO'), {code:'EIO'});
           return rename(from, to);
         };
         try {
@@ -209,7 +216,7 @@ test("public detached job survives its CLI frontend and reconciles one lease wit
   `);
   const authorization = buildRuntimeInvocationAuthorization({ root: f.root, runtime: "codex", protocolEvidence: f.protocolEvidence, projectBinding: f.projectBinding,
     worker: { taskKey: "detached-success", role: "coder", outcome: "Synthetic detached owner", selectedContext: "Fixture only; no model call" }, limits: { timeoutMs: 8000 }, persist: true }).authorization;
-  const selection = resolveVerifiedProcessSupervisor({ pluginRoot: process.env.HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT || pluginRoot });
+  const selection = resolveVerifiedProcessSupervisor({ pluginRoot: (process.env.LODE_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT || process.env.HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT) || pluginRoot });
   const frontendFile = path.join(path.dirname(f.root), "synthetic-frontend.mjs");
   fs.writeFileSync(frontendFile, `
     import { createBoundedWorkerJobHost } from ${JSON.stringify(moduleUrl("bounded-worker-job.mjs"))};
@@ -261,7 +268,7 @@ test("public detached job survives its CLI frontend and reconciles one lease wit
   finally { process.kill = kill; }
   assert.deepEqual(runCommand(["managed-maintenance", "worker-job-reconcile", f.root, "--authorization", authorization.authorizationId]), state);
   assert.deepEqual(cancelBoundedWorkerJob({ root: f.root, authorizationId: authorization.authorizationId }), state);
-  const record = readRuntimeInvocationRecord({ root: f.root, authorizationId: authorization.authorizationId });
+  const record = readRuntimeInvocationRecord({ root: f.root, storage: f.storage, authorizationId: authorization.authorizationId });
   assert.equal(record.receipt.receiptId, state.result.receiptId);
   assert.equal(inspectRuntimeExecutionLease({ projectRoot: f.root, projectId: authorization.projectId, authorizationId: authorization.authorizationId }).status, "consumed-released");
   const mcp = await dispatchMcp({ jsonrpc: "2.0", id: 1, method: "tools/call", params: {
@@ -328,7 +335,7 @@ test("public detached job survives its CLI frontend and reconciles one lease wit
         worker: { taskKey: `write-owner-${unownedFixture}`, role: "coder", outcome: "Synthetic isolated write observation", selectedContext: "No actual provider", sourcePaths, executionBoundary }, limits: { timeoutMs: 8000 } }).authorization;
       jobs.push(job);
       const selectedHost = createBoundedWorkerJobHost({ runnerFile, policy, workspaceBinding });
-      const sessionFile = path.join(f.root, ".head", "sessions", "current.json");
+      const sessionFile = path.join(f.root, f.storage.directory, "sessions", "current.json");
       const sessionBefore = fs.readFileSync(sessionFile);
       await startBoundedWorkerJob({ root: f.root, authorizationId: job.authorizationId, role: "coder" }, { host: selectedHost, supervisorSelection: selection });
       const state = await waitExit(job);
@@ -370,7 +377,7 @@ test("public detached job survives its CLI frontend and reconciles one lease wit
         // A larger caller allowance is not a new effect or evidence identity.
         assert.equal(prepareWorkerPatchIntegration({ root: f.root, authorizationIds: [job.authorizationId], maxBytes: 8192 }).intent.integrationId, integrationId);
         assert.throws(() => prepareWorkerPatchIntegration({ root: f.root, authorizationIds: [job.authorizationId, job.authorizationId], maxBytes: 4096 }), { code: "WORKER_PATCH_INTEGRATION_CONFLICT" });
-        const integrationFile = path.join(f.root, ".head/runtime/worker-integrations", `${integrationId}.json`);
+        const integrationFile = path.join(f.root, f.storage.directory, "runtime/worker-integrations", `${integrationId}.json`);
         // An unrelated corrupt P3 document cannot turn into a global gate.
         fs.writeFileSync(path.join(path.dirname(integrationFile), `worker-integration-${"0".repeat(24)}--${"0".repeat(24)}.json`), "{");
         assert.equal(prepareWorkerPatchIntegration({ root: f.root, authorizationIds: [job.authorizationId], maxBytes: 8192 }).intent.integrationId, integrationId);
@@ -430,7 +437,7 @@ test("public detached job survives its CLI frontend and reconciles one lease wit
           fs.writeFileSync(path.join(f.root, "read-only.txt"), "unowned canonical source");
           fs.renameSync(`${patchFile}.retired`, patchFile);
         }
-        const roleFile = path.join(f.root, ".head/roles/coder.md");
+        const roleFile = path.join(f.root, f.storage.directory, "roles/coder.md");
         const roleBefore = fs.readFileSync(roleFile);
         fs.appendFileSync(roleFile, "\nLocal managed projection drift\n");
         try {
@@ -528,15 +535,15 @@ test("public detached job survives its CLI frontend and reconciles one lease wit
     const incomplete = await waitExit(job);
     assert.equal(incomplete.ownerExitCode, 1, JSON.stringify(incomplete));
     assert.equal(incomplete.status, "incomplete");
-    assert.throws(() => readRuntimeInvocationRecord({ root: f.root, authorizationId: job.authorizationId }), { code: "RUNTIME_INVOCATION_RESULT_NOT_FOUND" });
-    const releaseFile = path.join(f.root, '.head/runtime/execution-leases', job.authorizationId, 'release.json');
+    assert.throws(() => readRuntimeInvocationRecord({ root: f.root, storage: f.storage, authorizationId: job.authorizationId }), { code: "RUNTIME_INVOCATION_RESULT_NOT_FOUND" });
+    const releaseFile = path.join(f.root, f.storage.directory, 'runtime/execution-leases', job.authorizationId, 'release.json');
     fs.renameSync(releaseFile, `${releaseFile}.withheld`);
     try {
       assert.equal(reconcileBoundedWorkerJob({ root: f.root, authorizationId: job.authorizationId }).status, "incomplete");
       assert.equal(fs.existsSync(releaseFile), false, "recovery must not infer a missing release");
-      assert.throws(() => readRuntimeInvocationRecord({ root: f.root, authorizationId: job.authorizationId }), { code: "RUNTIME_INVOCATION_RESULT_NOT_FOUND" });
+      assert.throws(() => readRuntimeInvocationRecord({ root: f.root, storage: f.storage, authorizationId: job.authorizationId }), { code: "RUNTIME_INVOCATION_RESULT_NOT_FOUND" });
     } finally { fs.renameSync(`${releaseFile}.withheld`, releaseFile); }
-    const pointer = fs.readFileSync(path.join(f.root, ".head/sessions/current.json"));
+    const pointer = fs.readFileSync(path.join(f.root, f.storage.directory, "sessions/current.json"));
     fs.writeFileSync(path.join(f.root, "restore-basis.txt"), "new user bytes, historical result only");
     const restored = reconcileBoundedWorkerJob({ root: f.root, authorizationId: job.authorizationId });
     assert.equal(restored.status, "completed", JSON.stringify(restored));
@@ -544,10 +551,10 @@ test("public detached job survives its CLI frontend and reconciles one lease wit
     assert.equal(restored.current, false);
     assert.equal(restored.result.actualProviderInvoked, false);
     assert.deepEqual(reconcileBoundedWorkerJob({ root: f.root, authorizationId: job.authorizationId }), restored);
-    assert.deepEqual(fs.readFileSync(path.join(f.root, ".head/sessions/current.json")), pointer);
+    assert.deepEqual(fs.readFileSync(path.join(f.root, f.storage.directory, "sessions/current.json")), pointer);
     assert.equal(fs.readFileSync(path.join(f.root, "restore-basis.txt"), "utf8"), "new user bytes, historical result only");
     // A conflicting existing P3 record is not overwritten by recovery.
-    const receiptFile = path.join(f.root, '.head/runtime/invocations', job.authorizationId, 'receipt.json');
+    const receiptFile = path.join(f.root, f.storage.directory, 'runtime/invocations', job.authorizationId, 'receipt.json');
     const bytes = fs.readFileSync(receiptFile);
     fs.writeFileSync(receiptFile, JSON.stringify({ ...JSON.parse(bytes), status: "failed" }));
     assert.throws(() => reconcileBoundedWorkerJob({ root: f.root, authorizationId: job.authorizationId }));
@@ -567,11 +574,11 @@ test("public detached job survives its CLI frontend and reconciles one lease wit
     while (!inspectRuntimeExecutionLease({ projectRoot: f.root, projectId: job.projectId, authorizationId: job.authorizationId }).singleUseConsumed && Date.now() < startedBy) await new Promise(resolve => setTimeout(resolve, 25));
     assert.equal(inspectRuntimeExecutionLease({ projectRoot: f.root, projectId: job.projectId, authorizationId: job.authorizationId }).singleUseConsumed, true);
     finishRun({ root: f.root, outcome: "Explicit synthetic transition", evidence: [{ uri: "fixture", digest: "synthetic-transition" }], verification: [{ check: "fixture-only", status: "passed" }] });
-    const pointer = fs.readFileSync(path.join(f.root, ".head/sessions/current.json"));
+    const pointer = fs.readFileSync(path.join(f.root, f.storage.directory, "sessions/current.json"));
     assert.equal(readBoundedWorkerJob({ root: f.root, authorizationId: job.authorizationId }).current, false);
     cancelBoundedWorkerJob({ root: f.root, authorizationId: job.authorizationId });
     assert.equal((await waitExit(job)).status, "cancelled");
-    assert.deepEqual(fs.readFileSync(path.join(f.root, ".head/sessions/current.json")), pointer);
+    assert.deepEqual(fs.readFileSync(path.join(f.root, f.storage.directory, "sessions/current.json")), pointer);
   });
 });
 
@@ -658,7 +665,7 @@ test("frozen member publication recovers without re-reading deleted source", asy
   assert.equal(mcp.result.structuredContent.status, "existing");
   assert.deepEqual(mcp.result.structuredContent.authorization, recovered.authorization);
   const maintenanceTools = (await dispatchMcp({ id: 2, method: "tools/list" }, { surface: "managed-maintenance" })).result.tools;
-  assert.equal(maintenanceTools.find((tool) => tool.name === "head_bounded_worker_reconcile").annotations.readOnlyHint, false);
+  assert.equal(maintenanceTools.find((tool) => tool.name === "lode_bounded_worker_reconcile").annotations.readOnlyHint, false);
   assert.equal(fs.existsSync(path.join(f.root, "selected.txt")), false);
   assert.throws(() => reconcileWorkerMember({ root: f.root, taskKey: "missing" }), { code: "WORKER_MEMBER_NOT_FOUND" });
 });
@@ -768,7 +775,7 @@ test("write-bound worker freezes absent targets and source mode; safe reprepare 
   assert.equal(lineageOnly.executionPrepared, false);
   assert.deepEqual(snapshot(f.root), beforeLineageRead);
   assert.throws(() => prepareRuntimeInvocationExecution({ root: f.root, authorization: initial, verifyCurrentSources: false }), { code: "WORKER_PATCH_CONFLICT" });
-  const sessionFile = path.join(f.root, ".head/sessions/current.json");
+  const sessionFile = path.join(f.root, f.storage.directory, "sessions/current.json");
   const sessionBytes = fs.readFileSync(sessionFile);
   fs.writeFileSync(sessionFile, JSON.stringify({ ...JSON.parse(sessionBytes), sessionId: `session-${crypto.randomUUID()}` }));
   assert.throws(() => verifyRuntimeInvocationCurrentLineage({ root: f.root, authorization: initial }), { code: "RUNTIME_INVOCATION_FENCE_MISMATCH" });
@@ -796,7 +803,7 @@ test("selected source input rejects protected paths, traversal and hardlinks bef
   fs.writeFileSync(path.join(f.root, "shared.txt"), "hardlink fixture");
   fs.linkSync(path.join(f.root, "shared.txt"), path.join(f.root, "alias.txt"));
   const before = snapshot(f.root);
-  for (const sourcePath of [".head/project.json", "../outside", "C:/outside", "a/../../outside", "alias.txt", "file:stream"]) {
+  for (const sourcePath of [".head/project.json", ".lode/project.json", "../outside", "C:/outside", "a/../../outside", "alias.txt", "file:stream"]) {
     assert.throws(() => buildRuntimeInvocationAuthorization({ ...options, worker: { taskKey: "unsafe", role: "coder",
       outcome: "Inspect source", selectedContext: "", sourcePaths: [sourcePath] } }), { code: "INVALID_WORKER_SOURCE_BASIS" });
   }
@@ -889,11 +896,11 @@ test("runtime result receipt EIO then reviewed A and different Run B never mutat
 test("normal application and complete-receipt replay stay exact and read-only across a later Run", async (t) => {
   const f = await fixture(t);
   const input = { root: f.root, authorizationId: f.authorization.authorizationId };
-  const canon = fs.readFileSync(path.join(f.root, ".head/context/product-model.json"), "utf8");
+  const canon = fs.readFileSync(path.join(f.root, f.storage.directory, "context/product-model.json"), "utf8");
   const owners = new Set();
   const stages = new Set();
   const observeLock = (stage) => {
-    const entries = fs.readdirSync(path.join(f.root, ".head/.operations/session-recovery.lock"));
+    const entries = fs.readdirSync(path.join(f.root, f.storage.directory, ".operations/session-recovery.lock"));
     assert.equal(entries.length, 1);
     assert.match(entries[0], new RegExp(`^owner-[a-f0-9]+-${process.pid}-[a-f0-9]+\\.json$`));
     owners.add(entries[0]);
@@ -904,11 +911,11 @@ test("normal application and complete-receipt replay stay exact and read-only ac
   const link = fs.linkSync;
   fs.readFileSync = (file, ...args) => {
     if (file === path.join(f.record.directory, "receipt.json")) observeLock("record-read");
-    if (file === path.join(f.root, ".head/sessions/runs", f.run.runId, "run.json")) observeLock("run-read");
+    if (file === path.join(f.root, f.storage.directory, "sessions/runs", f.run.runId, "run.json")) observeLock("run-read");
     return read(file, ...args);
   };
   fs.renameSync = (source, target) => {
-    if (target === path.join(f.root, ".head/sessions/current.json")) observeLock("session-write");
+    if (target === path.join(f.root, f.storage.directory, "sessions/current.json")) observeLock("session-write");
     return rename(source, target);
   };
   fs.linkSync = (source, target) => {
@@ -925,8 +932,8 @@ test("normal application and complete-receipt replay stay exact and read-only ac
   assert.equal(applied.resultPacket.executionContractId, f.contract.executionContractId);
   assert.equal(applied.freshHeadReview.runId, f.run.runId);
   assert.equal(inspectProject(f.root).state.latestCheckpoint, null);
-  assert.equal(fs.existsSync(path.join(f.root, ".head/lineage/review-decisions")), false);
-  assert.equal(fs.readFileSync(path.join(f.root, ".head/context/product-model.json"), "utf8"), canon);
+  assert.equal(fs.existsSync(path.join(f.root, f.storage.directory, "lineage/review-decisions")), false);
+  assert.equal(fs.readFileSync(path.join(f.root, f.storage.directory, "context/product-model.json"), "utf8"), canon);
   const finished = snapshot(f.root);
   assert.equal(readRuntimeInvocationResult(input).application.applicationId, applied.application.applicationId);
   assert.equal(applyRuntimeRunResult(input).status, "runtime_run_result_already_applied");
@@ -947,7 +954,7 @@ test("missing application receipt recovers only the exact pending result and is 
   const rename = fs.renameSync;
   let injected = false;
   fs.renameSync = (source, target) => {
-    if (!injected && target === path.join(f.root, ".head/sessions/current.json")) {
+    if (!injected && target === path.join(f.root, f.storage.directory, "sessions/current.json")) {
       injected = true;
       throw Object.assign(new Error("Exact Session pointer fixture EIO"), { code: "EIO" });
     }
@@ -959,11 +966,11 @@ test("missing application receipt recovers only the exact pending result and is 
   assert.equal(inspectProject(f.root).state.activeRunId, f.run.runId);
   missingApplicationOnce(() => applyRuntimeRunResult(input));
   const pending = inspectProject(f.root).state.pendingReview;
-  const resultBytes = fs.readFileSync(path.join(f.root, ".head/lineage/result-packets", `${pending.resultPacketId}.json`), "utf8");
+  const resultBytes = fs.readFileSync(path.join(f.root, f.storage.directory, "lineage/result-packets", `${pending.resultPacketId}.json`), "utf8");
   const applied = applyRuntimeRunResult(input);
   assert.equal(applied.application.runId, f.run.runId);
   assert.equal(applied.resultPacket.resultPacketId, pending.resultPacketId);
-  assert.equal(fs.readFileSync(path.join(f.root, ".head/lineage/result-packets", `${pending.resultPacketId}.json`), "utf8"), resultBytes);
+  assert.equal(fs.readFileSync(path.join(f.root, f.storage.directory, "lineage/result-packets", `${pending.resultPacketId}.json`), "utf8"), resultBytes);
 });
 
 test("Run identity remains fenced when B reuses A's ExecutionContract", async (t) => {
@@ -991,7 +998,7 @@ test("delayed A result cannot complete B even when A was finished through anothe
 test("Session drift and canonical digest tamper reject before application writes", async (t) => {
   const f = await fixture(t);
   const input = { root: f.root, authorizationId: f.authorization.authorizationId };
-  const sessionFile = path.join(f.root, ".head/sessions/current.json");
+  const sessionFile = path.join(f.root, f.storage.directory, "sessions/current.json");
   const sessionBytes = fs.readFileSync(sessionFile, "utf8");
   fs.writeFileSync(sessionFile, JSON.stringify({ ...JSON.parse(sessionBytes), sessionId: `session-${crypto.randomUUID()}` }));
   const drifted = snapshot(f.root);

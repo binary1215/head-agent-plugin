@@ -2,18 +2,18 @@
 
 # Compaction 복구
 
-Compaction은 손실을 수반하는 provider 작업입니다. 복구 권한은 canonical Session/Run checkpoint에 그대로 남으며, provider transcript, compaction summary, provider-session identity와 `HEADContinuitySnapshot`은 방향 파악용 또는 파생 view일 뿐입니다.
+Compaction은 손실을 수반하는 provider 작업입니다. 복구 권한은 canonical Session/Run checkpoint에 그대로 남으며, provider transcript, compaction summary, provider-session identity와 `LodeContinuitySnapshot`은 방향 파악용 또는 파생 view일 뿐입니다.
 
 Protocol `0.3.0`은 [`authority-plane-contract.md`](authority-plane-contract.md)의 P2 recovery/lineage boundary를 내장합니다. ResultPacket이나 Worker Report는 P3 증거이며 checkpoint의 purpose, approved decision, current position 또는 정확한 next expected result를 읽기 위한 선행 조건이 아닙니다. checkpoint 생성 후 ResultPacket 증거를 삭제하는 상황은 실행 가능한 복구 test로 다룹니다. 그렇다고 summary, graph, inbox 또는 provider session이 복구 권한으로 바뀔 수는 없습니다.
 
-Checkpoint authority metadata는 복구 field가 명시적인 HEAD/사용자 방향과 검증된 P2 lineage에서만 온다고 명시합니다. P3 증거는 감사를 위해 참조될 수 있지만 복구 field의 출처가 되는 일은 절대 없습니다. 일반 비증폭 test는 P3, P4, P5가 P2가 되려는 시도를 거부합니다.
+Checkpoint authority metadata는 복구 field가 명시적인 Lode/사용자 방향과 검증된 P2 lineage에서만 온다고 명시합니다. P3 증거는 감사를 위해 참조될 수 있지만 복구 field의 출처가 되는 일은 절대 없습니다. 일반 비증폭 test는 P3, P4, P5가 P2가 되려는 시도를 거부합니다.
 
 ## 자동 대화 UX
 
 project 진입, compaction 후, provider 교체 후에는 정확한 Project와 선택된 논리
 Session에 대해 이미 제공된 검증된 현재 맥락이 충분하면 현재 공통 방향·취소 사항과
 함께 재사용합니다. 필요한 내용이 없으면 일반적인 읽기 전용
-`head_conversation_enter`로 한 번 가져옵니다. 관련 기준이 바뀌면 영향을 받는 현재
+`lode_conversation_enter`로 한 번 가져옵니다. 관련 기준이 바뀌면 영향을 받는 현재
 원본을 확인하며 setup/status/list/graph 호출 전체를 반복하지 않습니다. 진입 결과는
 다음 세 가지로 제한됩니다.
 
@@ -36,7 +36,7 @@ continuation token을 입력하지 않습니다. 명시적인 `session-restore`�
 `compact-*` command는 고급 진단 surface로 남습니다.
 
 복구 상태에 설명이 필요하면 프로젝트 준비도와 대화 진입은 동일한
-`head_checkpoint_diagnose` 계약을 재사용합니다. 이 계약은 `basis B0`를 읽고 artifact
+`lode_checkpoint_diagnose` 계약을 재사용합니다. 이 계약은 `basis B0`를 읽고 artifact
 restore를 검증한 다음 `basis B1`을 읽으며, 관찰이 바뀌면 새로 읽도록 요구합니다. lock이나
 cache를 쓰지 않고 model을 호출하지 않으며 원자적 filesystem snapshot이나 ABA 감지를
 주장하지 않습니다. pointer 부재, pointer가 가리키는 ledger artifact 누락, integrity 실패,
@@ -44,7 +44,7 @@ cache를 쓰지 않고 model을 호출하지 않으며 원자적 filesystem snap
 기계적 상태일 뿐 checkpoint 문장이 현재 사용자 의도를 여전히 반영한다는 주장이 아닙니다.
 
 이미 open 상태인 compaction epoch 바깥의 자연스러운 durable-work 또는 context-loss
-boundary에서 provider HEAD는 `head_checkpoint_basis` 다음에 `head_checkpoint_sync`를
+boundary에서 provider Lode는 `lode_checkpoint_basis` 다음에 `lode_checkpoint_sync`를
 사용할 수 있습니다. 첫 호출은 비지속 읽기 전용 비교이고, 두 번째 호출은 기존 mutation
 lock 안에서 같은 정확한 Project/Session/Run 및 게시 상태를 다시 검증합니다. 상태와 방향이
 같으면 write 없이 현재 checkpoint를 재사용합니다. 오래된 방향은 충돌하고, 미완료 Run
@@ -94,14 +94,14 @@ checkpoint는 보존합니다. 이는 프로세스 중단 복구이며 전원 �
 재사용되면 Host에서 소유 관계를 확인하고 운영 lock을 정리해야 할 수 있습니다.
 Core는 오래됐다는 이유만으로 사용 중일 수 있는 lock을 빼앗지 않으며, 이러한
 제한이 읽기 전용 조회나 일반 작업을 막지는 않습니다.
-해제 시 자신의 lease만 제거하고 공유 부모인 `.head/.operations`는 유지합니다.
+해제 시 자신의 lease만 제거하고 공유 부모인 `.lode/.operations`는 유지합니다.
 이 빈 디렉터리 하나는 고정된 P5 컨테이너이며, 작업마다 새로 쌓이는 아티팩트가 아닙니다.
 
 continuation 소비 기록은 저장됐지만 epoch를 종료 상태로 저장하지 못했다면, 조회는
 아무것도 고치지 않고 결과가 불확실하다고 표시합니다. 다음 변경 호출은 정확히 해당
 P5 epoch만 aborted로 닫으며 token을 재실행하거나 provider 실행을 주장하지 않습니다.
 Lifecycle 재시도는 현재의 검증된 P2 방향을 복원하고 보류된 event를 확인 처리하며,
-추가 사용자 승인 없이 새로운 논리적 HEAD로 이어갑니다. 확인 응답이 유실돼도 새
+추가 사용자 승인 없이 새로운 논리적 Lode로 이어갑니다. 확인 응답이 유실돼도 새
 artifact 없이 재시도할 수 있고, 이후 새 prepare도 가능합니다. 종료 처리와 조회
 어느 쪽도 checkpoint를 작성하지 않습니다.
 
@@ -111,17 +111,17 @@ Core는 provider compaction을 호출하지 않습니다. 주입된 Host adapter
 하나의 journaled `conversation-entry`, `provider-replaced`,
 `before-compaction` 또는 `after-compaction` event를 노출할 수 있습니다. 고정
 descriptor는 P5이며 recovery/instruction/promotion authority가 없고 불확실한
-mutation을 replay하지 않음을 보장합니다. Event는 정확한 Project, HEAD Session,
+mutation을 replay하지 않음을 보장합니다. Event는 정확한 Project, Lode Session,
 runtime, 단조 증가하는 trusted real-user-turn sequence를 포함하고,
 post-compaction에서만 epoch와 `succeeded`, `failed`, `uncertain` 중 하나의
 bounded outcome을 포함합니다. Provider session ID, transcript, summary, prompt,
 credential, PID, socket 및 UI identity는 이 계약에서 거부됩니다.
 
-`head_compaction_lifecycle_step`은 운영 field를 사용자에게 노출하지 않고 event를
+`lode_compaction_lifecycle_step`은 운영 field를 사용자에게 노출하지 않고 event를
 처리합니다.
 
 1. compaction 전에는 가능한 경우 정확한 현재 checkpoint를 재사용합니다. 새
-   복구 방향이 필요하면 provider HEAD가 현재 사용자 방향, 기존 승인된 결정 및
+   복구 방향이 필요하면 provider Lode가 현재 사용자 방향, 기존 승인된 결정 및
    검증된 P2 lineage만으로 작성합니다. 승인을 지어낼 수 없으며 사용자에게
    schema 입력을 요구하지 않습니다.
 2. raw token은 Host adapter에만 P5로 보관되며 lifecycle 결과로 반환되거나
@@ -132,7 +132,7 @@ credential, PID, socket 및 UI identity는 이 계약에서 거부됩니다.
    verify, continue 또는 자동 replay하지 않습니다. Provider failure는 epoch만
    abort합니다.
 5. P2 복원이 성공한 뒤 transport continuation을 사용할 수 없다면 epoch를 닫고
-   검증된 artifact에서 새로운 논리적 HEAD로 계속함을 명시합니다.
+   검증된 artifact에서 새로운 논리적 Lode로 계속함을 명시합니다.
 
 native compaction hook이 없는 Codex 또는 다른 runtime에서도 첫 turn의 artifact
 복구는 자동으로 동작합니다. 실제 compaction은 provider UI 또는 신뢰할 수 있는
@@ -151,7 +151,7 @@ head compact-abort <project> --input <abort.json>
 기본적으로 epoch를 만들지 않습니다. active Run은 provider compaction 전에
 자연스러운 idle boundary에서 prepare해야 합니다. Compaction은 open review를
 승인하거나, Product Canon 또는 candidate 바이트를 변경하거나, 외부 write를
-수행하지 않습니다. 명시적 prepare는 HEAD가 작성한 P2 방향을 새 checkpoint로
+수행하지 않습니다. 명시적 prepare는 Lode가 작성한 P2 방향을 새 checkpoint로
 게시할 수 있지만, provider compaction과 continuation이 그 방향을 작성하거나
 대체하지는 않습니다.
 
@@ -160,7 +160,7 @@ checkpoint 재사용은 artifact와 pointer를 쓰지 않으며, 바뀐 방향�
 전이가 자체 terminal path에 도달할 때까지 기다립니다. 따라서 운영 복구가 새로운 전역
 작업 gate가 되지 않습니다.
 
-Host 통합은 `head_conversation_enter`와 `head_compaction_lifecycle_step`도 사용하지만,
+Host 통합은 `lode_conversation_enter`와 `lode_compaction_lifecycle_step`도 사용하지만,
 이는 사용자 설정 절차가 아닙니다. adapter가 주입되지 않으면 lifecycle step은
 일반 작업을 막지 않는 unavailable 결과를 냅니다.
 

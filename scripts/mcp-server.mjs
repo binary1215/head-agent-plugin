@@ -1,15 +1,25 @@
 #!/usr/bin/env node
 import readline from "node:readline";
+import { resolveOperation } from "./lib/lode-operation-contract.mjs";
+import { ARTIFACT_COMPOSITION, publicToolName } from "./lib/lode-artifact-composition.mjs";
+import { DISCOVERY_PREFIX_PAIRS } from "../compat/head/public-names.mjs";
+const semanticToolName = name => resolveOperation(name)?.semanticName ?? name;
+const presentedSchemas = new WeakMap();
+const presentedTool = tool => {
+  if (!presentedSchemas.has(tool)) presentedSchemas.set(tool, { ...tool, name: publicToolName(tool.name) });
+  return presentedSchemas.get(tool);
+};
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isManagedMutation, requireOperationSurface, requireSurface } from "./lib/managed-maintenance-surface.mjs";
-import { coreContract, inspectRuntimeAdapters } from "./lib/head-core.mjs";
+import { coreContract, inspectRuntimeAdapters } from "./lib/lode-core.mjs";
 import { DEFAULT_CONTEXT_BUDGET } from "./lib/context-budget.mjs";
 import { formatMcpToolContent } from "./lib/cli-presentation.mjs";
 import { sessionCallRequiresBinding } from "./lib/session-routing.mjs";
 import { createNativeSessionHostBridge } from "./lib/session-native-host.mjs";
 import { SESSION_HOST_REQUEST_HELPER } from "./lib/session-host-request.mjs";
 import fs from "node:fs";
+import { resolveProjectStorage } from "./lib/project-storage-format.mjs";
 
 const protocolVersion = "2024-11-05";
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -62,6 +72,22 @@ function workerIntegrationInput(args) {
     request[workerIntegrationFieldNames[key]] = value;
   }
   return request;
+}
+// Upper transport composition selects only the owned marker, after the same
+// pre-filesystem guards. Lower historical readers keep their legacy defaults.
+async function workerIntegrationFromMcp(args, onProcess, statusOnly = false) {
+  const workflow = await import("./lib/worker-integration-workflow.mjs");
+  const input = workerIntegrationInput(args);
+  (statusOnly ? workflow.validateWorkerIntegrationStatusRequest : workflow.validateWorkerIntegrationRequest)(input);
+  const options = { root: args.project_root, onProcess, storage: resolveProjectStorage(args.project_root) };
+  return statusOnly ? workflow.inspectWorkerIntegration(input, options) : workflow.operateWorkerIntegration(input, options);
+}
+async function runtimeResultFromMcp(args) {
+  const { validateRuntimeInvocationRecordIdentity } = await import("./lib/runtime-invocation-record.mjs");
+  validateRuntimeInvocationRecordIdentity(args.authorization_id);
+  return (await import("./lib/runtime-run-result-application.mjs")).readRuntimeInvocationResult({
+    root: args.project_root, authorizationId: args.authorization_id, storage: resolveProjectStorage(args.project_root),
+  });
 }
 const observationFieldSchema = {
   type: "object",
@@ -1971,11 +1997,11 @@ const discoveryTools = [
   },
 ];
 // Complete ordinary schemas for programmatic consumers; tools/list stays small.
-export const catalogTools = allTools;
+export const catalogTools = allTools.map(presentedTool);
 export function toolsForSurface(surface = "ordinary") {
   requireSurface(surface);
   return [...allTools.filter(tool => surface === "managed-maintenance"
-    ? true : defaultToolNames.has(tool.name)), ...discoveryTools];
+    ? true : defaultToolNames.has(tool.name)), ...discoveryTools].map(presentedTool);
 }
 export const tools = toolsForSurface();
 
@@ -1984,31 +2010,37 @@ export function discoverTools({ name, prefix, offset = 0, limit = 8 } = {}, surf
   if ((name != null && typeof name !== "string") || (prefix != null && typeof prefix !== "string")
       || (name != null && prefix != null) || !Number.isInteger(offset) || offset < 0
       || !Number.isInteger(limit) || limit < 1 || limit > 20) throw new Error("Invalid tool discovery selector or page.");
-  const available = allTools;
+  const available = allTools.map(presentedTool);
+  if (name != null) name = publicToolName(name);
+  if (prefix != null) { const known = DISCOVERY_PREFIX_PAIRS.find(pair => pair.legacy === prefix || pair.canonical === prefix); if (known) prefix = ARTIFACT_COMPOSITION.identity === "lode" ? known.canonical : known.legacy; }
   const scope = { surface, persisted: false, grantsAuthorization: false,
-    managedEntry: "head_tools_call with execution_mode: managed; original authorization, scope, lease and result checks apply",
+    managedEntry: `${publicToolName("head_tools_call")} with execution_mode: managed; original authorization, scope, lease and result checks apply`,
     maintenanceEntry: "scripts/mcp-managed-maintenance.mjs (same managed execution contract; retained reader supported)" };
   if (name == null && prefix == null) {
     const counts = new Map();
     for (const tool of available) {
-      const key = `head_${tool.name.split("_")[1]}_`;
+      const key = `${ARTIFACT_COMPOSITION.toolPrefix}${tool.name.split("_")[1]}_`;
       counts.set(key, (counts.get(key) || 0) + 1);
     }
     return { ...scope, prefixes: [...counts].sort(([a], [b]) => a.localeCompare(b)).map(([prefix, count]) => ({ prefix, count })),
       nextOffset: null };
   }
-  const matches = available.filter(tool => name != null ? tool.name === name : tool.name.startsWith(prefix));
+  const matches = available.filter(tool => {
+    if (name != null) return tool.name === name;
+    const descriptor = resolveOperation(tool.name);
+    return tool.name.startsWith(prefix) || descriptor?.legacyName.startsWith(prefix) || descriptor?.canonicalName.startsWith(prefix);
+  });
   if (name != null && !matches.length) throw new Error(`Unknown or unavailable tool on ${surface}: ${name}`);
   return { ...scope, total: matches.length, offset, nextOffset: offset + limit < matches.length ? offset + limit : null,
     tools: matches.slice(offset, offset + limit).map(tool => ({ ...tool,
-      invokeWith: tool.annotations?.readOnlyHint === true ? "head_tools_read" : "head_tools_call",
+      invokeWith: publicToolName(tool.annotations?.readOnlyHint === true ? "head_tools_read" : "head_tools_call"),
       ...(isManagedMutation(tool.name) ? { executionMode: "managed" } : {}),
     })) };
 }
 
 function requestedToolName(request) {
-  return request.params?.name === "head_tools_read" || request.params?.name === "head_tools_call"
-    ? request.params?.arguments?.name : request.params?.name;
+  return ["head_tools_read", "head_tools_call"].includes(semanticToolName(request.params?.name))
+    ? semanticToolName(request.params?.arguments?.name) : semanticToolName(request.params?.name);
 }
 
 const success = (id, result) => ({ jsonrpc: "2.0", id, result });
@@ -2279,10 +2311,10 @@ export async function dispatch(request, options = {}) {
 
 async function dispatchSessionRequest(request, options = {}) {
   const outer = request.params?.arguments;
-  const routed = request.params?.name === "head_tools_read" || request.params?.name === "head_tools_call";
+  const routed = ["head_tools_read", "head_tools_call"].includes(semanticToolName(request.params?.name));
   const args = routed ? outer?.arguments : outer;
   const hasSelection = args && Object.hasOwn(args, "session_id");
-  const requestedName = routed ? outer?.name : request.params?.name;
+  const requestedName = semanticToolName(routed ? outer?.name : request.params?.name);
   // Only views/effects that actually consume the selected Session need its
   // binding. Project-scoped Product/Observation/source work is independent.
   const dependent = sessionCallRequiresBinding(requestedName);
@@ -2303,7 +2335,7 @@ async function dispatchSessionRequest(request, options = {}) {
   if (request.method === "tools/call" && args?.project_root && (hasSelection || sessionContext)) {
     try {
       const name = routed ? outer.name : request.params.name;
-      const selected = allTools.find(tool => tool.name === name);
+      const selected = allTools.find(tool => semanticToolName(tool.name) === semanticToolName(name));
       if (!selected?.inputSchema?.properties?.session_id) throw new Error("This operation has no project Session route.");
       if (hasSelection && typeof args.session_id !== "string") throw new Error("An explicit logical Session route must be text; omit it for an unspecified route.");
       const cleanArgs = { ...args }; delete cleanArgs.session_id;
@@ -2328,26 +2360,27 @@ async function dispatchRouted(request, { surface = "ordinary", graphDbTransport 
   requireSurface(surface);
   const id = request.id ?? null;
     if (request.method === "initialize") {
-      return success(id, { protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "head-agent-core", version: packageVersion } });
+      return success(id, { protocolVersion, capabilities: { tools: {} }, serverInfo: { name: ARTIFACT_COMPOSITION.pluginName, version: packageVersion } });
   }
   if (request.method === "notifications/initialized") return null;
   if (request.method === "tools/list") return success(id, { tools: toolsForSurface(surface) });
   if (request.method !== "tools/call") return failure(id, "Method not found");
   try {
-    let name = request.params?.name;
+    let name = semanticToolName(request.params?.name);
     let args = request.params?.arguments || {};
     if (name === "head_tools_discover") {
       const value = discoverTools(args, surface);
       return success(id, { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value });
     }
     if (name === "head_tools_read" || name === "head_tools_call") {
-      const selected = allTools.find(tool => tool.name === args.name);
-      if (!selected || !args.arguments || typeof args.arguments !== "object" || Array.isArray(args.arguments)
+      const selected = allTools.find(tool => semanticToolName(tool.name) === semanticToolName(args.name));
+      const descriptor = resolveOperation(args.name);
+      if (!selected || descriptor?.kind !== "operation" || !args.arguments || typeof args.arguments !== "object" || Array.isArray(args.arguments)
           || Object.keys(args).some(key => !["name", "arguments", ...(name === "head_tools_call" ? ["execution_mode"] : [])].includes(key))) throw new Error("An exact HEAD tool name and arguments object are required; routing cannot be nested.");
       if (args.execution_mode != null && !["ordinary", "managed"].includes(args.execution_mode)) throw new Error("Unknown execution mode.");
       if (name === "head_tools_call" && args.execution_mode === "managed") surface = "managed-maintenance";
       if (name === "head_tools_read" && selected.annotations?.readOnlyHint !== true) throw new Error("The selected tool is not read-only; use its declared effectful route within existing authority.");
-      name = selected.name;
+      name = semanticToolName(selected.name);
       args = args.arguments;
     }
     requireOperationSurface(name, surface);
@@ -2516,7 +2549,7 @@ async function dispatchRouted(request, { surface = "ordinary", graphDbTransport 
         : name === "head_runtime_invocation_lease_status"
           ? (await import("./lib/runtime-invocation-lifecycle.mjs")).inspectRuntimeInvocationExecutionLease({ root: args.project_root, authorizationId: args.authorization_id })
         : name === "head_runtime_invocation_result"
-          ? (await import("./lib/runtime-run-result-application.mjs")).readRuntimeInvocationResult({ root: args.project_root, authorizationId: args.authorization_id })
+          ? await runtimeResultFromMcp(args)
         : name === "head_onboarding_status"
           ? (await import("./lib/onboarding.mjs")).inspectOnboarding({ root: args.project_root })
         : name === "head_feature_mapping_status"
@@ -2581,9 +2614,9 @@ async function dispatchRouted(request, { surface = "ordinary", graphDbTransport 
                   : name === "head_session_continue"
                     ? continueSessionFromMcp(args, coordinationWorkspaceHost)
                     : name === "head_worker_integration"
-                      ? (await import("./lib/worker-integration-workflow.mjs")).operateWorkerIntegration(workerIntegrationInput(args), { root: args.project_root, onProcess })
+                      ? await workerIntegrationFromMcp(args, onProcess)
                     : name === "head_worker_integration_status"
-                      ? (await import("./lib/worker-integration-workflow.mjs")).inspectWorkerIntegration(workerIntegrationInput(args), { root: args.project_root })
+                      ? await workerIntegrationFromMcp(args, onProcess, true)
                     : name === "head_bounded_worker_prepare"
                       ? await (await import("./lib/local-worker-host.mjs")).prepareLocalBoundedWorker(localWorkerInput(args), { root: args.project_root, supervisorSelection: workerJobSupervisor, protocolFixtureBackend: workerPreparationBackend, signal, onProcess })
                     : name === "head_bounded_worker_start"
@@ -2650,7 +2683,7 @@ async function dispatchRouted(request, { surface = "ordinary", graphDbTransport 
                 : name === "head_graphdb_database_status"
                   ? (await import("./lib/arcadedb-database-lifecycle.mjs")).inspectArcadeDbDatabaseCompatibility({ root: args.project_root, transport: graphDbTransport })
                 : name === "head_graphdb_connection_preflight"
-                  ? (await import("./lib/graphdb-projection-activation.mjs")).inspectArcadeDbCredentialPreflight({ root: args.project_root, transport: graphDbTransport })
+                  ? (await import("./lib/graphdb-projection-activation.mjs")).inspectArcadeDbCredentialPreflight({ root: args.project_root, transport: graphDbTransport, storage: resolveProjectStorage(args.project_root) })
                 : name === "head_graphdb_database_initialize"
                   ? initializeGraphDbFromMcp(args, graphDbTransport)
                 : name === "head_graphdb_projection_activate"

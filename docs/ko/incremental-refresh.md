@@ -109,25 +109,25 @@ exact changed-path expectation은 관찰된 added, changed, removed path의 합�
 - 존재하는 경우 Capsule에 고정된 SourceSnapshot;
 - 새로 고친 SourceSnapshot;
 - drift 존재 여부;
-- 필요한 HEAD 선택: 고정된 input으로 계속 진행, 재컴파일, 수정 또는 취소.
+- 필요한 Lode 선택: 고정된 input으로 계속 진행, 재컴파일, 수정 또는 취소.
 
-pending ResultPacket도 마찬가지로 Fresh HEAD review를 위해 동결된 상태로 유지됩니다. 새로 고침 evidence는 review에 정보를 제공할 수 있지만 result 또는 그 result가 수락한 execution input을 재작성할 수 없습니다.
+pending ResultPacket도 마찬가지로 Fresh Lode review를 위해 동결된 상태로 유지됩니다. 새로 고침 evidence는 review에 정보를 제공할 수 있지만 result 또는 그 result가 수락한 execution input을 재작성할 수 없습니다.
 
 ## 불변 아티팩트
 
 로컬 reference implementation은 다음 위치에 저장합니다.
 
 ```text
-.head/refresh/requests/incremental-refresh-request-*.json
-.head/refresh/receipts/incremental-refresh-receipt-*.json
-.head/refresh/current.json
-.head/refresh/triggers/batches/refresh-trigger-batch-*.json
-.head/refresh/triggers/deliveries/refresh-trigger-delivery-*.json
-.head/refresh/triggers/current.json
-.head/document-projection/post-refresh/policies/post-refresh-projection-policy-*.json
-.head/document-projection/post-refresh/receipts/post-refresh-projection-receipt-*.json
-.head/document-projection/post-refresh/current-policy.json
-.head/document-projection/post-refresh/current.json
+.lode/refresh/requests/incremental-refresh-request-*.json
+.lode/refresh/receipts/incremental-refresh-receipt-*.json
+.lode/refresh/current.json
+.lode/refresh/triggers/batches/refresh-trigger-batch-*.json
+.lode/refresh/triggers/deliveries/refresh-trigger-delivery-*.json
+.lode/refresh/triggers/current.json
+.lode/document-projection/post-refresh/policies/post-refresh-projection-policy-*.json
+.lode/document-projection/post-refresh/receipts/post-refresh-projection-receipt-*.json
+.lode/document-projection/post-refresh/current-policy.json
+.lode/document-projection/post-refresh/current.json
 ```
 
 request와 receipt는 콘텐츠에서 파생되는 불변 아티팩트입니다. current file은 다이제스트가 검증된 교체 가능 pointer입니다. 이후의 full index 또는 refresh로 최신 receipt가 stale 상태가 될 수 있지만 그 역사적 증거가 무효화되지는 않습니다.
@@ -135,30 +135,30 @@ request와 receipt는 콘텐츠에서 파생되는 불변 아티팩트입니다.
 ## CLI 및 MCP
 
 ```powershell
-node scripts/head.mjs world-refresh <project>
-node scripts/head.mjs world-refresh <project> --expect-changed src/a.mjs,src/b.mjs
-node scripts/head.mjs world-refresh-status <project>
-node scripts/head.mjs world-refresh-read <project> --receipt incremental-refresh-receipt-<24-hex>
-node scripts/head.mjs world-refresh-events <project> --input refresh-events.json
-node scripts/head.mjs world-refresh-watch <project> --debounce-ms 350 --max-events 1024
-node scripts/head.mjs world-refresh-trigger-status <project>
-node scripts/head.mjs world-refresh-trigger-read <project> --delivery refresh-trigger-delivery-<24-hex>
-node scripts/head.mjs world-docs-policy-set <project> --input post-refresh-policy.json
-node scripts/head.mjs world-docs-policy-status <project>
-node scripts/head.mjs world-docs-refresh-status <project>
-node scripts/head.mjs world-docs-refresh-read <project> --receipt post-refresh-projection-receipt-<24-hex>
+node scripts/lode.mjs world-refresh <project>
+node scripts/lode.mjs world-refresh <project> --expect-changed src/a.mjs,src/b.mjs
+node scripts/lode.mjs world-refresh-status <project>
+node scripts/lode.mjs world-refresh-read <project> --receipt incremental-refresh-receipt-<24-hex>
+node scripts/lode.mjs world-refresh-events <project> --input refresh-events.json
+node scripts/lode.mjs world-refresh-watch <project> --debounce-ms 350 --max-events 1024
+node scripts/lode.mjs world-refresh-trigger-status <project>
+node scripts/lode.mjs world-refresh-trigger-read <project> --delivery refresh-trigger-delivery-<24-hex>
+node scripts/lode.mjs world-docs-policy-set <project> --input post-refresh-policy.json
+node scripts/lode.mjs world-docs-policy-status <project>
+node scripts/lode.mjs world-docs-refresh-status <project>
+node scripts/lode.mjs world-docs-refresh-read <project> --receipt post-refresh-projection-receipt-<24-hex>
 ```
 
 `--trigger-evidence`는 정렬된 evidence identity를 추가합니다. `--parent-snapshot`은 추가 SourceSnapshot parent를 선언하며, merge를 요청하거나 수행하지 않습니다.
 
 읽기 전용 MCP는 다음을 노출합니다.
 
-- `head_incremental_refresh_status`;
-- `head_incremental_refresh_receipt`;
-- `head_refresh_trigger_status`;
-- `head_refresh_trigger_delivery`;
-- `head_post_refresh_projection_status`;
-- `head_post_refresh_projection_receipt`.
+- `lode_incremental_refresh_status`;
+- `lode_incremental_refresh_receipt`;
+- `lode_refresh_trigger_status`;
+- `lode_refresh_trigger_delivery`;
+- `lode_post_refresh_projection_status`;
+- `lode_post_refresh_projection_receipt`.
 
 MCP는 새로 고침 mutation을 노출하지 않습니다.
 

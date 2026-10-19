@@ -4,7 +4,7 @@
 
 새 ProductHypothesis 아티팩트만 프로토콜 0.5.0과 필수 referenceSemantics 값
 neutral을 사용합니다. Signal과 Observation 연결은 REFERENCES이며, 모든 인용이
-가설을 지지한다는 기계적 판정이 아닙니다. 지지·반박·불확실성은 HEAD가 기존
+가설을 지지한다는 기계적 판정이 아닙니다. 지지·반박·불확실성은 Lode가 기존
 rationale에 설명하며 별도 근거 역할 입력 양식은 없습니다. 나머지 운영 아티팩트는
 0.4.0을 유지합니다. 과거 가설의 바이트·해시·SUPPORTED_BY 해석은 그대로 보존되고
 새 reader가 마이그레이션 없이 읽습니다. 옛 reader는 새 가설 버전을 거부하므로
@@ -16,7 +16,7 @@ rationale에 설명하며 별도 근거 역할 입력 양식은 없습니다. �
 
 상태: Product Operating Loop 프로토콜 `0.4.0`에 따른 최소 수직 경로가 구현되어 있으며, 다이제스트를 읽을 수 있는 `0.1.0`, `0.2.0` 및 `0.3.0` 호환성을 제공합니다.
 
-Product Operating Loop는 관찰, 모델 추론, GraphDB 또는 연속성 요약을 HEAD나 사용자의 권한으로 만들지 않으면서 제품 학습을 검토된 실행과 연결합니다.
+Product Operating Loop는 관찰, 모델 추론, GraphDB 또는 연속성 요약을 Lode나 사용자의 권한으로 만들지 않으면서 제품 학습을 검토된 실행과 연결합니다.
 
 ## 개발 척추와 운영 흐름
 
@@ -34,11 +34,11 @@ Product Operating Loop는 관찰, 모델 추론, GraphDB 또는 연속성 요약
 | 가설 | `ProductHypothesis` | 결정 권한 없음 |
 | 추론된 의미 | `ProductInitiativeCandidate`, `ProductFeatureCandidate` | 후보일 뿐 |
 | 승인된 결정 | `ReviewedProductInitiative` | 명시적으로 검토된 이니셔티브이며 Product Canon은 아님 |
-| 파생 프로젝션 | Product Graph 및 `HEADContinuitySnapshot` | 재구축 가능한 참조 뷰일 뿐 |
+| 파생 프로젝션 | Product Graph 및 `LodeContinuitySnapshot` | 재구축 가능한 참조 뷰일 뿐 |
 
-`ProductSignal → ProductHypothesis → ProductInitiativeCandidate`는 추론의 궤적이지 권한 체인이나 필수 영속화 체인이 아닙니다. 일상적인 관찰·가설·추론은 근거와 함께 대화에 남깁니다. 형식화 API·콘텐츠 식별자·그래프 재구축은 필요하지 않습니다. Signal/Hypothesis 아티팩트는 Run 간 경계, 반박/감사 경계, 제품 상태 경계 또는 인계/컨텍스트 손실 경계에서만 영속화합니다. Product Initiative는 `decisionScope: product-initiative`인 명시적 `ReviewDecision`을 통해서만 검토된 상태가 됩니다. Product Canon은 `.head/context/product-model.json`에 그대로 있으며 이 흐름에 의해 변경되지 않습니다.
+`ProductSignal → ProductHypothesis → ProductInitiativeCandidate`는 추론의 궤적이지 권한 체인이나 필수 영속화 체인이 아닙니다. 일상적인 관찰·가설·추론은 근거와 함께 대화에 남깁니다. 형식화 API·콘텐츠 식별자·그래프 재구축은 필요하지 않습니다. Signal/Hypothesis 아티팩트는 Run 간 경계, 반박/감사 경계, 제품 상태 경계 또는 인계/컨텍스트 손실 경계에서만 영속화합니다. Product Initiative는 `decisionScope: product-initiative`인 명시적 `ReviewDecision`을 통해서만 검토된 상태가 됩니다. Product Canon은 `.lode/context/product-model.json`에 그대로 있으며 이 흐름에 의해 변경되지 않습니다.
 
-이제 durable `ProductHypothesis`는 별도로 persisted `ProductSignal`이 있거나 없어도 `observationIds`를 통해 정확한 `ObservationRecord` 또는 `DerivedObservationRecord` identity를 인용할 수 있습니다. 이미 검증된 evidence를 사람이 다시 작성할 필요를 없애지만 adapter가 meaning을 작성하지는 않습니다. hypothesis는 여전히 HEAD가 작성하며 reference는 review, promotion, success 또는 recovery authority를 부여하지 않습니다.
+이제 durable `ProductHypothesis`는 별도로 persisted `ProductSignal`이 있거나 없어도 `observationIds`를 통해 정확한 `ObservationRecord` 또는 `DerivedObservationRecord` identity를 인용할 수 있습니다. 이미 검증된 evidence를 사람이 다시 작성할 필요를 없애지만 adapter가 meaning을 작성하지는 않습니다. hypothesis는 여전히 Lode가 작성하며 reference는 review, promotion, success 또는 recovery authority를 부여하지 않습니다.
 
 Observation storage는 optional이며 격리된 상태를 유지합니다. Product Operating projection과 signal-only flow는 durable hypothesis가 정확한 Observation ID를 실제로 참조하지 않는 한 이를 load하거나 validate하지 않습니다. 일단 참조되면 현재 Observation integrity와 receipt lineage는 이전과 같이 fail closed합니다.
 
@@ -58,7 +58,7 @@ Feature resolution:
 
 accepted execution ReviewDecision + ResultPacket -> ChangeSet
   -> OutcomeObservation (observed-fact or derived-projection)
-  -> HEAD reevaluates product meaning and success
+  -> Lode reevaluates product meaning and success
 ```
 
 영속 Signal/Hypothesis 경로는 명시적 감사 경계를 위해 계속 사용할 수 있습니다. 더 가벼운 경로는 명시적인 인라인 추론에서 불변 `ProductInitiativeCandidate`를 직접 생성할 수 있습니다. 이 경로는 Feature 결정을 수락 검토까지 미룰 수 있으므로 사용자 결정 전에는 `ProductFeatureCandidate`가 존재하지 않습니다. 검토된 Initiative는 후보의 바이트에 의존하지 않고 제목, 설명, 추론 및 가설 참조를 보존하면서, 별도의 검토 아티팩트에 정확히 하나의 `existing-feature | candidate | gap` 결정을 추가합니다.
@@ -90,9 +90,9 @@ deferred는 파생 갱신이 완료되지 않았다는 뜻이지 재시도 예�
 계속 실패하며 손상 원본은 보존합니다. 정확한 재시도는 검증된 원본을 재사용하고
 결정을 중복 생성하거나 실행 권한을 늘리지 않습니다.
 
-## HEAD 연속성 경계
+## Lode 연속성 경계
 
-`HEADContinuitySnapshot`은 요청 시 빌드되며 프로젝트 저장소에 절대 기록되지 않습니다. 현재 Project, Session, Run, WholePlan, ExecutionContract, ResultPacket, ReviewDecision, checkpoint, Product Model, World Model 및 product-operating 식별자가 존재할 경우 그에 대한 정확한 참조를 포함합니다.
+`LodeContinuitySnapshot`은 요청 시 빌드되며 프로젝트 저장소에 절대 기록되지 않습니다. 현재 Project, Session, Run, WholePlan, ExecutionContract, ResultPacket, ReviewDecision, checkpoint, Product Model, World Model 및 product-operating 식별자가 존재할 경우 그에 대한 정확한 참조를 포함합니다.
 
 이 스냅샷은 다음과 같은 고정 속성을 모두 갖습니다.
 
@@ -102,16 +102,16 @@ deferred는 파생 갱신이 완료되지 않았다는 뜻이지 재시도 예�
 - `promotionAuthority: false`
 - `objectiveRewrite: false`
 
-복구 권한은 `.head/sessions/current.json`, Run 정본 및 Session/Run checkpoints에 계속 있습니다. 이 스냅샷은 HEAD의 지속적인 전체 결과 판단을 대체할 수 없습니다.
+복구 권한은 `.lode/sessions/current.json`, Run 정본 및 Session/Run checkpoints에 계속 있습니다. 이 스냅샷은 Lode의 지속적인 전체 결과 판단을 대체할 수 없습니다.
 
 동일 프로세스에서 반복되는 `product-operating-status` 및 `head-continuity` 읽기는 Product Operating 프로젝션 식별자와 World Model 콘텐츠 식별자를 키로 하는, 공개되고 검증된 스냅샷 캐시를 사용합니다. Core 쓰기는 캐시를 무효화합니다. 전체 아티팩트 및 World Model 검증을 강제하려면 `--fresh` 또는 MCP `fresh: true`를 사용합니다. 캐시 상태는 운영 정보일 뿐이며 권한이나 복구 증거가 될 수 없습니다.
 
 ## CLI
 
-`head help`는 Core 작업과 복구를 보여 줍니다. 위험은 HEAD가 직접 판단하고,
+`head help`는 Core 작업과 복구를 보여 줍니다. 위험은 Lode가 직접 판단하고,
 임시 사실·가설·추론과 근거는 대화에서 구분합니다. 영속 Signal/Hypothesis,
 감사나 복구가 필요할 때 `head help-all`로 찾습니다. 실행 수단과 임시 학습은
-HEAD가 직접 판단하고 표현하며 Core 분류기나 메모 형식화 호출은 없습니다.
+Lode가 직접 판단하고 표현하며 Core 분류기나 메모 형식화 호출은 없습니다.
 
 ```text
 head product-signal-record <project> --input <signal.json>
@@ -127,30 +127,30 @@ record/review/observe 명령은 primary 저장 뒤 같은 작업에서 로컬 Wo
 
 ## MCP
 
-HEAD 직접 작업이 기본이고, 유용하면 일반 Host 위임을 사용합니다.
+Lode 직접 작업이 기본이고, 유용하면 일반 Host 위임을 사용합니다.
 실제 복구·효과 추적이 필요할 때만 관리형 실행을 선택하며 워커 수를 위험 점수로
 쓰지 않습니다. 보호 전이는 lane 권고를 신뢰하지 않고 기존 권한 검사를 수행합니다.
 
 선택적인 typed MCP 목록에는 다음 도구가 있습니다.
 
-- `head_product_signal_record`
-- `head_product_hypothesis_record`
-- `head_product_initiative_propose`
-- `head_product_initiative_review`
-- `head_product_outcome_observe`
-- `head_product_operating_status`
-- `head_continuity_snapshot`
+- `lode_product_signal_record`
+- `lode_product_hypothesis_record`
+- `lode_product_initiative_propose`
+- `lode_product_initiative_review`
+- `lode_product_outcome_observe`
+- `lode_product_operating_status`
+- `lode_continuity_snapshot`
 
 기본 MCP 목록은 독립 Session 생성과 현재 공통 방향 갱신을 포함한 Core·복구에
 집중합니다. 이미 제공된 typed 도구는 정상적인 최초 사용에서 직접 호출합니다.
-필요한 선택적 스키마는 `head_tools_discover`의 정확한 이름이나 반환된 prefix로
-찾습니다. 호환되는 `invokeWith`는 여전히 `head_tools_read` 또는
-`head_tools_call`이며, `{name, arguments}` 안에 기존 원래 스키마의 인자를 전달합니다.
+필요한 선택적 스키마는 `lode_tools_discover`의 정확한 이름이나 반환된 prefix로
+찾습니다. 호환되는 `invokeWith`는 여전히 `lode_tools_read` 또는
+`lode_tools_call`이며, `{name, arguments}` 안에 기존 원래 스키마의 인자를 전달합니다.
 상태를 저장하지 않는 이 경로는 기존 dispatch·검사·결과를 유지하며 등록·활성화나
 새 내부 승인 게이트를 추가하지 않습니다. 읽기 전용 경로는 별도로 유지하고,
 이미 아는 선택적 계약은 사전 탐색 없이 기존 router로 호출할 수 있습니다.
 정상 최초 사용은 거부된 효과를 다른 경로로 수행할 권한이 아닙니다. 지속 작업에 유용한
-관리형 변경은 `head_tools_call`의 `execution_mode: "managed"`를 사용하고
+관리형 변경은 `lode_tools_call`의 `execution_mode: "managed"`를 사용하고
 사용자 unlock 없이 원래 검사를 유지합니다.
 
 Session 생성은 기존 canonical 원본을 덮어쓰지 않고 추가하거나 재사용합니다.

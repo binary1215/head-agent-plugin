@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { initializeProject, inspectProject } from "../scripts/lib/head-core.mjs";
+import { initializeProject, inspectProject } from "../scripts/lib/lode-core.mjs";
 import { buildRuntimeVersionEvidence } from "../scripts/lib/runtime-machine-execution.mjs";
 import { buildRuntimeProtocolEvidence, buildRuntimeProjectBinding } from "../scripts/lib/runtime-protocol-evidence.mjs";
 import { buildRuntimeInvocationAuthorization, verifyRuntimeInvocationAuthorization, prepareRuntimeInvocationExecution,
@@ -45,7 +45,7 @@ function capabilitySpawn(_command, args) {
   return child;
 }
 async function fixture(t) {
-  const parent = fs.realpathSync(process.env.HEAD_AGENT_TEST_TMP || os.tmpdir());
+  const parent = fs.realpathSync(process.env.LODE_AGENT_TEST_TMP || process.env.HEAD_AGENT_TEST_TMP || os.tmpdir());
   const container = fs.mkdtempSync(path.join(parent, "head-runtime-proposal-"));
   const root = path.join(container, "project"), bin = path.join(container, "bin"), operational = path.join(container, "operational");
   for (const directory of [root, bin, operational]) fs.mkdirSync(directory);
@@ -56,6 +56,10 @@ async function fixture(t) {
     fs.rmSync(container, { recursive: true, force: true });
   });
   initializeProject({ root, pluginRoot: path.resolve(import.meta.dirname, ".."), runtimes: ["codex"] });
+  const storage = inspectProject(root).storage;
+  assert.equal(storage.directory, ".lode");
+  assert.equal(fs.existsSync(path.resolve(root, ".lode/project.json")), true);
+  assert.equal(fs.existsSync(path.resolve(root, ".head/project.json")), false);
   for (const name of ["edit.txt", "delete.txt", "mode.txt"]) fs.writeFileSync(path.join(root, name), `original ${name}\n`);
   const executable = path.join(bin, process.platform === "win32" ? "codex.exe" : "codex");
   fs.writeFileSync(executable, "Synthetic capability fixture; never executed\n", { mode: 0o755 });
@@ -63,7 +67,7 @@ async function fixture(t) {
   const versionEvidence = await buildRuntimeVersionEvidence({ runtimes: ["codex"], environment, spawnImplementation: capabilitySpawn });
   const protocolEvidence = await buildRuntimeProtocolEvidence({ runtimes: ["codex"], environment, versionEvidence, spawnImplementation: capabilitySpawn });
   const inspected = inspectProject(root);
-  const projectBinding = buildRuntimeProjectBinding({ projectId: inspected.project.projectId, headSessionId: inspected.state.sessionId,
+  const projectBinding = buildRuntimeProjectBinding({ storage, projectId: inspected.project.projectId, headSessionId: inspected.state.sessionId,
     projectRoot: fs.realpathSync(root), projectStatus: "ready", versionEvidence, protocolEvidence });
   const sourcePaths = ["delete.txt", "edit.txt", "mode.txt"], proposalPaths = [...sourcePaths, "new.txt"];
   const sourceBasis = captureWorkerSourceBasis({ root, paths: sourcePaths, maxBytes });
@@ -82,8 +86,8 @@ async function fixture(t) {
       { path: "edit.txt", after: image("proposed edit\n") }, { path: "delete.txt", after: null },
       { path: "new.txt", after: image("proposed new\n") }, { path: "mode.txt", after: { contentBase64: mode.contentBase64, mode: mode.mode ^ 0o100 } },
     ] } };
-  return { root, container, binding, sourceBasis, proposalBasis, boundary, options, authorization, result,
-    input: { root, authorization, sessionRequest: request }, session: path.join(root, ".head/sessions/current.json") };
+  return { storage, root, container, binding, sourceBasis, proposalBasis, boundary, options, authorization, result,
+    input: { root, authorization, sessionRequest: request }, session: path.join(root, storage.directory, "sessions/current.json") };
 }
 async function record(f, { status = "completed", result = f.result, beforeReceipt } = {}) {
   const authorization = f.authorization;
@@ -125,7 +129,7 @@ test("proposal authorization is read-only, exact preimages are evidence, and Cor
   assert.equal(candidate.instructionAuthority, false); assert.equal(candidate.recoveryAuthority, false);
   const r = await record(f);
   persistRuntimeInvocationRecord({ projectRoot: f.root, ...r });
-  const loaded = readRuntimeInvocationRecord({ root: f.root, authorizationId: f.authorization.authorizationId });
+  const loaded = readRuntimeInvocationRecord({ root: f.root, storage: f.storage, authorizationId: f.authorization.authorizationId });
   assert.deepEqual(loaded.draft.providerResult, f.result);
   assert.equal(loaded.receipt.providerBoundary.actualProviderInvoked, false);
   assert.deepEqual(fs.readFileSync(f.session), session);
@@ -177,6 +181,7 @@ test("typed proposal rejects wrong basis, unselected paths, malformed images, du
     r => { r.patchProposal.changes[0].path = "unselected.txt"; },
     r => { r.patchProposal.changes[0].path = "../outside.txt"; },
     r => { r.patchProposal.changes[0].path = ".head/sessions/current.json"; },
+    r => { r.patchProposal.changes[0].path = ".lode/sessions/current.json"; },
     r => { r.patchProposal.changes.push(copy(r.patchProposal.changes[0])); },
     r => { r.patchProposal.changes[0].after.contentBase64 = "not base64!"; },
     r => { r.patchProposal.changes[0].after.mode = 0o1000; },
@@ -212,7 +217,7 @@ test("completed receipt cannot omit proposal while failed null evidence remains 
   } });
   assert.equal(r.draft.providerResult, null); assert.equal(r.draft.verification[0].status, "failed");
   persistRuntimeInvocationRecord({ projectRoot: f.root, ...r });
-  assert.equal(readRuntimeInvocationRecord({ root: f.root, authorizationId: f.authorization.authorizationId }).draft.providerResult, null);
+  assert.equal(readRuntimeInvocationRecord({ root: f.root, storage: f.storage, authorizationId: f.authorization.authorizationId }).draft.providerResult, null);
 });
 
 test("receipt-result observed, digest and byte linkage is checked again at publication", async t => {
@@ -234,7 +239,7 @@ test("receipt-result observed, digest and byte linkage is checked again at publi
     assert.throws(() => persistRuntimeInvocationRecord({ projectRoot: f.root, ...r, receipt: altered, draft: alteredDraft }));
   }
   persistRuntimeInvocationRecord({ projectRoot: f.root, ...r });
-  const directory = path.join(f.root, ".head/runtime/invocations", f.authorization.authorizationId);
+  const directory = path.join(f.root, f.storage.directory, "runtime/invocations", f.authorization.authorizationId);
   const draftFile = fs.readdirSync(directory).find(name => name.includes("draft"));
   assert.ok(draftFile);
   const changed = copy(r.draft); changed.providerResult.patchProposal.changes[0].after = image("rehashed different proposal");
@@ -242,5 +247,5 @@ test("receipt-result observed, digest and byte linkage is checked again at publi
   const alteredDraft = reidentify(changed, "runtime-result-draft", "draftId", "draftHash");
   assert.equal(verifyRuntimeResultPacketDraft(alteredDraft, { authorization: f.authorization }), alteredDraft);
   fs.writeFileSync(path.join(directory, draftFile), JSON.stringify(alteredDraft));
-  assert.throws(() => readRuntimeInvocationRecord({ root: f.root, authorizationId: f.authorization.authorizationId }), /lineage is inconsistent/);
+  assert.throws(() => readRuntimeInvocationRecord({ root: f.root, storage: f.storage, authorizationId: f.authorization.authorizationId }), /lineage is inconsistent/);
 });

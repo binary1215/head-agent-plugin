@@ -1,3 +1,9 @@
+import { formatForVerifiedOwner, familyFormatForOriginal, resolveProjectStorage } from "./project-storage-format.mjs";
+const sessionIdOf = record => {
+  const format = familyFormatForOriginal({ sessionIdentity: true }, record);
+  return format ? record?.[format.sessionIdField] : undefined;
+};
+const originalFormat = record => familyFormatForOriginal({ kind: record?.kind }, record);
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -49,14 +55,16 @@ function safeDirectories(base, parts, create) {
 }
 function projectIdentity(root) {
   const base = fs.realpathSync(path.resolve(root));
-  const project = JSON.parse(fs.readFileSync(safeSessionPath(base, ".head", "project.json"), "utf8"));
-  if (project.schemaVersion !== 1 || project.projectRoot !== base || !/^head-[a-f0-9]{20}$/u.test(project.projectId || "")) fail();
-  return { base, project };
+  const storage = resolveProjectStorage(base);
+  const format = formatForVerifiedOwner(storage);
+  const project = JSON.parse(fs.readFileSync(safeSessionPath(base, format.directory, "project.json"), "utf8"));
+  if (project.schemaVersion !== 1 || project.projectRoot !== base || !new RegExp(`^${format.projectPrefix}[a-f0-9]{20}$`, "u").test(project.projectId || "")) fail();
+  return { base, project, storage };
 }
 function location(root, caller, environment, create = false) {
   if (!validCaller(caller)) fail();
-  const { base, project } = projectIdentity(root);
-  const operational = resolveRuntimeOperationalStateRoot({ projectRoot: base, environment, create });
+  const { base, project, storage } = projectIdentity(root);
+  const operational = resolveRuntimeOperationalStateRoot({ projectRoot: base, storage, environment, create });
   const owner = { projectId: project.projectId, rootDigest: sha(base), callerDigest: callerDigest(caller) };
   // Never create/read the caller's session-bindings directory here: directory
   // absence has an existing, important selection-recovery meaning.

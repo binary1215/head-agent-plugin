@@ -5,18 +5,19 @@ import path from "node:path";
 import test from "node:test";
 import { isDeepStrictEqual } from "node:util";
 import { pathToFileURL } from "node:url";
-import { initializeProject, inspectProject } from "../scripts/lib/head-core.mjs";
+import { initializeProject, inspectProject } from "../scripts/lib/lode-core.mjs";
 import { inspectProjectExperience } from "../scripts/lib/project-bootstrap.mjs";
 import { createHeadSession, withSessionRoute } from "../scripts/lib/session-routing.mjs";
 import { recordSessionWorkEvidence, readSessionWorkContext } from "../scripts/lib/session-work-context.mjs";
 import { queryProjectGraph } from "../scripts/lib/project-graph.mjs";
-import { runCommand } from "../scripts/head.mjs";
+import { runCommand } from "../scripts/lode.mjs";
 import { dispatch } from "../scripts/mcp-server.mjs";
 import { formatCliResult } from "../scripts/lib/cli-presentation.mjs";
 import { readProjectDirection, updateProjectDirection } from "../scripts/lib/project-direction.mjs";
 import { inspectWorldModel } from "../scripts/lib/world-model.mjs";
 import { startFeatureMapping, reviewFeatureMapping } from "../scripts/lib/feature-mapping.mjs";
 import { sha, snapshot } from "./helpers/session-work-linkage-fixture.mjs";
+import { publicToolName } from "../scripts/lib/lode-artifact-composition.mjs";
 
 const pluginRoot = path.resolve(import.meta.dirname, "..");
 const isWork = node => node.kind === "Evidence" && node.subtype === "SessionWorkEvidence";
@@ -92,19 +93,20 @@ function assertGraphPresentation(text, value) {
   assert.equal(text.includes(`\nNode[${value.nodes.length}]:\n`), false);
 }
 function fixture(t) {
-  const parent = process.env.HEAD_AGENT_TEST_TMP || os.tmpdir();
+  const parent = process.env.LODE_AGENT_TEST_TMP || process.env.HEAD_AGENT_TEST_TMP || os.tmpdir();
   fs.mkdirSync(parent, { recursive: true });
   const base = fs.realpathSync(fs.mkdtempSync(path.join(parent, "head-graph-work-context-")));
   const root = path.join(base, "project");
   fs.mkdirSync(root);
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const owner = inspectProject(root), layout = owner.storage;
   const session = createHeadSession({ root, purpose: "Synthetic graph investigation; no external effects" });
   t.after(() => {
     assert.equal(path.dirname(base), fs.realpathSync(parent));
     assert.ok(path.basename(base).startsWith("head-graph-work-context-"));
     fs.rmSync(base, { recursive: true, force: true });
   });
-  return { base, root, session,
+  return { base, root, session, owner, storage: layout, layout,
     save: (input, sessionId = session.sessionId) => withSessionRoute(root, sessionId, () => recordSessionWorkEvidence({ root, input })),
     read: options => withSessionRoute(root, session.sessionId, () => readSessionWorkContext({ root, ...options })),
   };
@@ -185,7 +187,7 @@ function completeNode(value, saved) {
   return node;
 }
 function expansion(node, f, saved) {
-  assert.equal(node.originalExpansion.tool, "head_session_work_read");
+  assert.equal(node.originalExpansion.tool, publicToolName("head_session_work_read"));
   const args = node.originalExpansion.arguments;
   assert.equal(args.project_root, f.root);
   assert.equal(args.session_id, saved.evidence.sessionId);
@@ -288,7 +290,7 @@ test("Core topic-only lexical discovery carries the actual reason/result/pending
   assert.equal(saved.file.includes(topic), false, "The topic witness must not be supplied by its source path");
   // initializeProject retains an empty compatibility seed; file presence does
   // not mean Product governance or any authoritative Feature was activated.
-  const productSeed = JSON.parse(fs.readFileSync(path.join(f.root, ".head/context/product-model.json"), "utf8"));
+  const productSeed = JSON.parse(fs.readFileSync(path.join(f.root, f.layout.directory, "context/product-model.json"), "utf8"));
   for (const field of ["featureGroups", "capabilities", "features", "requirements", "constraints", "decisions"]) assert.deepEqual(productSeed[field], []);
   const experience = inspectProjectExperience({ root: f.root });
   assert.equal(experience.readiness.product.governanceActivated, false, "Core topic discovery must not activate Product governance");
@@ -440,7 +442,7 @@ test("partial graph topic bodies use exact source-index ranges and count topics 
 
 test("same-name topic cannot create or retarget reviewed Product edges and changed/missing source keeps historical reasoning", async t => {
   const f = fixture(t), topic = "Delivery navigation";
-  fs.writeFileSync(path.join(f.root, ".head/context/product-model.json"), JSON.stringify({ schemaVersion: 1,
+  fs.writeFileSync(path.join(f.root, f.layout.directory, "context/product-model.json"), JSON.stringify({ schemaVersion: 1,
     featureGroups: [{ key: "delivery", name: "Delivery", description: "Synthetic fixture" }],
     capabilities: [{ key: "delivery", name: topic, description: "Deliver a value" }],
     features: [{ key: "delivery", name: topic, description: "Synthetic source-backed feature", featureGroupKeys: ["delivery"], capabilityKeys: ["delivery"], governedBy: [] }],
@@ -812,7 +814,7 @@ test("predecessor-only reason remains bounded in entry and supports graph retrie
 
   // The graph already supplied the fitting full reason. This harness deliberately
   // chooses a synthetic correction; it does not measure a real model's judgment.
-  const beforeOrdinary = snapshot(path.join(f.root, ".head"));
+  const beforeOrdinary = snapshot(path.join(f.root, f.layout.directory));
   const prior = await import(pathToFileURL(sourceFile).href + "?red"), red = { generation: 1, value: "old", effects: 0 };
   prior.apply(red, 2, "new"); prior.apply(red, 2, "duplicate"); assert.equal(red.effects, 2);
   fs.writeFileSync(sourceFile, originalCode.replace("generation < state.generation", "generation <= state.generation"));
@@ -821,7 +823,7 @@ test("predecessor-only reason remains bounded in entry and supports graph retrie
   assert.equal(corrected.apply(green, 2, "duplicate"), false);
   assert.equal(corrected.apply(green, 1, "stale"), false);
   assert.deepEqual(green, { generation: 2, value: "new", effects: 1 });
-  assert.deepEqual(snapshot(path.join(f.root, ".head")), beforeOrdinary);
+  assert.deepEqual(snapshot(path.join(f.root, f.layout.directory)), beforeOrdinary);
   const afterOrdinary = snapshot(f.root);
   assert.deepEqual(Object.keys(afterOrdinary), Object.keys(beforeProject));
   for (const file of Object.keys(beforeProject)) if (file !== "cache.mjs") assert.deepEqual(afterOrdinary[file], beforeProject[file], file);

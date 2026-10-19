@@ -2,7 +2,7 @@
 
 Reviewed: 2026-08-27
 
-This audit checks whether HEAD Agent Core retains only rules that protect a
+This audit checks whether Lode Agent Core retains only rules that protect a
 user-visible outcome or an authority boundary. A rule is retained only when it
 has a narrow scope, an implementation enforcement point, an observable failure,
 and a condition under which it can be narrowed or removed.
@@ -22,8 +22,8 @@ and a condition under which it can be narrowed or removed.
 | Lane | Rules retained | Rules deliberately absent |
 | --- | --- | --- |
 | Observe | bounded read, freshness, authority disclosure | no WholePlan, Capsule, Run, lease, or review by default |
-| Session | exact request digest, project/workspace scope, reversible local actions, bounded one-shot lease/result | no ExecutionContract, active Run, Product Canon mutation, or Fresh HEAD review |
-| Run | accepted WholePlan, ExecutionContract, ContextCapsule, exact Run, bounded executor, ResultPacket, Fresh HEAD review | no provider-session identity or automatic Canon promotion |
+| Session | exact request digest, project/workspace scope, reversible local actions, bounded one-shot lease/result | no ExecutionContract, active Run, Product Canon mutation, or Fresh Lode review |
+| Run | accepted WholePlan, ExecutionContract, ContextCapsule, exact Run, bounded executor, ResultPacket, Fresh Lode review | no provider-session identity or automatic Canon promotion |
 | Authority | Run controls plus the explicit user-owned decision at the affected boundary | no implied approval from capability, graph materialization, document edits, or model output |
 
 ## Subsystem and adapter-local rules
@@ -52,7 +52,7 @@ and a condition under which it can be narrowed or removed.
 
 General provider-session resume/stream, broader process-host control, automatic
 DAG merge/conflict resolution, Obsidian/Notion publication, and OpenAI universal
-plugin-directory publication remain optional. P2-first exact optional HEAD
+plugin-directory publication remain optional. P2-first exact optional Lode
 attachment, bounded worker ownership/wait, role messaging, WorkspaceHost
 integration, and exact-owned one-shot interrupt/close are active scoped
 capabilities rather than universal prerequisites.
@@ -62,12 +62,12 @@ Session, Run, provider replacement, or Git/GraphDB-free core operation.
 ## Removed or narrowed rules
 
 - Removed the requirement to route every task through WholePlan, Capsule, Run,
-  and Fresh HEAD; the risk-proportional lanes now own those costs.
+  and Fresh Lode; the risk-proportional lanes now own those costs.
 - Removed Product/World/Graph onboarding from the universal initialization path;
   the optional product profile owns that cost and its review gates.
 - Removed Git commits/decision markers and GraphDB availability from semantic
   identity, recovery, and onboarding prerequisites.
-- Removed provider-session identity from HEAD Project, Session, and Run identity.
+- Removed provider-session identity from Lode Project, Session, and Run identity.
 - Removed the adapter-owned OpenCode OpenAI-compatible provider preset, endpoint
   normalization, and environment-specific OpenAI/LiteLLM assumptions. OpenCode
   reads the user's resolved global settings instead.

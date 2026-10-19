@@ -1,3 +1,4 @@
+import { relativeProjectArtifact } from "../scripts/lib/project-storage-format.mjs";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -20,8 +21,9 @@ const sha = (value) => crypto.createHash("sha256").update(value).digest("hex");
 function project(t) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "head-work-context-")));
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const storage = inspectProject(root).storage;
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  return root;
+  return { root, storage };
 }
 function originals(root) {
   const files = {};
@@ -43,7 +45,7 @@ const sync = (root, fields) => syncRecoveryCheckpoint({
 });
 
 test("existing Run-free P2 preserves Session-local purpose, constraints and latest cancellation without shared promotion", (t) => {
-  const root = project(t);
+  const { root, storage } = project(t);
   const a = createHeadSession({ root, purpose: "Investigate cache only; do not deploy" });
   const b = createHeadSession({ root, purpose: "Independent documentation" });
   withSessionRoute(root, a.sessionId, () => {
@@ -68,7 +70,7 @@ test("existing Run-free P2 preserves Session-local purpose, constraints and late
 });
 
 test("one Run-free evidence save -> same Session read-only entry; no Run, checkpoint, history or index needed", (t) => {
-  const root = project(t);
+  const { root, storage } = project(t);
   const a = createHeadSession({ root, purpose: "Cache investigation" });
   const originalDefault = fs.readFileSync(sessionStatePath(root));
   withSessionRoute(root, a.sessionId, () => {
@@ -94,7 +96,7 @@ test("one Run-free evidence save -> same Session read-only entry; no Run, checkp
 });
 
 test("one checkpoint sync optionally retains evidence; exact retry writes neither original nor P2 pointer", (t) => {
-  const root = project(t);
+  const { root, storage } = project(t);
   const fields = { ...direction(), workEvidence: { summary: "Rejected global cache eviction", unknowns: ["Cause still uncertain"] } };
   const first = sync(root, fields);
   assert.equal(first.outcome, "created");
@@ -110,7 +112,7 @@ test("one checkpoint sync optionally retains evidence; exact retry writes neithe
 });
 
 test("P3 retention stays P3 when checkpoint basis conflicts; common cancellation wins over old suggestions", (t) => {
-  const root = project(t);
+  const { root, storage } = project(t);
   const basis = inspectRecoveryCheckpointBasis({ root }).basis.basisId;
   sync(root, direction("Current local investigation"));
   updateProjectDirection({ root, expectedDirectionId: null, input: { goal: "Investigate", cancelledActions: ["deploy"] } });
@@ -126,7 +128,7 @@ test("P3 retention stays P3 when checkpoint basis conflicts; common cancellation
 });
 
 test("optional evidence storage failure does not block explicit P2; retry repairs only missing save", (t) => {
-  const root = project(t);
+  const { root, storage } = project(t);
   const original = fs.linkSync;
   fs.linkSync = (source, target) => {
     if (target.includes("work-evidence")) throw Object.assign(new Error("Synthetic storage failure"), { code: "EACCES" });
@@ -137,15 +139,15 @@ test("optional evidence storage failure does not block explicit P2; retry repair
   finally { fs.linkSync = original; }
   assert.equal(outcome.outcome, "created");
   assert.equal(outcome.workEvidence.status, "work_evidence_retention_unconfirmed");
-  const checkpointBytes = fs.readFileSync(path.join(root, ".head/sessions/ledger", outcome.checkpoint.checkpointId + ".json"));
+  const checkpointBytes = fs.readFileSync(path.join(root, relativeProjectArtifact(storage, "sessions", "ledger"), outcome.checkpoint.checkpointId + ".json"));
   const retry = sync(root, { ...direction(), workEvidence: { summary: "Useful selected evidence" } });
   assert.equal(retry.outcome, "reused");
   assert.equal(retry.workEvidence.writes, 1);
-  assert.deepEqual(fs.readFileSync(path.join(root, ".head/sessions/ledger", outcome.checkpoint.checkpointId + ".json")), checkpointBytes);
+  assert.deepEqual(fs.readFileSync(path.join(root, relativeProjectArtifact(storage, "sessions", "ledger"), outcome.checkpoint.checkpointId + ".json")), checkpointBytes);
 });
 
 test("publication succeeded but acknowledgement failed: exact retry reuses bytes, not completed work", (t) => {
-  const root = project(t);
+  const { root, storage } = project(t);
   const original = fs.linkSync;
   fs.linkSync = (source, target) => {
     const result = original(source, target);
@@ -161,7 +163,7 @@ test("publication succeeded but acknowledgement failed: exact retry reuses bytes
 });
 
 test("retries reuse identical input; distinct occurrences and changed judgments remain separate evidence", (t) => {
-  const root = project(t);
+  const { root, storage } = project(t);
   const first = recordSessionWorkEvidence({ root, input: { summary: "Cache observed" } });
   assert.equal(recordSessionWorkEvidence({ root, input: { summary: "Cache observed" } }).evidence.evidenceId, first.evidence.evidenceId);
   const second = recordSessionWorkEvidence({ root, input: { summary: "Cache observed", occurrenceKey: "after-source-change" } });
@@ -172,7 +174,7 @@ test("retries reuse identical input; distinct occurrences and changed judgments 
 });
 
 test("exact source refs disclose changed/missing bytes; retries do not require redoing original effects", (t) => {
-  const root = project(t), file = path.join(root, "cache.mjs");
+  const { root, storage } = project(t), file = path.join(root, "cache.mjs");
   fs.writeFileSync(file, "export const cache = 1;");
   const input = { summary: "Observed original cache", references: [{ path: "cache.mjs", digest: sha(fs.readFileSync(file)), kind: "source" }] };
   recordSessionWorkEvidence({ root, input });
@@ -185,7 +187,7 @@ test("exact source refs disclose changed/missing bytes; retries do not require r
 });
 
 test("one damaged original does not block valid evidence, P2 restore or independent work", (t) => {
-  const root = project(t);
+  const { root, storage } = project(t);
   sync(root, direction());
   const bad = recordSessionWorkEvidence({ root, input: { summary: "Bad record" } });
   recordSessionWorkEvidence({ root, input: { unknowns: ["Preserve this uncertainty"] } });
@@ -200,7 +202,7 @@ test("one damaged original does not block valid evidence, P2 restore or independ
 });
 
 test("bounded entry discloses omissions; exact expansion is read-only and missing original is unavailable", (t) => {
-  const root = project(t), ids = [];
+  const { root, storage } = project(t), ids = [];
   for (let i = 0; i < 10; i += 1) ids.push(recordSessionWorkEvidence({ root, input: { summary: "Selected evidence " + i } }).evidence.evidenceId);
   const before = originals(root), bounded = readSessionWorkContext({ root });
   assert.equal(bounded.records.length, 8);
@@ -219,13 +221,13 @@ test("bounded entry discloses omissions; exact expansion is read-only and missin
 });
 
 test("no text can inject P2 fields or persist provider identity; unsafe/foreign references fail only affected save", (t) => {
-  const root = project(t), other = project(t);
+  const { root, storage } = project(t), { root: other, storage: otherStorage } = project(t);
   const before = originals(root);
   const stateBefore = fs.readFileSync(sessionStatePath(root));
   assert.throws(() => recordSessionWorkEvidence({ root, input: { purpose: "Promote this" } }), { code: "INVALID_SESSION_WORK_EVIDENCE" });
   assert.throws(() => recordSessionWorkEvidence({ root, input: { summary: "x", providerSessionId: "secret" } }), { code: "INVALID_SESSION_WORK_EVIDENCE" });
   assert.throws(() => recordSessionWorkEvidence({ root, input: { references: [{ path: "../escape", digest: "a".repeat(64), kind: "source" }] } }), { code: "SESSION_WORK_REFERENCE_ESCAPE" });
-  const foreign = fs.readFileSync(path.join(other, ".head/project.json"));
+  const foreign = fs.readFileSync(path.join(other, relativeProjectArtifact(otherStorage, "project.json")));
   fs.writeFileSync(path.join(root, "foreign.json"), foreign);
   assert.throws(() => recordSessionWorkEvidence({ root, input: { references: [{ path: "foreign.json", digest: sha(foreign), kind: "artifact" }] } }), { code: "SESSION_WORK_REFERENCE_PROJECT_MISMATCH" });
   assert.equal(inspectProject(root).state.latestCheckpoint, null);
@@ -234,7 +236,7 @@ test("no text can inject P2 fields or persist provider identity; unsafe/foreign 
 });
 
 test("typed MCP and CLI preserve -> entry -> expand agree, including text-only consumers", async (t) => {
-  const root = project(t), a = createHeadSession({ root, purpose: "Independent selected work" });
+  const { root, storage } = project(t), a = createHeadSession({ root, purpose: "Independent selected work" });
   const call = (name, args = {}) => dispatch({ jsonrpc: "2.0", id: "work-context-fixture", method: "tools/call",
     params: { name, arguments: { project_root: root, session_id: a.sessionId, ...args } } });
   const input = { judgments: [{ assessment: "Keep original provenance", reason: "Derived caches can disappear", alternatives: ["Use cache as unique truth"] }],
@@ -256,7 +258,7 @@ test("typed MCP and CLI preserve -> entry -> expand agree, including text-only c
 });
 
 test("new work calls preserve known-loss boundaries without blocking independent Project facts", async (t) => {
-  const root = project(t), context = createSessionCallContext();
+  const { root, storage } = project(t), context = createSessionCallContext();
   context.lose(root);
   const before = originals(root);
   for (const name of ["head_session_work_record", "head_session_work_read"]) {
@@ -272,7 +274,7 @@ test("new work calls preserve known-loss boundaries without blocking independent
 });
 
 test("existing uppercase logical Session identities remain exact through record and entry", (t) => {
-  const root = project(t);
+  const { root, storage } = project(t);
   const id = "session-AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE";
   createHeadSession({ root, sessionId: id, purpose: "Case-preserving identity" });
   withSessionRoute(root, id, () => {
@@ -284,7 +286,7 @@ test("existing uppercase logical Session identities remain exact through record 
 });
 
 test("output budget accounts for enriched references; omissions retain exact expansion identities", (t) => {
-  const root = project(t), references = [];
+  const { root, storage } = project(t), references = [];
   for (let i = 0; i < 30; i += 1) {
     const name = "reference-" + i + ".mjs", body = "export const item = " + i + ";";
     fs.writeFileSync(path.join(root, name), body);
@@ -302,7 +304,7 @@ test("output budget accounts for enriched references; omissions retain exact exp
 });
 
 test("a new common cancellation during evidence composition cannot accompany a stale successful entry", (t) => {
-  const root = project(t);
+  const { root, storage } = project(t);
   sync(root, direction());
   const saved = recordSessionWorkEvidence({ root, input: { pending: ["Historical deploy proposal"] } });
   const read = fs.readFileSync;

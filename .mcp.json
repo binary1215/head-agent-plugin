@@ -1,8 +1,10 @@
 {
   "mcpServers": {
-    "head_core": {
+    "lode_core": {
       "command": "node",
-      "args": ["scripts/mcp-server.mjs"],
+      "args": [
+        "scripts/mcp-server.mjs"
+      ],
       "cwd": ".",
       "required": false
     }

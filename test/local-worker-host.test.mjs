@@ -7,7 +7,8 @@ import { pathToFileURL } from "node:url";
 import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import test from "node:test";
-import { initializeProject } from "../scripts/lib/head-core.mjs";
+import { initializeProject, inspectProject } from "../scripts/lib/head-core.mjs";
+import { formatForVerifiedOwner } from "../scripts/lib/project-storage-format.mjs";
 import { compileContext } from "../scripts/lib/context-compiler.mjs";
 import { createWholePlanSnapshot, createExecutionContract } from "../scripts/lib/execution-lineage.mjs";
 import { startRun } from "../scripts/lib/run-lineage.mjs";
@@ -62,7 +63,7 @@ async function fixture(t, { nativeFixtureRoot = nativeRoot } = {}) {
   for (const directory of [root, installed, operational, home, bin]) fs.mkdirSync(directory);
   // Disposable package, not an install or a mutation of the development/native
   // cache. Default entrypoints resolve their native manifest without injection.
-  for (const name of ["scripts", "package.json", ".codex-plugin"]) fs.cpSync(path.join(pluginRoot, name), path.join(installed, name), { recursive: true });
+  for (const name of ["scripts", "compat", "package.json", ".codex-plugin"]) fs.cpSync(path.join(pluginRoot, name), path.join(installed, name), { recursive: true });
   fs.cpSync(path.join(nativeFixtureRoot, "dist"), path.join(installed, "dist"), { recursive: true });
   fs.mkdirSync(path.join(installed, "test", "helpers"), { recursive: true });
   fs.copyFileSync(path.join(pluginRoot, "test", "helpers", "codex-proposal-protocol-fixture.mjs"), path.join(installed, "test", "helpers", "codex-proposal-protocol-fixture.mjs"));
@@ -78,7 +79,7 @@ async function fixture(t, { nativeFixtureRoot = nativeRoot } = {}) {
     const errors = [];
     for (const member of prepared) {
       try {
-        const projectId = JSON.parse(fs.readFileSync(path.join(root, ".head/project.json"))).projectId;
+        const projectId = JSON.parse(fs.readFileSync(path.join(root, layout.directory, "project.json"))).projectId;
         if (!fs.existsSync(path.join(operational, "worker-jobs", projectId, member.authorizationId, "binding.json"))) continue;
         const input = { root, authorizationId: member.authorizationId };
         let state = jobs.readBoundedWorkerJob(input, { onProcess });
@@ -96,11 +97,13 @@ async function fixture(t, { nativeFixtureRoot = nativeRoot } = {}) {
     fs.rmSync(container, { recursive: true, force: true });
   });
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const storage = inspectProject(root).storage;
+  const layout = formatForVerifiedOwner(storage);
   fs.writeFileSync(path.join(root, "selected.txt"), "selected original\n");
   fs.writeFileSync(path.join(bin, "codex.exe"), "Synthetic schema marker; never executed");
   const environment = { ...process.env, PATH: bin }; delete environment.Path; delete environment.path;
   const backend = host.createLocalWorkerProtocolFixtureBackend({ codexHome: home, environment, spawnImplementation: schemaSpawn });
-  return { root, installed, operational, home, host, jobs, cli, mcp, backend, prepared, importLocal,
+  return { root, storage, layout, installed, operational, home, host, jobs, cli, mcp, backend, prepared, importLocal,
     input: { task: "Propose selected data change", model: "gpt-5.6-sol", taskKey: "selected-member", sourcePaths: ["selected.txt"], proposalPaths: ["selected.txt"] } };
 }
 const call = (name, args) => ({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } });
@@ -169,7 +172,7 @@ function prepareInChild(f) {
 }
 
 test("public preparation composes a fixed Host, reuses exact input and rejects Host wire overrides", { skip }, async t => {
-  const f = await fixture(t), before = fs.readFileSync(path.join(f.root, ".head/sessions/current.json"));
+  const f = await fixture(t), before = fs.readFileSync(path.join(f.root, f.layout.directory, "sessions/current.json"));
   const first = await f.cli.runCommand(["worker-prepare", f.root, "--task", f.input.task, "--model", f.input.model,
     "--task-key", f.input.taskKey, "--source", "selected.txt", "--propose", "selected.txt"], { workerPreparationBackend: f.backend });
   f.prepared.push(first);
@@ -177,7 +180,7 @@ test("public preparation composes a fixed Host, reuses exact input and rejects H
     model: f.input.model, task_key: f.input.taskKey, source_paths: ["selected.txt"], proposal_paths: ["selected.txt"] })));
   assert.equal(repeated.status, "reused"); assert.equal(first.authorizationId, repeated.authorizationId);
   assert.equal(first.modelCallAttempted, false); assert.equal(first.workersStarted, 0);
-  assert.deepEqual(fs.readFileSync(path.join(f.root, ".head/sessions/current.json")), before);
+  assert.deepEqual(fs.readFileSync(path.join(f.root, f.layout.directory, "sessions/current.json")), before);
   for (const extra of [{ runnerFile: "evil" }, { executable: "evil" }, { environment: {} }, { enforcement: true }]) {
     const rejected = await f.mcp.dispatch(call("head_bounded_worker_prepare", { project_root: f.root, task: f.input.task, model: f.input.model, ...extra }));
     assert.ok(rejected.error || rejected.result?.isError);
@@ -218,7 +221,7 @@ test("public native-prefix preparation and start bind a controlled two-turn prop
 
 test("reviewer source-change regression: same member safely reprepares and concurrent requests converge", { skip }, async t => {
   const f = await fixture(t), options = { root: f.root, protocolFixtureBackend: f.backend };
-  const before = fs.readFileSync(path.join(f.root, ".head/sessions/current.json"));
+  const before = fs.readFileSync(path.join(f.root, f.layout.directory, "sessions/current.json"));
   const first = await f.host.prepareLocalBoundedWorker(f.input, options); f.prepared.push(first);
   const lifecycle = await f.importLocal("lib/runtime-invocation-lifecycle.mjs"), leases = await f.importLocal("lib/runtime-execution-lease.mjs");
   const prior = lifecycle.readRuntimeInvocationAuthorization({ root: f.root, authorizationId: first.authorizationId }).authorization;
@@ -231,7 +234,7 @@ test("reviewer source-change regression: same member safely reprepares and concu
   assert.equal(current.workerInput.previousAuthorizationId, prior.authorizationId);
   assert.equal(current.workerInput.sourceBasis[0].digest, crypto.createHash("sha256").update("legitimate updated source\n").digest("hex"));
   await assert.rejects(leases.withRuntimeExecutionLease({ projectRoot: f.root, authorization: prior, ownerFenceDigest: "a".repeat(64) }, async () => assert.fail("Old authority cannot execute")), { code: "WORKER_MEMBER_AUTHORIZATION_CONFLICT" });
-  assert.deepEqual(fs.readFileSync(path.join(f.root, ".head/sessions/current.json")), before);
+  assert.deepEqual(fs.readFileSync(path.join(f.root, f.layout.directory, "sessions/current.json")), before);
   assert.equal(fs.existsSync(path.join(f.operational, "worker-jobs")), false);
   // Public lookup must select the new basis, not the first Host record.
   await frontDoor(path.join(f.installed, "scripts/head.mjs"), ["worker-start", f.root, "--task-key", f.input.taskKey], f.root);
@@ -245,7 +248,7 @@ test("reviewer source-change regression: same member safely reprepares and concu
 test("reviewer reselection regression: newly present target can join explicit read evidence for the same task", { skip }, async t => {
   const f = await fixture(t), options = { root: f.root, protocolFixtureBackend: f.backend };
   f.input = { ...f.input, proposalPaths: ["target.txt"] };
-  const before = fs.readFileSync(path.join(f.root, ".head/sessions/current.json"));
+  const before = fs.readFileSync(path.join(f.root, f.layout.directory, "sessions/current.json"));
   const first = await f.host.prepareLocalBoundedWorker(f.input, options); f.prepared.push(first);
   const lifecycle = await f.importLocal("lib/runtime-invocation-lifecycle.mjs"), leases = await f.importLocal("lib/runtime-execution-lease.mjs");
   const prior = lifecycle.readRuntimeInvocationAuthorization({ root: f.root, authorizationId: first.authorizationId }).authorization;
@@ -265,7 +268,7 @@ test("reviewer reselection regression: newly present target can join explicit re
     await assert.rejects(f.host.prepareLocalBoundedWorker({ ...f.input, ...change }, options), { code: "LOCAL_WORKER_PREPARATION_CONFLICT" });
   }
   assert.equal(fs.readFileSync(path.join(f.root, "target.txt"), "utf8"), "user-created current preimage\n");
-  assert.deepEqual(fs.readFileSync(path.join(f.root, ".head/sessions/current.json")), before);
+  assert.deepEqual(fs.readFileSync(path.join(f.root, f.layout.directory, "sessions/current.json")), before);
   // Exercise default public lookup of the reselected Host record, not a custom Host.
   await frontDoor(path.join(f.installed, "scripts/head.mjs"), ["worker-start", f.root, "--task-key", f.input.taskKey], f.root);
   const input = { root: f.root, authorizationId: next.authorizationId }, end = Date.now() + 30000;
@@ -273,12 +276,12 @@ test("reviewer reselection regression: newly present target can join explicit re
   while (!state.ownerExitObserved && Date.now() < end) { await pause(); state = f.jobs.readBoundedWorkerJob(input, { onProcess }); }
   assert.equal(state.ownerExitObserved, true); assert.equal(f.jobs.reconcileBoundedWorkerJob(input, { onProcess }).status, "completed");
   assert.equal(fs.readFileSync(path.join(f.root, "target.txt"), "utf8"), "user-created current preimage\n");
-  assert.deepEqual(fs.readFileSync(path.join(f.root, ".head/sessions/current.json")), before);
+  assert.deepEqual(fs.readFileSync(path.join(f.root, f.layout.directory, "sessions/current.json")), before);
 });
 
 test("reviewer publication regression: exact interrupted pending link recovers without authority changes", { skip }, async t => {
   const f = await fixture(t), original = fs.unlinkSync;
-  const before = fs.readFileSync(path.join(f.root, ".head/sessions/current.json"));
+  const before = fs.readFileSync(path.join(f.root, f.layout.directory, "sessions/current.json"));
   let pending;
   fs.unlinkSync = function(file, ...args) {
     if (!pending && path.basename(String(file)) === "preparation.json") { pending = file; throw Object.assign(new Error("Synthetic post-link interruption"), { code: "EIO" }); }
@@ -292,13 +295,13 @@ test("reviewer publication regression: exact interrupted pending link recovers w
   assert.equal(fs.existsSync(pending), false);
   const repeated = await f.host.prepareLocalBoundedWorker(f.input, { root: f.root });
   assert.equal(repeated.authorizationId, recovered.authorizationId);
-  assert.deepEqual(fs.readFileSync(path.join(f.root, ".head/sessions/current.json")), before);
+  assert.deepEqual(fs.readFileSync(path.join(f.root, f.layout.directory, "sessions/current.json")), before);
   assert.equal(fs.existsSync(path.join(f.operational, "worker-jobs")), false);
 });
 
 test("read reselection recovers publication and revisiting an old selection links a new unconsumed successor", { skip }, async t => {
   const f = await fixture(t), options = { root: f.root, protocolFixtureBackend: f.backend };
-  const before = fs.readFileSync(path.join(f.root, ".head/sessions/current.json"));
+  const before = fs.readFileSync(path.join(f.root, f.layout.directory, "sessions/current.json"));
   const first = await f.host.prepareLocalBoundedWorker(f.input, options); f.prepared.push(first);
   fs.writeFileSync(path.join(f.root, "extra.txt"), "explicit auxiliary evidence\n");
   f.input = { ...f.input, sourcePaths: ["extra.txt", "selected.txt"] };
@@ -324,7 +327,7 @@ test("read reselection recovers publication and revisiting an old selection link
     await assert.rejects(leases.withRuntimeExecutionLease({ projectRoot: f.root, authorization, ownerFenceDigest: "f".repeat(64) },
       async () => assert.fail("Historical selection is not a reusable authority")), { code: "WORKER_MEMBER_AUTHORIZATION_CONFLICT" });
   }
-  assert.deepEqual(fs.readFileSync(path.join(f.root, ".head/sessions/current.json")), before);
+  assert.deepEqual(fs.readFileSync(path.join(f.root, f.layout.directory, "sessions/current.json")), before);
   assert.equal(fs.existsSync(path.join(f.operational, "worker-jobs")), false);
 });
 
@@ -378,7 +381,7 @@ test("public preparation recovers a proven dead unconsumed owner without changin
 test("publication recovery never removes an unknown hardlink", { skip }, async t => {
   const f = await fixture(t);
   const prepared = await f.host.prepareLocalBoundedWorker(f.input, { root: f.root, protocolFixtureBackend: f.backend }); f.prepared.push(prepared);
-  const projectId = JSON.parse(fs.readFileSync(path.join(f.root, ".head/project.json"))).projectId;
+  const projectId = JSON.parse(fs.readFileSync(path.join(f.root, f.layout.directory, "project.json"))).projectId;
   const directory = path.join(f.operational, "worker-preparations", projectId);
   const file = path.join(directory, fs.readdirSync(directory).find(name => name.endsWith(".json")));
   const unknown = path.join(f.home, "unknown-link.json"); fs.linkSync(file, unknown);
@@ -448,7 +451,7 @@ test("default shipped CLI and stdio MCP start prepared workers without injected 
     assert.equal(state.status, "completed"); assert.equal(state.result.actualProviderInvoked, false);
     assert.equal(state.workspacePatch.origin, "provider-patch-proposal");
     // An already launched job does not need the prepare-only cache to be read.
-    const projectId = JSON.parse(fs.readFileSync(path.join(f.root, ".head/project.json"))).projectId;
+    const projectId = JSON.parse(fs.readFileSync(path.join(f.root, f.layout.directory, "project.json"))).projectId;
     const prepDirectory = path.join(f.operational, "worker-preparations", projectId);
     for (const entry of fs.readdirSync(prepDirectory, { withFileTypes: true })) {
       if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
@@ -468,12 +471,12 @@ test("public preparation uses an existing Run without creating or widening its c
   const contract = createExecutionContract({ root: f.root, wholePlanId: plan.wholePlanId, capsuleId: capsule.capsuleId,
     scope: "Synthetic proposal", acceptanceCriteria: ["No worker writes"], allowedActions: ["runtime.invoke", "project.read"] }).artifact;
   const run = startRun({ root: f.root, executionContractId: contract.executionContractId }).run;
-  const sessionBefore = fs.readFileSync(path.join(f.root, ".head/sessions/current.json"));
+  const sessionBefore = fs.readFileSync(path.join(f.root, f.layout.directory, "sessions/current.json"));
   const prepared = await f.host.prepareLocalBoundedWorker(f.input, { root: f.root, protocolFixtureBackend: f.backend }); f.prepared.push(prepared);
-  const authorization = JSON.parse(fs.readFileSync(path.join(f.root, ".head/runtime/execution-authorizations", prepared.authorizationId + ".json")));
+  const authorization = JSON.parse(fs.readFileSync(path.join(f.root, f.layout.directory, "runtime/execution-authorizations", prepared.authorizationId + ".json")));
   assert.equal(authorization.scope.runId, run.runId); assert.equal(authorization.scope.executionContractId, contract.executionContractId);
   assert.equal(authorization.workspaceMode, "read-only"); assert.deepEqual(authorization.workerInput.executionBoundary.ownedPaths, []);
-  assert.deepEqual(fs.readFileSync(path.join(f.root, ".head/sessions/current.json")), sessionBefore);
+  assert.deepEqual(fs.readFileSync(path.join(f.root, f.layout.directory, "sessions/current.json")), sessionBefore);
 });
 
 async function twoRunMembers(t, secondKey = "second-member", fixtureOptions = {}, firstKey = "first-member") {
@@ -492,8 +495,8 @@ async function twoRunMembers(t, secondKey = "second-member", fixtureOptions = {}
       source_paths: [file], proposal_paths: [file],
     }), { workerPreparationBackend: f.backend })));
   }
-  f.pointers = () => [fs.readFileSync(path.join(f.root, ".head/sessions/current.json")),
-    fs.readFileSync(path.join(f.root, ".head/sessions/runs", run.runId, "run.json"))];
+  f.pointers = () => [fs.readFileSync(path.join(f.root, f.layout.directory, "sessions/current.json")),
+    fs.readFileSync(path.join(f.root, f.layout.directory, "sessions/runs", run.runId, "run.json"))];
   f.publicMcp = async (name, args = {}) => value(await frontDoor(path.join(f.installed, "scripts/mcp-server.mjs"), [], f.root,
     call(name, { project_root: f.root, ...args })));
   f.publicCli = args => frontDoor(path.join(f.installed, "scripts/head.mjs"), [args[0], f.root, ...args.slice(1), "--json"], f.root);
@@ -509,7 +512,7 @@ async function twoRunMembers(t, secondKey = "second-member", fixtureOptions = {}
 
 test("public fresh proposal turns really overlap with distinct identities and replay cannot exceed the two-worker limit", { skip }, async t => {
   const f = await twoRunMembers(t, "fixture-overlap-right", {}, "fixture-overlap-left"), before = f.pointers();
-  const projectId = JSON.parse(fs.readFileSync(path.join(f.root, ".head/project.json"))).projectId;
+  const projectId = JSON.parse(fs.readFileSync(path.join(f.root, f.layout.directory, "project.json"))).projectId;
   const spools = f.prepared.map(member => path.join(f.operational, "runtime-output", projectId, member.authorizationId, "stderr.bin"));
   const events = file => {
     if (!fs.existsSync(file)) return [];
@@ -529,7 +532,7 @@ test("public fresh proposal turns really overlap with distinct identities and re
     assert.notEqual(starts[0][0].pid, starts[1][0].pid);
     for (const list of starts) assert.doesNotThrow(() => process.kill(list[0].pid, 0));
     assert.notEqual(f.prepared[0].authorizationId, f.prepared[1].authorizationId);
-    const consumed = f.prepared.map(member => fs.readFileSync(path.join(f.root, ".head/runtime/execution-leases", member.authorizationId, "consumption.json")));
+    const consumed = f.prepared.map(member => fs.readFileSync(path.join(f.root, f.layout.directory, "runtime/execution-leases", member.authorizationId, "consumption.json")));
     assert.notDeepEqual(consumed[0], consumed[1]);
     // Repeated public calls while both provider turns are executing must not
     // start a third provider. Two is this test's approved launch budget, not an
@@ -560,7 +563,7 @@ test("public fresh proposal turns really overlap with distinct identities and re
     const frozen = spools.map(file => fs.readFileSync(file));
     for (const member of f.prepared) assert.equal((await f.publicMcp("head_bounded_worker_start", { task_key: member.taskKey })).status, "completed");
     assert.deepEqual(spools.map(file => fs.readFileSync(file)), frozen);
-    assert.deepEqual(f.prepared.map(member => fs.readFileSync(path.join(f.root, ".head/runtime/execution-leases", member.authorizationId, "consumption.json"))), consumed);
+    assert.deepEqual(f.prepared.map(member => fs.readFileSync(path.join(f.root, f.layout.directory, "runtime/execution-leases", member.authorizationId, "consumption.json"))), consumed);
     assert.deepEqual(f.pointers(), before);
     console.log(JSON.stringify({ event: "public-fresh-provider-turn-overlap", actualProviderInvoked: false, launchLimit: 2, peak,
       intervals: intervals.map(x => ({ ...x, start: x.start.toString(), end: x.end.toString() })), overlapNs: (earliestEnd - latestStart).toString() }));
@@ -594,7 +597,7 @@ test("public partial launch stays open and can be abandoned without success or P
   assert.equal((await f.publicMcp("head_bounded_worker_wave_abandon", abandonment)).status, "existing");
   assert.equal((await f.publicMcp("head_bounded_worker_wave_status", { wave_id })).projection.state, "abandoned");
   const leases = await f.importLocal("lib/runtime-execution-lease.mjs");
-  const authorization = JSON.parse(fs.readFileSync(path.join(f.root, ".head/runtime/execution-authorizations", f.prepared[1].authorizationId + ".json")));
+  const authorization = JSON.parse(fs.readFileSync(path.join(f.root, f.layout.directory, "runtime/execution-authorizations", f.prepared[1].authorizationId + ".json")));
   assert.equal(leases.inspectRuntimeExecutionLease({ projectRoot: f.root, projectId: authorization.projectId,
     authorizationId: authorization.authorizationId }).singleUseConsumed, false);
   assert.deepEqual(f.pointers(), before);
@@ -611,7 +614,7 @@ test("fresh public frontends restore HEAD direction and rediscover completed and
   const pending = await f.publicMcp("head_bounded_worker_job_status", { authorization_id });
   assert.equal(pending.ownerExitObserved, false);
   const leases = await f.importLocal("lib/runtime-execution-lease.mjs");
-  const authorization = JSON.parse(fs.readFileSync(path.join(f.root, ".head/runtime/execution-authorizations", authorization_id + ".json")));
+  const authorization = JSON.parse(fs.readFileSync(path.join(f.root, f.layout.directory, "runtime/execution-authorizations", authorization_id + ".json")));
   const lease = () => leases.inspectRuntimeExecutionLease({ projectRoot: f.root, projectId: authorization.projectId, authorizationId: authorization_id });
   assert.equal(lease().singleUseConsumed, true);
   for (const restored of [await f.publicCli(["session-restore"]), await f.publicMcp("head_session_restore")]) {
@@ -634,7 +637,7 @@ test("public consumed owner crash stays unknown without relaunch and preserves a
   await Promise.all(f.prepared.map(member => f.publicCli(["worker-start", "--task-key", member.taskKey])));
   assert.equal((await f.closed(f.prepared[0])).status, "completed");
   const held = f.prepared[1], authorization_id = held.authorizationId;
-  const authorization = JSON.parse(fs.readFileSync(path.join(f.root, ".head/runtime/execution-authorizations", authorization_id + ".json")));
+  const authorization = JSON.parse(fs.readFileSync(path.join(f.root, f.layout.directory, "runtime/execution-authorizations", authorization_id + ".json")));
   const directory = path.join(f.operational, "worker-jobs", authorization.projectId, authorization_id);
   const requestFile = path.join(directory, "request.json"), claimFile = path.join(directory, "claim.json");
   const claimBytes = fs.readFileSync(claimFile), claim = JSON.parse(claimBytes);
@@ -650,7 +653,7 @@ test("public consumed owner crash stays unknown without relaunch and preserves a
   const leases = await f.importLocal("lib/runtime-execution-lease.mjs");
   const lease = () => leases.inspectRuntimeExecutionLease({ projectRoot: f.root, projectId: authorization.projectId, authorizationId: authorization_id });
   assert.equal(lease().singleUseConsumed, true); assert.equal(fs.existsSync(path.join(directory, "terminal.json")), false);
-  const consumption = fs.readFileSync(path.join(f.root, ".head/runtime/execution-leases", authorization_id, "consumption.json"));
+  const consumption = fs.readFileSync(path.join(f.root, f.layout.directory, "runtime/execution-leases", authorization_id, "consumption.json"));
   const helper = process.env.HEAD_AGENT_TEST_OWNER_CRASH_FIXTURE;
   // A mismatched generation must not reach termination, even for this owned PID.
   const refused = await frontDoor("crash", [requestFile, "windows-filetime-0000000000000000"], f.root, null, process.env, helper);
@@ -696,7 +699,7 @@ test("public consumed owner crash stays unknown without relaunch and preserves a
   }
   assert.equal(fs.existsSync(path.join(directory, "terminal.json")), false);
   assert.deepEqual(fs.readFileSync(claimFile), claimBytes); assert.deepEqual(fs.readFileSync(spoolFile), stderrBefore);
-  assert.deepEqual(fs.readFileSync(path.join(f.root, ".head/runtime/execution-leases", authorization_id, "consumption.json")), consumption);
+  assert.deepEqual(fs.readFileSync(path.join(f.root, f.layout.directory, "runtime/execution-leases", authorization_id, "consumption.json")), consumption);
   assert.equal(lease().singleUseConsumed, true);
   assert.equal((await f.publicMcp("head_bounded_worker_job_status", { authorization_id: f.prepared[0].authorizationId })).status, "completed");
   assert.ok((await f.publicMcp("head_bounded_worker_job_patch", { authorization_id: f.prepared[0].authorizationId })).candidate);
@@ -708,7 +711,7 @@ test("public native owner crash after terminal publication preserves exact compl
     ? "Explicit test-only terminal-hold native build and exact-owner crash helper not supplied" : false,
 }, async t => {
   const f = await twoRunMembers(t, "second-member", { nativeFixtureRoot: process.env.HEAD_AGENT_TEST_TERMINAL_HOLD_FIXTURE_ROOT });
-  const before = f.pointers(), projectId = JSON.parse(fs.readFileSync(path.join(f.root, ".head/project.json"))).projectId;
+  const before = f.pointers(), projectId = JSON.parse(fs.readFileSync(path.join(f.root, f.layout.directory, "project.json"))).projectId;
   const directories = f.prepared.map(member => path.join(f.operational, "worker-jobs", projectId, member.authorizationId));
   const release = directory => {
     if (!fs.existsSync(directory)) return;
@@ -730,7 +733,7 @@ test("public native owner crash after terminal publication preserves exact compl
     assert.equal(terminal.reason, "exited"); assert.equal(terminal.completeOutput, true); assert.equal(terminal.exitCode, 0);
     const frozenFiles = ["request.json", "launch-intent.json", "launch.json", "claim.json", "terminal.json", "control.jsonl", "stdout.bin", "stderr.bin", "workspace-patch.json"]
       .map(name => path.join(directory, name));
-    frozenFiles.push(path.join(f.root, ".head/runtime/execution-leases", authorization_id, "consumption.json"));
+    frozenFiles.push(path.join(f.root, f.layout.directory, "runtime/execution-leases", authorization_id, "consumption.json"));
     const frozen = frozenFiles.map(file => fs.readFileSync(file));
     const helper = process.env.HEAD_AGENT_TEST_OWNER_CRASH_FIXTURE;
     assert.equal((await frontDoor("inspect", [requestFile, claim.ownerToken], f.root, null, process.env, helper)).status, "present");
@@ -808,10 +811,10 @@ test("public frontend loss after native terminal commit preserves exact result a
   assert.ok(frontend.response.status);
   await f.publicCli(["worker-start", "--task-key", "second-member"]);
   for (const member of f.prepared) assert.equal((await f.closed(member)).status, "completed");
-  const projectId = JSON.parse(fs.readFileSync(path.join(f.root, ".head/project.json"))).projectId;
+  const projectId = JSON.parse(fs.readFileSync(path.join(f.root, f.layout.directory, "project.json"))).projectId;
   const files = f.prepared.flatMap(member => [
     ...["claim.json", "terminal.json", "stdout.bin", "workspace-patch.json"].map(name => path.join(f.operational, "worker-jobs", projectId, member.authorizationId, name)),
-    path.join(f.root, ".head/runtime/execution-leases", member.authorizationId, "consumption.json"),
+    path.join(f.root, f.layout.directory, "runtime/execution-leases", member.authorizationId, "consumption.json"),
   ]);
   const frozen = files.map(file => fs.readFileSync(file));
   assert.equal(frontend.child.exitCode, null);
@@ -845,7 +848,7 @@ test("public integration reconciles interrupted receipt publication and preserve
   const integration_id = prepared.integration.integrationId;
   const originalLink = fs.linkSync; let interrupted = false;
   fs.linkSync = function(source, target, ...args) {
-    if (!interrupted && String(target).startsWith(path.join(f.root, ".head/runtime/worker-integrations"))
+    if (!interrupted && String(target).startsWith(path.join(f.root, f.layout.directory, "runtime/worker-integrations"))
       && /\.effect-0(?:\.[^.]+)*\.receipt\.json$/.test(String(target))) {
       interrupted = true; throw Object.assign(new Error("Synthetic public post-effect receipt interruption"), { code: "EIO" });
     }
@@ -950,14 +953,14 @@ test("public integration actual process crash after durable attempt stays unknow
     assert.equal(fs.readFileSync(path.join(f.root, paths[0]), "utf8"), "synthetic later user edit\n");
     assert.deepEqual(fs.readFileSync(path.join(f.root, paths[1])), originals[1]);
   }
-  const entries = fs.readdirSync(path.join(f.root, ".head/runtime/worker-integrations"));
+  const entries = fs.readdirSync(path.join(f.root, f.layout.directory, "runtime/worker-integrations"));
   assert.equal(entries.filter(name => name.endsWith(".started.json")).length, 1, "No second native effect or retry attempt");
   const status = await f.publicMcp("head_worker_integration_status", { integration_id: integrationId });
   const rejected = await f.mcp.dispatch(call("head_worker_integration", { project_root: f.root, action: "prepare-result", integration_id: integrationId,
     basis_digest: status.application.currentBasis.basisDigest, outcome: "Cannot finish an unproved effect",
     evidence: [{ check: "synthetic unknown" }], verification: [{ status: "unknown" }] }));
   assert.ok(rejected.error || rejected.result?.isError, "Unknown effect cannot be packaged as a completed whole result");
-  assert.equal(fs.existsSync(path.join(f.root, ".head/lineage/result-packets")), false);
+  assert.equal(fs.existsSync(path.join(f.root, f.layout.directory, "lineage/result-packets")), false);
   for (const member of f.prepared) assert.ok((await f.publicMcp("head_bounded_worker_job_patch", { authorization_id: member.authorizationId })).candidate);
   assert.deepEqual(f.pointers(), before);
 });
@@ -997,9 +1000,9 @@ test("public integration actual process crashes recover partial native effect an
   assert.equal(published.resultPacket.resultPacketId, packetId);
   const replay = await f.publicMcp("head_worker_integration", request);
   assert.equal(replay.status, "already-published"); assert.equal(replay.resultPacket.resultPacketId, packetId);
-  assert.equal(fs.readdirSync(path.join(f.root, ".head/lineage/result-packets")).length, 1);
-  assert.equal(fs.existsSync(path.join(f.root, ".head/lineage/review-decisions")), false);
-  assert.equal(fs.readdirSync(path.join(f.root, ".head/runtime/worker-integrations")).filter(name => name.endsWith(".started.json")).length, 2,
+  assert.equal(fs.readdirSync(path.join(f.root, f.layout.directory, "lineage/result-packets")).length, 1);
+  assert.equal(fs.existsSync(path.join(f.root, f.layout.directory, "lineage/review-decisions")), false);
+  assert.equal(fs.readdirSync(path.join(f.root, f.layout.directory, "runtime/worker-integrations")).filter(name => name.endsWith(".started.json")).length, 2,
     "One durable native attempt per member; result recovery never repeats effects");
   assert.equal(fs.readFileSync(path.join(f.root, paths[0]), "utf8"), "synthetic later user edit\n");
   assert.equal(fs.readFileSync(path.join(f.root, paths[1]), "utf8"), "synthetic edit after result freeze\n");
@@ -1010,7 +1013,7 @@ test("selected-only scope never silently inherits a nonempty Host instruction fi
   const f = await fixture(t);
   const instructions = "Synthetic Host instruction; not private data\n", events = [];
   fs.writeFileSync(path.join(f.home, "AGENTS.md"), instructions);
-  const pointers = [".head/project.json", ".head/sessions/current.json"].map(file => fs.readFileSync(path.join(f.root, file)));
+  const pointers = [`${f.layout.directory}/project.json`, `${f.layout.directory}/sessions/current.json`].map(file => fs.readFileSync(path.join(f.root, file)));
   const unavailable = await f.host.prepareLocalBoundedWorker(f.input, { root: f.root, protocolFixtureBackend: f.backend, onProcess: event => events.push(event) });
   assert.equal(unavailable.status, "unavailable_for_selected_scope");
   assert.equal(unavailable.code, "CODEX_FRESH_PROPOSAL_POLICY_CONFLICT");
@@ -1023,7 +1026,7 @@ test("selected-only scope never silently inherits a nonempty Host instruction fi
   assert.equal(JSON.stringify(unavailable).includes(instructions.trim()), false);
   assert.deepEqual(events, []);
   for (const name of ["execution-authorizations", "worker-dispatches"]) {
-    const directory = path.join(f.root, ".head/runtime", name);
+    const directory = path.join(f.root, f.layout.directory, "runtime", name);
     assert.deepEqual(fs.existsSync(directory) ? fs.readdirSync(directory) : [], []);
   }
   assert.equal(fs.existsSync(path.join(f.operational, "worker-jobs")), false);
@@ -1033,10 +1036,10 @@ test("selected-only scope never silently inherits a nonempty Host instruction fi
   f.prepared.push(prepared); assert.equal(prepared.instructionScope, "host-global"); assert.equal(prepared.modelCallAttempted, false);
   assert.equal(prepared.status, "prepared"); assert.match(prepared.authorizationId, /^execution-authorization-/);
   assert.equal(prepared.accountInspected, false); assert.equal(prepared.workersStarted, 0);
-  const dispatches = path.join(f.root, ".head/runtime/worker-dispatches");
+  const dispatches = path.join(f.root, f.layout.directory, "runtime/worker-dispatches");
   assert.deepEqual(fs.existsSync(dispatches) ? fs.readdirSync(dispatches) : [], []);
   assert.equal(fs.readFileSync(path.join(f.home, "AGENTS.md"), "utf8"), instructions);
-  assert.deepEqual([".head/project.json", ".head/sessions/current.json"].map(file => fs.readFileSync(path.join(f.root, file))), pointers);
+  assert.deepEqual([`${f.layout.directory}/project.json`, `${f.layout.directory}/sessions/current.json`].map(file => fs.readFileSync(path.join(f.root, file))), pointers);
 });
 
 test("default shipped CLI prepares fresh and native-prefix against stock Codex without a thread, account or model call", {

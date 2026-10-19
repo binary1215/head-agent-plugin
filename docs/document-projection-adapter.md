@@ -63,22 +63,22 @@ Every output document records its relative path, title, exact UTF-8 content, SHA
 The local adapter stores:
 
 ```text
-.head/document-projection/markdown/current.json
-.head/document-projection/markdown/snapshots/document-projection-<digest>.json
-.head/generated/knowledge/index.md
-.head/generated/knowledge/nodes/*.md
-.head/generated/knowledge/relations/*.md
+.lode/document-projection/markdown/current.json
+.lode/document-projection/markdown/snapshots/document-projection-<digest>.json
+.lode/generated/knowledge/index.md
+.lode/generated/knowledge/nodes/*.md
+.lode/generated/knowledge/relations/*.md
 ```
 
-The snapshot and pointer are verification artifacts. `.head/generated/knowledge/` is the replaceable human working view. The pointer advances only after the immutable projection and every published document verify successfully.
+The snapshot and pointer are verification artifacts. `.lode/generated/knowledge/` is the replaceable human working view. The pointer advances only after the immutable projection and every published document verify successfully.
 
 ## Explicit and policy-driven generation
 
 Markdown generation remains explicitly available:
 
 ```text
-node scripts/head.mjs world-docs-build <project>
-node scripts/head.mjs world-docs-status <project>
+node scripts/lode.mjs world-docs-build <project>
+node scripts/lode.mjs world-docs-status <project>
 ```
 
 `world-docs-build` requires a current, digest-verified World Model. `world-docs-status` separately reports World Model freshness, GraphSnapshot binding, immutable projection verification, and published-view drift. Important states are:
@@ -99,11 +99,11 @@ The effective post-refresh policy defaults to `manual`. An explicit user-selecte
 When the published Markdown differs from its immutable base, regeneration fails with `DOCUMENT_PROJECTION_UNREVIEWED_DRIFT`. The user can explicitly capture the differences:
 
 ```text
-node scripts/head.mjs world-docs-capture <project>
-node scripts/head.mjs world-docs-candidates <project> --candidate-set <document-change-candidate-set-id>
+node scripts/lode.mjs world-docs-capture <project>
+node scripts/lode.mjs world-docs-candidates <project> --candidate-set <document-change-candidate-set-id>
 ```
 
-Capture creates an immutable, content-derived `DocumentChangeCandidateSet` under `.head/document-changes/candidate-sets/`. Each added, modified, or removed path records the exact base/proposed content and digests, source projection, GraphSnapshot, and false instruction/promotion flags. Capture itself does not change Product Canon, the graph, source code, or an execution artifact. A separate scoped ReviewDecision can reject the set or accept it only alongside a complete explicit Product Model; see [`document-change-review.md`](document-change-review.md). Typed MCP may explicitly build the deterministic Markdown projection through `head_markdown_projection_build`, and read-only MCP tools inspect projection, candidate, review, and application status. MCP still cannot capture inbound edits, review document-change candidates, or apply a document decision.
+Capture creates an immutable, content-derived `DocumentChangeCandidateSet` under `.lode/document-changes/candidate-sets/`. Each added, modified, or removed path records the exact base/proposed content and digests, source projection, GraphSnapshot, and false instruction/promotion flags. Capture itself does not change Product Canon, the graph, source code, or an execution artifact. A separate scoped ReviewDecision can reject the set or accept it only alongside a complete explicit Product Model; see [`document-change-review.md`](document-change-review.md). Typed MCP may explicitly build the deterministic Markdown projection through `lode_markdown_projection_build`, and read-only MCP tools inspect projection, candidate, review, and application status. MCP still cannot capture inbound edits, review document-change candidates, or apply a document decision.
 
 ## Conformance and deferred work
 
@@ -117,3 +117,15 @@ The following remain deferred:
 - treating generated pages as Context Compiler input.
 
 Future adapters must preserve this renderer's semantic identities or declare a separately versioned format/renderer contract. Provider page IDs, vault roots, timestamps, and transport diagnostics cannot enter core projection identity.
+
+## Path bases and existing Projects
+
+Project-internal references use validated Project-root-relative `/` paths. Generated
+Markdown `relativePath` starts at the published root; each href starts at its
+containing document. A `../` document link does not permit `..` in a durable selector.
+
+Runtime `project_root`, stored `projectRoot`, installation `pluginRoot` and root-derived
+identities remain bound to the verified absolute root and actual Session owner. New
+Projects use `.lode/`; existing `.head/` records and exact selectors stay unchanged.
+These are existing path contracts, not workspace relocation or automatic repair.
+

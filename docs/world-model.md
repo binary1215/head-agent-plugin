@@ -20,8 +20,8 @@ The interface methods are `describe`, `readPointer`, `readSnapshot`, `writePoint
 The active dependency-free local JSON adapter stores:
 
 ```text
-.head/world-model/current.json                    Warm pointer and change summary
-.head/world-model/snapshots/world-model-*.json   Hot current / Cold prior snapshots
+.lode/world-model/current.json                    Warm pointer and change summary
+.lode/world-model/snapshots/world-model-*.json   Hot current / Cold prior snapshots
 ```
 
 `current.json` points to the Hot snapshot, records the physical adapter descriptor, and records added, changed, and removed paths as the Warm tier. Previous content-addressed snapshots form the Cold tier. The physical adapter descriptor is not part of the semantic snapshot hash, so the same canonical inputs produce the same World Model ID through a conforming local, memory, or future GraphDB adapter.
@@ -31,57 +31,57 @@ GraphDB is not required and no remote database is queried or mutated. Graph trav
 ## Commands
 
 ```text
-node scripts/head.mjs world-index <project>
-node scripts/head.mjs source-scope-set <project> --input <source-scope.json>
-node scripts/head.mjs source-scope-status <project>
-node scripts/head.mjs world-index <project> --git-log <host-exported-log-file>
-node scripts/head.mjs world-index <project> --runtime-state <host-exported-json-file>
-node scripts/head.mjs world-index <project> --parent-snapshot <source-snapshot-id,source-snapshot-id>
-node scripts/head.mjs world-index <project> --revision-parents <logical-entity-to-parent-revisions.json>
-node scripts/head.mjs world-refresh <project>
-node scripts/head.mjs world-refresh <project> --expect-changed <path,path>
-node scripts/head.mjs world-refresh-status <project>
-node scripts/head.mjs world-refresh-read <project> --receipt <incremental-refresh-receipt-id>
-node scripts/head.mjs world-refresh-events <project> --input <refresh-events.json>
-node scripts/head.mjs world-refresh-watch <project> --debounce-ms 350 --max-events 1024
-node scripts/head.mjs world-refresh-trigger-status <project>
-node scripts/head.mjs world-refresh-trigger-read <project> --delivery <refresh-trigger-delivery-id>
-node scripts/head.mjs world-status <project>
-node scripts/head.mjs world-graph-status <project>
-node scripts/head.mjs world-docs-build <project>
-node scripts/head.mjs world-docs-status <project>
-node scripts/head.mjs world-docs-capture <project>
-node scripts/head.mjs world-docs-candidates <project> --candidate-set <document-change-candidate-set-id>
-node scripts/head.mjs world-docs-policy-set <project> --input <policy.json>
-node scripts/head.mjs world-docs-policy-status <project>
-node scripts/head.mjs world-docs-refresh-status <project>
-node scripts/head.mjs world-docs-refresh-read <project> --receipt <post-refresh-projection-receipt-id>
-node scripts/head.mjs world-query <project> --query <symbol-or-path> --depth 1 --limit 100
-node scripts/head.mjs world-temporal <project> --query <path-or-symbol> --relations HAS_REVISION,CURRENT_REVISION,DECLARES --depth 2 --limit 100 --edge-limit 200
-node scripts/head.mjs world-temporal <project> --query <candidate-id> --include-candidates true --depth 1 --limit 100 --edge-limit 200
-node scripts/head.mjs world-history <project> --query <decision-terms> --limit 20
-node scripts/head.mjs world-runtime <project> --runtime codex --state active --kind session --limit 20
-node scripts/head.mjs change-set-status <project>
+node scripts/lode.mjs world-index <project>
+node scripts/lode.mjs source-scope-set <project> --input <source-scope.json>
+node scripts/lode.mjs source-scope-status <project>
+node scripts/lode.mjs world-index <project> --git-log <host-exported-log-file>
+node scripts/lode.mjs world-index <project> --runtime-state <host-exported-json-file>
+node scripts/lode.mjs world-index <project> --parent-snapshot <source-snapshot-id,source-snapshot-id>
+node scripts/lode.mjs world-index <project> --revision-parents <logical-entity-to-parent-revisions.json>
+node scripts/lode.mjs world-refresh <project>
+node scripts/lode.mjs world-refresh <project> --expect-changed <path,path>
+node scripts/lode.mjs world-refresh-status <project>
+node scripts/lode.mjs world-refresh-read <project> --receipt <incremental-refresh-receipt-id>
+node scripts/lode.mjs world-refresh-events <project> --input <refresh-events.json>
+node scripts/lode.mjs world-refresh-watch <project> --debounce-ms 350 --max-events 1024
+node scripts/lode.mjs world-refresh-trigger-status <project>
+node scripts/lode.mjs world-refresh-trigger-read <project> --delivery <refresh-trigger-delivery-id>
+node scripts/lode.mjs world-status <project>
+node scripts/lode.mjs world-graph-status <project>
+node scripts/lode.mjs world-docs-build <project>
+node scripts/lode.mjs world-docs-status <project>
+node scripts/lode.mjs world-docs-capture <project>
+node scripts/lode.mjs world-docs-candidates <project> --candidate-set <document-change-candidate-set-id>
+node scripts/lode.mjs world-docs-policy-set <project> --input <policy.json>
+node scripts/lode.mjs world-docs-policy-status <project>
+node scripts/lode.mjs world-docs-refresh-status <project>
+node scripts/lode.mjs world-docs-refresh-read <project> --receipt <post-refresh-projection-receipt-id>
+node scripts/lode.mjs world-query <project> --query <symbol-or-path> --depth 1 --limit 100
+node scripts/lode.mjs world-temporal <project> --query <path-or-symbol> --relations HAS_REVISION,CURRENT_REVISION,DECLARES --depth 2 --limit 100 --edge-limit 200
+node scripts/lode.mjs world-temporal <project> --query <candidate-id> --include-candidates true --depth 1 --limit 100 --edge-limit 200
+node scripts/lode.mjs world-history <project> --query <decision-terms> --limit 20
+node scripts/lode.mjs world-runtime <project> --runtime codex --state active --kind session --limit 20
+node scripts/lode.mjs change-set-status <project>
 ```
 
-`world-index` invokes the validated `repository.scan.v1` operation and materializes a deterministic snapshot. Repeating it without repository changes returns the same World Model ID. The optional `.head/context/repository-source-scope.json` selection supplies normalized include/exclude roots, remains evidence-only, and participates in scan and World Model identity. `world-status` first performs complete eligible-file discovery and byte hashing. When path, digest, byte length, classification, language, and scope match the verified snapshot, it reuses stored semantic analysis and does not rebuild the temporal graph merely to prove freshness; a changed inventory falls back to the complete reference scan before reporting exact stale details.
+`world-index` invokes the validated `repository.scan.v1` operation and materializes a deterministic snapshot. Repeating it without repository changes returns the same World Model ID. The optional `.lode/context/repository-source-scope.json` selection supplies normalized include/exclude roots, remains evidence-only, and participates in scan and World Model identity. `world-status` first performs complete eligible-file discovery and byte hashing. When path, digest, byte length, classification, language, and scope match the verified snapshot, it reuses stored semantic analysis and does not rebuild the temporal graph merely to prove freshness; a changed inventory falls back to the complete reference scan before reporting exact stale details.
 
 `world-refresh` is the explicit incremental path after a verified base index. It still rediscovers and raw-byte-hashes every eligible file, but reuses symbol/dependency/semantic analysis for a file only when its path, digest, byte length, classification, language, and analysis protocol match the verified prior snapshot. The resulting `RepositoryScanResult` remains identical to a complete reference scan. No-change refresh keeps the current snapshot identity; a changed refresh automatically links the prior SourceSnapshot, reuses unchanged revision identities, parents changed revisions to their prior revisions, verifies graph materialization, and records immutable request/receipt evidence. An exact `--expect-changed` set fails before pointer advancement when observed paths differ. See [`incremental-refresh.md`](incremental-refresh.md).
 
 `world-refresh-events` ingests one strict CI batch; `world-refresh-watch` is the only filesystem CLI adapter and runs recursively in the foreground until `SIGINT` or `SIGTERM`. Both use a bounded deterministic debounce/coalescing contract and a project-scoped exclusive writer lease. Event paths do not limit the scan and may disagree with the actual changed files; complete discovery and hashing remain authoritative for observed implementation. Read-only trigger status and delivery inspection verify the linked incremental request/receipt without starting a watcher. See [`refresh-trigger.md`](refresh-trigger.md).
 
-Repository file changes, product Git refs, semantic HEAD lifecycle state, and indexer protocol versions all participate in the source digest. Product Git refs are exactly local branches, remote-tracking refs, and tags. Host-operational refs such as `refs/codex/turn-diffs/**` are excluded whether loose or packed; they are P5 conversation bookkeeping rather than product evidence. The currently checked-out HEAD remains observed even when it points at an excluded namespace because checkout state changes working-tree semantics. Volatile timestamps, ref-storage layout, and physical store identity are excluded.
+Repository file changes, product Git refs, semantic Lode lifecycle state, and indexer protocol versions all participate in the source digest. Product Git refs are exactly local branches, remote-tracking refs, and tags. Host-operational refs such as `refs/codex/turn-diffs/**` are excluded whether loose or packed; they are P5 conversation bookkeeping rather than product evidence. The currently checked-out Lode remains observed even when it points at an excluded namespace because checkout state changes working-tree semantics. Volatile timestamps, ref-storage layout, and physical store identity are excluded.
 
-The read-only MCP tool `head_world_model` performs the same complete snapshot digest, structure, and repository-freshness verification as `world-status`, but returns only a bounded `WorldModelStatusProjection`. The projection contains identities, digests, numeric counts, at most 20 paths per change class, non-active file samples, explicit omitted counts, and the omitted full snapshot's compact serialized byte length. It never returns the complete `snapshot`, physical snapshot paths, or unbounded freshness arrays. Its projection is capped at 512 KiB and the duplicated JSON-RPC text/structured MCP envelope is capped at 4 MiB; these are transport limits, not reduced verification or indexing limits. Use `head_world_query`, `head_temporal_graph`, `head_git_history`, or `head_runtime_state` for bounded detail, and the local `world-status` CLI only when a complete snapshot is operationally required.
+The read-only MCP tool `lode_world_model` performs the same complete snapshot digest, structure, and repository-freshness verification as `world-status`, but returns only a bounded `WorldModelStatusProjection`. The projection contains identities, digests, numeric counts, at most 20 paths per change class, non-active file samples, explicit omitted counts, and the omitted full snapshot's compact serialized byte length. It never returns the complete `snapshot`, physical snapshot paths, or unbounded freshness arrays. Its projection is capped at 512 KiB and the duplicated JSON-RPC text/structured MCP envelope is capped at 4 MiB; these are transport limits, not reduced verification or indexing limits. Use `lode_world_query`, `lode_temporal_graph`, `lode_git_history`, or `lode_runtime_state` for bounded detail, and the local `world-status` CLI only when a complete snapshot is operationally required.
 
-`head_context_preview` discloses current, missing or stale-excluded World in its
+`lode_context_preview` discloses current, missing or stale-excluded World in its
 non-persisted `ContextWorkflowProjection`. It provides source-linked selections,
 omissions and uncertainty without fixed tiers or an inclusion-proof gate.
-Missing World does not prevent direct current-source context. HEAD decides whether
+Missing World does not prevent direct current-source context. Lode decides whether
 expansion or refresh is useful; preview cannot mutate World, grant approval,
 select meaning or write recovery direction.
 
-`head_graph_projection_status` exposes graph-projection verification. `head_incremental_refresh_status` and `head_incremental_refresh_receipt` expose refresh freshness, ancestry, changes, and active-execution drift without mutation authority. `head_refresh_trigger_status` and `head_refresh_trigger_delivery` verify event batches, serialized delivery, and linked refresh evidence but cannot ingest events or start a watcher. `head_post_refresh_projection_status` and `head_post_refresh_projection_receipt` verify the effective policy and exact document outcome without changing either. `head_world_query` returns a bounded zero-to-three-hop heuristic semantic neighborhood. `head_temporal_graph` returns a deterministic allowlisted temporal traversal with graph/query/result digests through the current projection adapter, or a disclosed embedded-graph fallback when no projection exists. `head_git_history` performs a bounded query over verified current Git evidence. `head_runtime_state` performs a bounded query over verified point-in-time runtime observations. All semantic queries reject a stale index.
+`lode_graph_projection_status` exposes graph-projection verification. `lode_incremental_refresh_status` and `lode_incremental_refresh_receipt` expose refresh freshness, ancestry, changes, and active-execution drift without mutation authority. `lode_refresh_trigger_status` and `lode_refresh_trigger_delivery` verify event batches, serialized delivery, and linked refresh evidence but cannot ingest events or start a watcher. `lode_post_refresh_projection_status` and `lode_post_refresh_projection_receipt` verify the effective policy and exact document outcome without changing either. `lode_world_query` returns a bounded zero-to-three-hop heuristic semantic neighborhood. `lode_temporal_graph` returns a deterministic allowlisted temporal traversal with graph/query/result digests through the current projection adapter, or a disclosed embedded-graph fallback when no projection exists. `lode_git_history` performs a bounded query over verified current Git evidence. `lode_runtime_state` performs a bounded query over verified point-in-time runtime observations. All semantic queries reject a stale index.
 
 ## Temporal provenance graph
 
@@ -95,13 +95,13 @@ The temporal graph never reads live Git state. A project without `.git` construc
 
 `GitHistoryAdapter` version `0.2.0` is a provider-neutral, derived-evidence-only boundary. A conforming adapter must declare `rebuildable: true` and `uniqueAuthority: false`; its physical identity is excluded from the content-derived Git history ID and World Model ID. Version `0.1.0` adapters remain readable for upgrade continuity, but normalization, Host-ref filtering, and every newly emitted GitDecisionHistory use the current `0.2.0` contract.
 
-The default `git-cli` adapter asynchronously reads commits reachable from the exact current branch, remote-tracking, tag, and HEAD roots supplied by the World Model. It records commit and parent identities, authored/committed timestamps, a digest of author email, product refs, subject, body, and `git:<sha>` evidence provenance. The CLI and byte-preserving parser both exclude `refs/codex/turn-diffs/**`, including decorations on otherwise product-reachable commits. Current local branches, remote refs, and tags are independently read from `.git` and used to validate and prune the adapter result to the exact parent-reachable set. Their semantic target changes therefore make the World Model stale even when files have not changed; packing, comments, order, or Host-only refs do not.
+The default `git-cli` adapter asynchronously reads commits reachable from the exact current branch, remote-tracking, tag, and Lode roots supplied by the World Model. It records commit and parent identities, authored/committed timestamps, a digest of author email, product refs, subject, body, and `git:<sha>` evidence provenance. The CLI and byte-preserving parser both exclude `refs/codex/turn-diffs/**`, including decorations on otherwise product-reachable commits. Current local branches, remote refs, and tags are independently read from `.git` and used to validate and prune the adapter result to the exact parent-reachable set. Their semantic target changes therefore make the World Model stale even when files have not changed; packing, comments, order, or Host-only refs do not.
 
 Some constrained hosts forbid a Node process from launching Git. This is an adapter-level fail-open condition: indexing continues with `gitHistory: none` and a stable reason code. A host can instead produce a byte-preserving log file with this exact command and provide it explicitly:
 
 ```text
 git -C <project> --no-pager log HEAD --branches --remotes --tags --topo-order --date-order --no-show-signature --decorate=full --decorate-refs-exclude=refs/codex/turn-diffs/** --format=%H%x00%P%x00%aI%x00%cI%x00%an%x00%ae%x00%D%x00%B%x00
-node scripts/head.mjs world-index <project> --git-log <host-exported-log-file>
+node scripts/lode.mjs world-index <project> --git-log <host-exported-log-file>
 ```
 
 The log file adapter rejects missing files, symlinks, non-files, and oversized inputs. The core still validates the exported commits against current refs. Commit messages are historical decision evidence only: every record has `instructionAuthority: false` and `evidence-not-instruction`; the index never turns a message into an authorized project `Decision`.
@@ -141,12 +141,12 @@ The adapter descriptor and physical source path live only in the World Model poi
 - content-addressed all-reachable Git commit-message evidence through replaceable CLI and host-export adapters;
 - create-only `BranchStateObservation`, `DeploymentResultObservation`, and `ReleaseObservation` P3 evidence with `AT_REVISION`, `OBSERVED_ON`, `EVIDENCED_BY`, and optional `DEPLOYS` P4 relations;
 - content-addressed point-in-time external runtime observations through a replaceable read-only host-export adapter;
-- semantic HEAD lifecycle state including current plan, active Run/contract, pending review, and required plan action;
+- semantic Lode lifecycle state including current plan, active Run/contract, pending review, and required plan action;
 - added, changed, and removed path calculation;
 - file-level freshness;
-- Context Compiler candidates containing path, digest, classification, language, symbols, dependencies, pre-indexed structural adjacency, bounded ProductContext projections, and separate HEAD-exact `GraphTraversalEvidence` bound to current Project/World/Graph identities. The Compiler no longer selects a temporal anchor from lexical task overlap.
+- Context Compiler candidates containing path, digest, classification, language, symbols, dependencies, pre-indexed structural adjacency, bounded ProductContext projections, and separate Lode-exact `GraphTraversalEvidence` bound to current Project/World/Graph identities. The Compiler no longer selects a temporal anchor from lexical task overlap.
 
-Managed root projections and these directories are excluded: `.head`, `.git`, VCS metadata, dependency/vendor directories, generated build outputs, caches (including uv and pytest caches), virtual environments, coverage outputs. Other tool-generated evidence is excluded through the existing source scope, for example `excludeRoots: [".generated-evidence"]`; unlisted dot directories such as `.github` remain eligible. Symlinks and unsupported/binary or oversized files are skipped and counted. A user-selected source scope may additionally include or exclude normalized project-relative roots without changing Product Canon.
+Managed root projections and these directories are excluded: `.lode`, `.git`, VCS metadata, dependency/vendor directories, generated build outputs, caches (including uv and pytest caches), virtual environments, coverage outputs. Other tool-generated evidence is excluded through the existing source scope, for example `excludeRoots: [".generated-evidence"]`; unlisted dot directories such as `.github` remain eligible. Symlinks and unsupported/binary or oversized files are skipped and counted. A user-selected source scope may additionally include or exclude normalized project-relative roots without changing Product Canon.
 
 ## Context Compiler behavior
 

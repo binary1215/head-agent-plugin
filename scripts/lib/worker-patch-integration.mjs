@@ -1,7 +1,14 @@
+import { formatForVerifiedOwner, familyFormatForOriginal } from "./project-storage-format.mjs";
+const sessionIdOf = record => {
+  const format = familyFormatForOriginal({ sessionIdentity: true }, record);
+  return format ? record?.[format.sessionIdField] : undefined;
+};
+const originalFormat = record => familyFormatForOriginal({ kind: record?.kind }, record);
+const lineageFormat = record => familyFormatForOriginal({ sessionIdentity: true }, record);
 import fs from "node:fs";
 import path from "node:path";
 import { artifactAuthorityBoundary, verifyArtifactAuthorityBoundary } from "./authority-plane-contract.mjs";
-import { inspectProject } from "./head-core.mjs";
+import { inspectProject } from "./lode-core.mjs";
 import { readContextCapsule } from "./context-compiler.mjs";
 import { readLineageArtifact } from "./execution-lineage.mjs";
 import { readBoundedWorkerDispatch } from "./bounded-worker-dispatch.mjs";
@@ -29,18 +36,18 @@ const membershipPrefix = authorizationIds => `worker-integration-${digest(json([
 function binding(authorization) {
   if (authorization.scope.kind !== "run") fail("Combined worker integration belongs to an exact durable Run.");
   return { projectId: authorization.projectId, projectRootDigest: authorization.projectRootDigest,
-    headSessionId: authorization.headSessionId, runId: authorization.scope.runId,
+    [originalFormat(authorization).sessionIdField]: sessionIdOf(authorization), runId: authorization.scope.runId,
     wholePlanId: authorization.scope.wholePlanId, executionContractId: authorization.scope.executionContractId,
     contextCapsuleId: authorization.scope.contextCapsuleId };
 }
-function integrationFile(root, integrationId, create = false) {
+function integrationFile(root, integrationId, create = false, storage) {
   if (!/^worker-integration-[a-f0-9]{24}--[a-f0-9]{24}$/.test(integrationId || "")) fail("Invalid worker integration identity.");
-  return path.join(workerIntegrationDirectory(root, create), `${integrationId}.json`);
+  return path.join(workerIntegrationDirectory(root, create, storage), `${integrationId}.json`);
 }
 function recordMember(root, authorizationId, candidate) {
   const { dispatch, authorization } = readBoundedWorkerDispatch({ root, authorizationId });
-  const record = readRuntimeInvocationRecord({ root, authorizationId });
-  verifyWorkerPatchCandidate(candidate);
+  const record = readRuntimeInvocationRecord({ root, authorizationId, storage: originalFormat(authorization) });
+  verifyWorkerPatchCandidate(candidate, originalFormat(authorization));
   const writeBound = authorization.protocolVersion === "0.6.0" && authorization.workerInput?.writeBasis
     && same(candidate.basis, authorization.workerInput.writeBasis)
     && authorization.requiredAllowedActions.includes("project.write");
@@ -82,7 +89,9 @@ export function verifyWorkerPatchIntegrationIntent(intent) {
   if (intent.kind !== "WorkerPatchIntegrationIntent" || intent.protocolVersion !== "0.1.0"
     || !same(Object.fromEntries(Object.keys(flags).map(key => [key, intent[key]])), flags)
     || !same(identity(payload), intent)) fail("Worker integration identity or authority differs.");
-  fields(intent.lineage, ["projectId", "projectRootDigest", "headSessionId", "runId", "wholePlanId", "executionContractId", "contextCapsuleId"]);
+  const format = lineageFormat(intent.lineage);
+  if (!format) fail("Invalid worker integration fields.");
+  fields(intent.lineage, ["projectId", "projectRootDigest", format.sessionIdField, "runId", "wholePlanId", "executionContractId", "contextCapsuleId"]);
   const seen = new Set();
   for (const [index, member] of intent.members.entries()) {
     fields(member, ["authorizationId", "authorizationHash", "inputDigest", "memberKey", "dispatchId", "dispatchHash", "lifecycleReceiptId", "draftId", "executionLeaseConsumptionId", "executionLeaseReleaseId", "actualProviderInvoked", "candidate"]);
@@ -90,7 +99,7 @@ export function verifyWorkerPatchIntegrationIntent(intent) {
       || index && intent.members[index - 1].authorizationId >= member.authorizationId
       || typeof member.actualProviderInvoked !== "boolean" || seen.has(member.memberKey)) fail("Duplicate, unordered, or invalid integration member.");
     seen.add(member.memberKey);
-    verifyWorkerPatchCandidate(member.candidate);
+    verifyWorkerPatchCandidate(member.candidate, lineageFormat(intent.lineage));
   }
   const composition = composeWorkerPatchCandidates({ candidates: intent.members.map(member => member.candidate), maxBytes: Number.MAX_SAFE_INTEGER });
   if (composition.status !== "compatible-file-effects" || !same(composition, intent.composition)) fail("Combined patch conflicts or differs from member provenance.");
@@ -117,33 +126,37 @@ function verifyStoredReferences(root, intent) {
 // Historical P3 reading needs no live Host paths, current sources, same Session
 // or provider connection. Existing readers still verify the selected Session
 // record; this is not a damaged/missing-Session bypass. No read writes a checkpoint.
-export function readWorkerPatchIntegration({ root = ".", integrationId } = {}) {
-  const intent = verifyWorkerPatchIntegrationIntent(JSON.parse(readIntegrationBytes(integrationFile(root, integrationId))));
+export function readWorkerPatchIntegration({ root = ".", integrationId, storage } = {}) {
+  const intent = verifyWorkerPatchIntegrationIntent(JSON.parse(readIntegrationBytes(integrationFile(root, integrationId, false, storage))));
   if (intent.integrationId !== integrationId) fail("Worker integration filename differs.");
   verifyStoredReferences(root, intent);
   return { status: "verified", intent, applied: false, semanticVerification: "not-assessed", ...flags };
 }
 
-export function requireCurrentWorkerPatchIntegration({ root = ".", integrationId } = {}) {
-  const { intent } = readWorkerPatchIntegration({ root, integrationId });
+export function requireCurrentWorkerPatchIntegration({ root = ".", integrationId, storage } = {}) {
+  const { intent } = readWorkerPatchIntegration({ root, integrationId, storage });
   for (const { authorization } of verifyStoredReferences(root, intent)) verifyRuntimeInvocationCurrentLineage({ root, authorization });
   return intent;
+}
+
+export function validateWorkerPatchIntegrationPrepareInput({ authorizationIds, maxBytes } = {}) {
+  if (!Array.isArray(authorizationIds) || !authorizationIds.length || new Set(authorizationIds).size !== authorizationIds.length
+    || authorizationIds.some(id => !/^execution-authorization-[a-f0-9]{24}$/.test(id || ""))
+    || !Number.isSafeInteger(maxBytes) || maxBytes < 0) fail("Integration requires distinct worker identities and a finite byte bound.");
 }
 
 // Explicit HEAD preparation is the only point where Host-frozen patches become
 // durable combined P3 evidence. It does not reserve paths, apply files, mark the
 // task sufficient, complete a Run, or author recovery direction.
-export function prepareWorkerPatchIntegration({ root = ".", authorizationIds, maxBytes } = {}, inspection = {}) {
-  if (!Array.isArray(authorizationIds) || !authorizationIds.length || new Set(authorizationIds).size !== authorizationIds.length
-    || authorizationIds.some(id => !/^execution-authorization-[a-f0-9]{24}$/.test(id || ""))
-    || !Number.isSafeInteger(maxBytes) || maxBytes < 0) fail("Integration requires distinct worker identities and a finite byte bound.");
+export function prepareWorkerPatchIntegration({ root = ".", authorizationIds, maxBytes, storage } = {}, inspection = {}) {
+  validateWorkerPatchIntegrationPrepareInput({ authorizationIds, maxBytes });
   return withProjectMutation({ root, scope: "session-recovery" }, () => {
     // Resolve already-published exact membership before touching P5. Cache
     // retirement cannot force another collection or execution. This is an
     // on-demand local evidence lookup, not a new persisted alias/index artifact.
     const orderedIds = [...authorizationIds].sort();
     let directory = null;
-    try { directory = workerIntegrationDirectory(root); }
+    try { directory = workerIntegrationDirectory(root, false, storage); }
     catch (error) { if (error.code !== "ENOENT") throw error; }
     const matches = [];
     for (const name of directory ? fs.readdirSync(directory) : []) {
@@ -153,7 +166,7 @@ export function prepareWorkerPatchIntegration({ root = ".", authorizationIds, ma
     }
     if (matches.length > 1) fail("Exact worker membership has divergent integration evidence.");
     if (matches.length) {
-      const intent = requireCurrentWorkerPatchIntegration({ root, integrationId: matches[0] });
+      const intent = requireCurrentWorkerPatchIntegration({ root, integrationId: matches[0], storage });
       if (intent.composition.bytes > maxBytes) fail("Stored integration exceeds the requested content byte budget.");
       return { status: "existing", intent, persisted: true, applied: false, semanticVerification: "not-assessed", ...flags };
     }
@@ -173,8 +186,8 @@ export function prepareWorkerPatchIntegration({ root = ".", authorizationIds, ma
     const intent = verifyWorkerPatchIntegrationIntent(identity({ kind: "WorkerPatchIntegrationIntent", protocolVersion: "0.1.0",
       authorityBoundary: artifactAuthorityBoundary("WorkerPatchIntegrationIntent"), lineage,
       members: records.map(record => record.member), composition, ...flags }));
-    const file = integrationFile(root, intent.integrationId, true);
-    if (fs.existsSync(file)) return { ...readWorkerPatchIntegration({ root, integrationId: intent.integrationId }), status: "existing", persisted: true };
+    const file = integrationFile(root, intent.integrationId, true, lineageFormat(intent.lineage));
+    if (fs.existsSync(file)) return { ...readWorkerPatchIntegration({ root, integrationId: intent.integrationId, storage: lineageFormat(intent.lineage) }), status: "existing", persisted: true };
     // Initial capture is current. Later application must instead revalidate
     // dependencies and exact native journal state, not demand old preimages.
     for (const { authorization } of records) prepareRuntimeInvocationExecution({ root, authorization });

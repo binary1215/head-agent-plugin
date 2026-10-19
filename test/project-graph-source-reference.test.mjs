@@ -3,12 +3,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { initializeProject } from "../scripts/lib/head-core.mjs";
-import { createHeadSession, withSessionRoute, sessionStatePath } from "../scripts/lib/session-routing.mjs";
+import { initializeProject } from "../scripts/lib/lode-core.mjs";
+import { createLodeSession, withSessionRoute, sessionStatePath } from "../scripts/lib/session-routing.mjs";
 import { recordSessionWorkEvidence, readSessionWorkContext } from "../scripts/lib/session-work-context.mjs";
+import { verifySessionWorkEvidenceOwner } from "../scripts/lib/session-work-evidence-original.mjs";
 import { queryProjectGraph, indexProjectGraph } from "../scripts/lib/project-graph.mjs";
-import { PROJECT_GRAPH_INDEX_PATH } from "../scripts/lib/discovery-index.mjs";
-import { runCommand } from "../scripts/head.mjs";
+import { withProjectMutation } from "../scripts/lib/project-mutation-lock.mjs";
+import { runCommand } from "../scripts/lode.mjs";
 import { dispatch } from "../scripts/mcp-server.mjs";
 import { formatCliResult } from "../scripts/lib/cli-presentation.mjs";
 import { sha, encoded, exact, link, citation } from "./helpers/session-work-linkage-fixture.mjs";
@@ -45,20 +46,23 @@ function assertHistoricalPresentation(text, result, node) {
 }
 
 function fixture(t) {
-  const temporaryRoot = process.env.HEAD_AGENT_TEST_TMP || os.tmpdir();
+  const temporaryRoot = process.env.LODE_AGENT_TEST_TMP || process.env.HEAD_AGENT_TEST_TMP || os.tmpdir();
   fs.mkdirSync(temporaryRoot, { recursive: true });
   const parent = fs.realpathSync(temporaryRoot);
   const base = fs.realpathSync(fs.mkdtempSync(path.join(parent, "head-source-reference-")));
   const root = path.join(base, "project"); fs.mkdirSync(root);
-  initializeProject({ root, pluginRoot, runtimes: ["codex"] });
-  const session = createHeadSession({ root, purpose: "Local historical source-reference investigation; no external effects" });
+  const initialized = initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  assert.equal(initialized.storage.projectRoot, fs.realpathSync(root));
+  assert.equal(initialized.storage.projectId, initialized.project.projectId);
+  const managementRoot = path.join(root, initialized.storage.directory);
+  const session = createLodeSession({ root, purpose: "Local historical source-reference investigation; no external effects" });
   t.after(() => {
     assert.equal(path.dirname(base), parent);
     assert.ok(path.basename(base).startsWith("head-source-reference-"));
     assert.equal(fs.realpathSync(base), base);
     fs.rmSync(base, { recursive: true, force: true });
   });
-  return { base, root, session,
+  return { base, root, managementRoot, projectId: initialized.project.projectId, storage: initialized.storage, session,
     save(input, sessionId = session.sessionId) {
       return withSessionRoute(root, sessionId, () => recordSessionWorkEvidence({ root, input }));
     },
@@ -82,18 +86,19 @@ const request = (f, options = {}) => ({ root: f.root, view: "work", paths: [sour
 // Include symlink metadata without following a synthetic escape target. This
 // snapshot is the query-write invariant, not an atomic filesystem observation.
 function snapshot(base) {
-  const result = {};
+  const rootStat = fs.lstatSync(base);
+  const result = { "": { directory: true, mode: rootStat.mode, mtimeMs: rootStat.mtimeMs } };
   function walk(directory) {
     for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
       const file = path.join(directory, entry.name), stat = fs.lstatSync(file), key = path.relative(base, file);
       if (stat.isSymbolicLink()) result[key] = { link: fs.readlinkSync(file), mode: stat.mode, mtimeMs: stat.mtimeMs };
-      else if (stat.isDirectory()) { result[key] = { directory: true, mode: stat.mode }; walk(file); }
+      else if (stat.isDirectory()) { result[key] = { directory: true, mode: stat.mode, mtimeMs: stat.mtimeMs }; walk(file); }
       else result[key] = { digest: sha(fs.readFileSync(file)), bytes: stat.size, mode: stat.mode, mtimeMs: stat.mtimeMs };
     }
   }
   walk(base); return result;
 }
-async function withoutWrites(action) {
+function withoutWrites(action) {
   const restore = [], attempts = [];
   const rejected = name => { attempts.push(name); throw new Error("Graph read attempted " + name); };
   const block = (object, name, asynchronous = false) => {
@@ -114,8 +119,15 @@ async function withoutWrites(action) {
   for (const name of ["writeFileSync", "appendFileSync", "writeSync", "mkdirSync", "renameSync", "unlinkSync", "rmSync", "rmdirSync", "truncateSync", "ftruncateSync", "chmodSync", "fchmodSync", "utimesSync", "linkSync", "symlinkSync", "createWriteStream",
     "writeFile", "appendFile", "write", "mkdir", "rename", "unlink", "rm", "rmdir", "truncate", "ftruncate", "chmod", "fchmod", "utimes", "link", "symlink"]) block(fs, name);
   for (const name of ["writeFile", "appendFile", "mkdir", "rename", "unlink", "rm", "rmdir", "truncate", "chmod", "utimes", "link", "symlink"]) block(fs.promises, name, true);
-  try { return await action(); }
-  finally { for (const undo of restore.reverse()) undo(); assert.deepEqual(attempts, [], "Caught writes must not be hidden by a successful fallback"); }
+  const finish = () => {
+    for (const undo of restore.reverse()) undo();
+    assert.deepEqual(attempts, [], "Caught writes must not be hidden by a successful fallback");
+  };
+  let result;
+  try { result = action(); }
+  catch (error) { finish(); throw error; }
+  if (result && typeof result.then === "function") return Promise.resolve(result).finally(finish);
+  finish(); return result;
 }
 async function readOnly(f, options) {
   const before = snapshot(f.base), result = await withoutWrites(() => queryProjectGraph(options));
@@ -213,7 +225,7 @@ for (const code of ["EACCES", "EPERM", "EIO", null]) test(`C1 injected ${code ||
 });
 
 test("C1 artifact-only references never acquire source-name eligibility; dual and mixed references use per-ref OR", async t => {
-  const f = fixture(t), projectId = JSON.parse(fs.readFileSync(path.join(f.root, ".head/project.json"))).projectId;
+  const f = fixture(t), projectId = f.projectId;
   const source = target(f, sourcePath, JSON.stringify({ projectId, label: "Same physical bytes" }));
   const artifact = { ...source.reference, kind: "artifact" }, only = saveReason(f, [artifact], { summary: "Artifact-only judgment" });
   const dual = saveReason(f, [artifact, source.reference], { summary: "Two explicitly different kinds" });
@@ -270,7 +282,7 @@ for (const mode of ["digest", "content", "foreign-record-owner", "lexical-refere
 
 test("C1 invalid named owner does not adopt another Session's source association or block independent work", async t => {
   const f = fixture(t), source = target(f), bad = saveReason(f, [source.reference]);
-  const other = createHeadSession({ root: f.root, purpose: "Another independent source investigation" });
+  const other = createLodeSession({ root: f.root, purpose: "Another independent source investigation" });
   const good = f.save({ summary: `${needle} for another owner`, references: [source.reference] }, other.sessionId);
   const ownerFile = withSessionRoute(f.root, f.session.sessionId, () => sessionStatePath(f.root));
   const owner = JSON.parse(fs.readFileSync(ownerFile)); owner.projectId = "head-" + "0".repeat(20); fs.writeFileSync(ownerFile, JSON.stringify(owner));
@@ -281,7 +293,7 @@ test("C1 invalid named owner does not adopt another Session's source association
 
 test("C1 lexical source paths remain writer errors before any original is admitted", t => {
   const f = fixture(t), digest = sha("not saved"), before = snapshot(f.base);
-  for (const name of ["../outside.txt", "src/../outside.txt", "./src/file.txt", "C:/outside.txt", "/outside.txt"]) {
+  for (const name of ["../outside.txt", "src/../outside.txt", "./src/file.txt", "C:/outside.txt", "/outside.txt", "C:outside.txt", "\\\\server\\share\\outside.txt", "src//file.txt", "src/./file.txt", "src\\..\\outside.txt"]) {
     assert.throws(() => f.save({ summary: "Invalid reference", references: [{ path: name, digest, kind: "source" }] }), { code: "SESSION_WORK_REFERENCE_ESCAPE" });
   }
   assert.deepEqual(snapshot(f.base), before, "Lexical rejection precedes any original/index publication");
@@ -289,7 +301,7 @@ test("C1 lexical source paths remain writer errors before any original is admitt
 
 test("C1 same source in different tasks and Sessions remains distinct; explicit citation keeps actual target owner", async t => {
   const f = fixture(t), source = target(f), first = saveReason(f, [source.reference]);
-  const other = createHeadSession({ root: f.root, purpose: "Different task, same logical file" });
+  const other = createLodeSession({ root: f.root, purpose: "Different task, same logical file" });
   const second = f.save({ summary: `${needle} independent task`, references: [source.reference] }, other.sessionId);
   const citing = saveReason(f, [source.reference, citation(f, second)], { summary: "Explicit cross-Session citation, not shared lineage", workLink: link(first) });
   const initial = await readOnly(f, request(f));
@@ -321,7 +333,7 @@ test("C1 source-name eligibility does not add that name to query-only search tex
 });
 
 for (const mode of ["old", "absent", "partial"]) test(`C1 ${mode} index preserves source-original discovery without read-time repair or World activation`, async t => {
-  const f = fixture(t), source = target(f), saved = saveReason(f, [source.reference]), file = path.join(f.root, PROJECT_GRAPH_INDEX_PATH);
+  const f = fixture(t), source = target(f), saved = saveReason(f, [source.reference]), file = path.join(f.managementRoot, "graph-discovery/index.json");
   if (mode === "absent") fs.unlinkSync(file);
   else {
     const index = JSON.parse(fs.readFileSync(file));
@@ -331,7 +343,7 @@ for (const mode of ["old", "absent", "partial"]) test(`C1 ${mode} index preserve
   }
   const result = await readOnly(f, request(f)); original(result, f, saved);
   assert.notEqual(result.reuse.status, "scoped-originals-reused");
-  assert.equal(fs.existsSync(path.join(f.root, ".head/world-model/current.json")), false);
+  assert.equal(fs.existsSync(path.join(f.managementRoot, "world-model/current.json")), false);
 });
 
 test("C1 actual returned detail anchors retain currentness through warm reads, reference mutation and restoration", async t => {
@@ -360,6 +372,8 @@ test("C1 Core, runCommand CLI and direct/read-router MCP preserve historical bod
     const cliNode = original(cli, f, saved);
     assert.deepEqual(cliNode.referenceEvidence, expected.referenceEvidence);
     assertHistoricalPresentation(formatCliResult("graph-query", cli), cli, cliNode);
+    // These exact old names deliberately retain the existing legacy alias input
+    // coverage; the new exact-expansion case below uses the canonical vocabulary.
     for (const routed of [false, true]) {
       const args = { project_root: f.root, paths: [sourcePath], query: needle, view: "work", depth: 0 };
       const response = await dispatch({ jsonrpc: "2.0", id: "source-reference-consumer", method: "tools/call", params: {
@@ -393,4 +407,74 @@ test("C1 private predicate is source-backed pure association, separate from lexi
   assert.doesNotMatch(text, /referenceEvidence|matchesExplicitPaths/u);
   const ranking = source.slice(source.indexOf("function rankedMatches("), source.indexOf("function viewTraversal("));
   assert.match(ranking, /nodePaths\(entry\.node\)\.some/u, "Existing exact-path score still uses original node paths");
+});
+
+test("Lode exact path expansion retains its actual Project and Session from another cwd", { concurrency: false }, async t => {
+  const f = fixture(t), other = fixture(t), source = target(f), otherSource = target(other);
+  const saved = saveReason(f, [source.reference]), otherSaved = saveReason(other, [otherSource.reference]);
+  assert.notEqual(f.projectId, other.projectId);
+  assert.notEqual(saved.evidence.evidenceId, otherSaved.evidence.evidenceId);
+  const found = original(await readOnly(f, request(f)), f, saved);
+  const expansion = found.originalExpansion;
+  assert.equal(expansion.tool, "lode_session_work_read");
+  assert.equal(expansion.arguments.project_root, fs.realpathSync(f.root));
+  assert.equal(expansion.arguments.session_id, f.session.sessionId);
+  assert.deepEqual(expansion.arguments.evidence_ids, [saved.evidence.evidenceId]);
+  const before = snapshot(f.base), otherBefore = snapshot(other.base), previousCwd = process.cwd();
+  try {
+    process.chdir(other.root);
+    await withoutWrites(async () => {
+      const detail = original(await queryProjectGraph({ root: expansion.arguments.project_root, ...found.detail }), f, saved);
+      assert.deepEqual(detail.workContent, found.workContent);
+      const response = await dispatch({ jsonrpc: "2.0", id: "lode-other-cwd-expansion", method: "tools/call", params: {
+        name: expansion.tool, arguments: expansion.arguments,
+      } }, { resolveSessionContext() { throw new Error("Exact owner expansion must not require native binding"); } });
+      assert.equal(response.error, undefined, JSON.stringify(response));
+      assert.notEqual(response.result?.isError, true, JSON.stringify(response));
+      const records = response.result.structuredContent.records;
+      assert.equal(records.length, 1);
+      assert.equal(records[0].projectId, f.projectId);
+      assert.equal(records[0].sessionId, f.session.sessionId);
+      assert.equal(records[0].evidenceId, saved.evidence.evidenceId);
+      assert.equal(records[0].evidenceDigest, saved.evidence.evidenceDigest);
+      assert.deepEqual(records[0].content, saved.evidence.content);
+    });
+  } finally { process.chdir(previousCwd); }
+  assert.deepEqual(snapshot(f.base), before);
+  assert.deepEqual(snapshot(other.base), otherBefore);
+});
+
+test("Lode path compatibility preserves literal legacy absolute owner bytes instead of using cwd", { concurrency: false }, async t => {
+  const f = fixture(t), previousCwd = process.cwd();
+  // A manually authored legacy-schema object, not a rebranded fresh Project and
+  // not evidence that a beta43 producer or an installed Host was executed.
+  const project = { schemaVersion: 1, projectId: `head-${sha(f.root).slice(0, 20)}`, projectRoot: f.root };
+  const state = { schemaVersion: 1, projectId: project.projectId, sessionId: f.session.sessionId };
+  const projectBytes = Buffer.from(JSON.stringify(project)), stateBytes = Buffer.from(JSON.stringify(state));
+  const beforeProject = Buffer.from(projectBytes), beforeState = Buffer.from(stateBytes), before = snapshot(f.base);
+  try {
+    process.chdir(f.base);
+    await withoutWrites(() => {
+      const owner = verifySessionWorkEvidenceOwner({ root: f.root, projectBytes, stateBytes });
+      assert.equal(owner.root, f.root); assert.equal(owner.projectId, project.projectId);
+      assert.equal(owner.sessionId, state.sessionId);
+      assert.throws(() => verifySessionWorkEvidenceOwner({ root: f.base, projectBytes, stateBytes }), { code: "HEAD_SESSION_IDENTITY_MISMATCH" });
+    });
+  } finally { process.chdir(previousCwd); }
+  assert.deepEqual(projectBytes, beforeProject); assert.deepEqual(stateBytes, beforeState);
+  assert.deepEqual(snapshot(f.base), before);
+});
+
+test("Lode source writer normalizes Windows separators on exact original retry under an existing writer lock", t => {
+  const f = fixture(t), source = target(f), saved = saveReason(f, [source.reference]);
+  withProjectMutation({ root: f.root, scope: "session-recovery" }, () => {
+    const before = snapshot(f.base);
+    const repeated = withoutWrites(() => saveReason(f, [{ ...source.reference, path: source.reference.path.replaceAll("/", "\\") }]));
+    assert.equal(repeated.evidence.evidenceId, saved.evidence.evidenceId);
+    assert.equal(repeated.evidence.evidenceDigest, saved.evidence.evidenceDigest);
+    assert.deepEqual(repeated.evidence.content.references, [source.reference]);
+    assert.deepEqual(snapshot(f.base), before);
+  });
+  t.diagnostic("This is exact original-record retry under an existing writer lock; public lock acquisition/release retains its P5 filesystem effects");
+  t.diagnostic("Lexical separator/drive coverage is not a claim about another platform or a physical junction race");
 });

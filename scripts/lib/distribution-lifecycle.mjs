@@ -4,6 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { verifyNativeBundleOverlay, verifyNativeOverlay } from "./native-artifact-delivery.mjs";
+import { ARTIFACT_COMPOSITION, artifactCompositionForIdentity } from "./lode-artifact-composition.mjs";
+import { resolveOperation } from "./lode-operation-contract.mjs";
 
 const DISTRIBUTION_PROTOCOL = "0.1.0";
 const INCLUDE_ENTRIES = [
@@ -13,6 +15,7 @@ const INCLUDE_ENTRIES = [
   "README.md",
   "README.ko.md",
   "assets",
+  "compat",
   "docs",
   "hooks",
   "native",
@@ -30,6 +33,7 @@ function developmentOnlyFiles() {
     `docs/${developmentGoal}`,
     `docs/${validationProject}-onboarding-review-proposal.md`,
     "docs/HEAD-Agent_GraphDB_Brief_v4.md",
+    "docs/Lode_GraphDB_Brief_v4.md",
   ]);
 }
 
@@ -161,6 +165,10 @@ function validateSource(sourceRoot) {
   }
   const plugin = readJson(manifestFile, "HEAD_DISTRIBUTION_MANIFEST_INVALID");
   const pkg = readJson(packageFile, "HEAD_DISTRIBUTION_PACKAGE_INVALID");
+  const composition = compositionForMetadata(plugin.name, pkg.name);
+  if (composition.identity === "lode" && !fs.existsSync(path.join(sourceRoot, "scripts", "lode.mjs"))) {
+    fail("HEAD_DISTRIBUTION_SOURCE_INVALID", "Canonical source must contain scripts/lode.mjs and the historical forwarding entrypoint.");
+  }
   if (!plugin.version || plugin.version !== pkg.version) {
     fail("HEAD_DISTRIBUTION_VERSION_MISMATCH", "Plugin and package versions must match.");
   }
@@ -178,6 +186,76 @@ function validateSource(sourceRoot) {
     }
   }
   return { plugin, pkg };
+}
+
+function compositionForMetadata(pluginName, packageName) {
+  for (const identity of ["lode", "head"]) {
+    const composition = artifactCompositionForIdentity(identity);
+    if (pluginName === composition.pluginName && packageName === composition.packageName) return composition;
+  }
+  fail("HEAD_DISTRIBUTION_SOURCE_INVALID", "Plugin and package must use one exact supported artifact identity.");
+}
+
+// This is build staging only. The installed implementation reads one fixed literal;
+// neither launcher spelling nor Project layout chooses its advertised vocabulary.
+function stageArtifactComposition(stageRoot, identity) {
+  const target = artifactCompositionForIdentity(identity);
+  const pluginFile = path.join(stageRoot, ".codex-plugin", "plugin.json");
+  const packageFile = path.join(stageRoot, "package.json");
+  const plugin = readJson(pluginFile, "HEAD_DISTRIBUTION_MANIFEST_INVALID");
+  const pkg = readJson(packageFile, "HEAD_DISTRIBUTION_PACKAGE_INVALID");
+  const source = compositionForMetadata(plugin.name, pkg.name);
+  const compositionFile = path.join(stageRoot, "scripts", "lib", "lode-artifact-composition.mjs");
+  const literal = `const ARTIFACT_IDENTITY = ${JSON.stringify(source.identity)};`;
+  const compositionText = fs.readFileSync(compositionFile, "utf8");
+  if (compositionText.split(literal).length !== 2) {
+    fail("HEAD_DISTRIBUTION_SOURCE_INVALID", "Artifact composition must contain its one fixed build-owned identity literal.");
+  }
+  if (source.identity === target.identity) return;
+  if (source.identity !== "lode" || target.identity !== "head") {
+    fail("HEAD_DISTRIBUTION_SOURCE_INVALID", "Only canonical source can generate the legacy identity carrier.");
+  }
+  fs.writeFileSync(compositionFile, compositionText.replace(literal, `const ARTIFACT_IDENTITY = ${JSON.stringify(target.identity)};`));
+  plugin.name = target.pluginName;
+  pkg.name = target.packageName;
+  for (const [name, command] of Object.entries(pkg.scripts || {})) {
+    if (typeof command === "string") pkg.scripts[name] = command.replaceAll("scripts/lode.mjs", "scripts/head.mjs");
+  }
+  atomicWriteJson(pluginFile, plugin);
+  atomicWriteJson(packageFile, pkg);
+  const mcpFile = path.join(stageRoot, ".mcp.json");
+  const mcp = readJson(mcpFile, "HEAD_DISTRIBUTION_MANIFEST_INVALID");
+  if (Object.keys(mcp.mcpServers || {}).length !== 1 || !mcp.mcpServers[source.serverName]) {
+    fail("HEAD_DISTRIBUTION_SOURCE_INVALID", "Source MCP metadata must advertise exactly its fixed artifact server.");
+  }
+  mcp.mcpServers = { [target.serverName]: mcp.mcpServers[source.serverName] };
+  atomicWriteJson(mcpFile, mcp);
+  const replaceVocabulary = (text) => text
+    .replaceAll(`mcp__plugin_${source.pluginName}_${source.serverName}__`, `mcp__plugin_${target.pluginName}_${target.serverName}__`)
+    .replaceAll(`plugin:${source.pluginName}:${source.serverName}`, `plugin:${target.pluginName}:${target.serverName}`)
+    .replaceAll(`mcp__${source.serverName}__`, `mcp__${target.serverName}__`)
+    .replaceAll(source.serverName, target.serverName)
+    .replace(/\blode_[a-z][a-z0-9_]*/g, (token) => resolveOperation(token)?.legacyName || token)
+    .replaceAll("scripts/lode.mjs", "scripts/head.mjs");
+  for (const name of ["claude.json", "codex.json"]) {
+    const file = path.join(stageRoot, "hooks", name);
+    if (fs.existsSync(file)) fs.writeFileSync(file, replaceVocabulary(fs.readFileSync(file, "utf8")));
+  }
+  for (const role of ["core", "onboarding", "conversation"]) {
+    const from = path.join(stageRoot, "skills", source.skills[role]);
+    const to = path.join(stageRoot, "skills", target.skills[role]);
+    if (fs.existsSync(to)) fail("HEAD_DISTRIBUTION_SOURCE_INVALID", "Carrier staging cannot contain both Skill vocabularies.");
+    fs.renameSync(from, to);
+  }
+  for (const role of ["core", "onboarding", "conversation"]) {
+    const directory = path.join("skills", target.skills[role]);
+    for (const relative of walkRegularFiles(stageRoot, directory)) {
+      if (!RUNTIME_TEXT_EXTENSIONS.has(path.extname(relative).toLowerCase())) continue;
+      let text = replaceVocabulary(fs.readFileSync(path.join(stageRoot, relative), "utf8"));
+      for (const skillRole of ["core", "onboarding", "conversation"]) text = text.replaceAll(source.skills[skillRole], target.skills[skillRole]);
+      fs.writeFileSync(path.join(stageRoot, relative), text);
+    }
+  }
 }
 
 function buildManifest(sourceRoot, options = {}) {
@@ -279,10 +357,44 @@ function verifyRelease(releaseRoot, expectedReleaseId = null) {
     const bytes = fs.readFileSync(absolute);
     if (bytes.byteLength !== file.bytes || sha256(bytes) !== file.sha256) fail("HEAD_DISTRIBUTION_FILE_DRIFT", `Release file failed integrity verification: ${file.path}`);
   }
+  const plugin = readJson(path.join(releaseRoot, ".codex-plugin", "plugin.json"), "HEAD_DISTRIBUTION_RELEASE_INVALID");
+  const pkg = readJson(path.join(releaseRoot, "package.json"), "HEAD_DISTRIBUTION_RELEASE_INVALID");
+  if (manifest.name !== plugin.name || manifest.packageName !== pkg.name || manifest.version !== plugin.version || manifest.version !== pkg.version) {
+    fail("HEAD_DISTRIBUTION_RELEASE_INVALID", "Verified release metadata does not match its manifest.");
+  }
+  const composition = compositionForMetadata(plugin.name, pkg.name);
+  const descriptorEntry = manifest.files.find((file) => file.path === "scripts/lib/lode-artifact-composition.mjs");
+  if (descriptorEntry) {
+    const descriptor = fs.readFileSync(path.join(releaseRoot, ...descriptorEntry.path.split("/")), "utf8");
+    const literals = descriptor.match(/const ARTIFACT_IDENTITY = "(?:lode|head)";/g) || [];
+    if (literals.length !== 1 || literals[0] !== `const ARTIFACT_IDENTITY = ${JSON.stringify(composition.identity)};`) {
+      fail("HEAD_DISTRIBUTION_RELEASE_INVALID", "Verified artifact composition and package identities disagree.");
+    }
+    const mcp = readJson(path.join(releaseRoot, ".mcp.json"), "HEAD_DISTRIBUTION_RELEASE_INVALID");
+    const skills = fs.readdirSync(path.join(releaseRoot, "skills")).sort();
+    if (Object.keys(mcp.mcpServers || {}).length !== 1 || !mcp.mcpServers[composition.serverName]
+      || canonical(skills) !== canonical(Object.values(composition.skills).sort())) {
+      fail("HEAD_DISTRIBUTION_RELEASE_INVALID", "Verified artifact must advertise one matching MCP server and Skill vocabulary.");
+    }
+  } else if (composition.identity !== "head") {
+    fail("HEAD_DISTRIBUTION_RELEASE_INVALID", "Canonical release is missing its verified composition descriptor.");
+  }
+  verifiedCliEntry(manifest);
   return manifest;
 }
 
-export function stageDistributionRelease({ sourceRoot, destinationRoot, includeNativeDist = false, nativeOverlayRoot = null } = {}) {
+function verifiedCliEntry(manifest) {
+  if (manifest.files.some((file) => file.path === "scripts/lode.mjs")) return "scripts/lode.mjs";
+  if (manifest.files.some((file) => file.path === "scripts/head.mjs")) return "scripts/head.mjs";
+  fail("HEAD_DISTRIBUTION_RELEASE_INVALID", "Verified release has no supported CLI entry.");
+}
+
+function existingPath(file) {
+  try { fs.lstatSync(file); return true; }
+  catch (error) { if (error.code === "ENOENT") return false; throw error; }
+}
+
+export function stageDistributionRelease({ sourceRoot, destinationRoot, includeNativeDist = false, nativeOverlayRoot = null, artifactIdentity = ARTIFACT_COMPOSITION.identity } = {}) {
   if (!sourceRoot || !destinationRoot) {
     fail("HEAD_DISTRIBUTION_STAGE_ARGUMENTS", "Source and destination roots are required.");
   }
@@ -305,9 +417,10 @@ export function stageDistributionRelease({ sourceRoot, destinationRoot, includeN
   try {
     const sourceManifest = buildManifest(source, { includeNativeDist });
     copyManifestFiles(source, temporary, sourceManifest);
+    stageArtifactComposition(temporary, artifactIdentity);
     if (nativeOverlayRoot) copyVerifiedNativeBundleOverlay(nativeOverlayRoot, temporary, sourceManifest.version);
-    const manifest = nativeOverlayRoot ? buildManifest(temporary, { includeNativeDist: true }) : sourceManifest;
-    if (nativeOverlayRoot) atomicWriteJson(path.join(temporary, "distribution-manifest.json"), manifest);
+    const manifest = buildManifest(temporary, { includeNativeDist: includeNativeDist || Boolean(nativeOverlayRoot) });
+    atomicWriteJson(path.join(temporary, "distribution-manifest.json"), manifest);
     verifyRelease(temporary, manifest.releaseId);
     fs.renameSync(temporary, destination);
     return manifest;
@@ -322,15 +435,35 @@ export function verifyDistributionRelease({ releaseRoot, expectedReleaseId = nul
   return verifyRelease(path.resolve(releaseRoot), expectedReleaseId);
 }
 
+function explicitDirectoryAlias(canonicalName, legacyName) {
+  const canonicalValue = process.env[canonicalName];
+  const legacyValue = process.env[legacyName];
+  const resolved = (value) => {
+    const absolute = path.resolve(value);
+    return existingPath(absolute) ? fs.realpathSync(absolute) : absolute;
+  };
+  if (canonicalValue && legacyValue && resolved(canonicalValue) !== resolved(legacyValue)) {
+    fail("HEAD_DISTRIBUTION_INSTALL_ROOT_CONFLICT", `${canonicalName} and ${legacyName} must identify the same installation domain.`);
+  }
+  return canonicalValue || legacyValue ? resolved(canonicalValue || legacyValue) : null;
+}
+
 function defaultInstallRoot() {
-  const base = process.env.HEAD_AGENT_INSTALL_ROOT;
-  if (base) return path.resolve(base);
-  if (process.platform === "win32") return path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local"), "head-agent-core");
-  return path.join(process.env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share"), "head-agent-core");
+  const explicit = explicitDirectoryAlias("LODE_AGENT_INSTALL_ROOT", "HEAD_AGENT_INSTALL_ROOT");
+  if (explicit) return explicit;
+  const base = process.platform === "win32"
+    ? process.env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local")
+    : process.env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share");
+  const legacy = path.join(base, "head-agent-core");
+  const canonicalRoot = path.join(base, "lode-agent-core");
+  const present = [legacy, canonicalRoot].filter((root) => existingPath(root));
+  for (const root of present) verifyInstallRootOwnership(root);
+  if (present.length > 1) fail("HEAD_DISTRIBUTION_INSTALL_ROOT_CONFLICT", "Both default installation roots are owned; select the existing installation explicitly.");
+  return present[0] || canonicalRoot;
 }
 
 function defaultBinDirectory() {
-  return path.resolve(process.env.HEAD_AGENT_BIN_DIR || path.join(os.homedir(), ".local", "bin"));
+  return explicitDirectoryAlias("LODE_AGENT_BIN_DIR", "HEAD_AGENT_BIN_DIR") || path.join(os.homedir(), ".local", "bin");
 }
 
 function resolveLocations(options = {}) {
@@ -359,17 +492,17 @@ function claimInstallRoot(installRoot) {
   ensureDirectory(installRoot);
   if (fs.existsSync(markerFile)) {
     const marker = readJson(markerFile, "HEAD_DISTRIBUTION_OWNERSHIP_INVALID");
-    if (marker.product !== "head-agent-core" || marker.protocolVersion !== DISTRIBUTION_PROTOCOL) {
+    if (!["head-agent-core", "lode-agent-core"].includes(marker.product) || marker.protocolVersion !== DISTRIBUTION_PROTOCOL) {
       fail("HEAD_DISTRIBUTION_OWNERSHIP_INVALID", "Installation root ownership marker is invalid.");
     }
   } else {
-    atomicWriteJson(markerFile, { product: "head-agent-core", protocolVersion: DISTRIBUTION_PROTOCOL });
+    atomicWriteJson(markerFile, { product: "lode-agent-core", protocolVersion: DISTRIBUTION_PROTOCOL });
   }
 }
 
 function verifyInstallRootOwnership(installRoot) {
   const marker = readJson(ownershipFile(installRoot), "HEAD_DISTRIBUTION_OWNERSHIP_INVALID");
-  if (marker.product !== "head-agent-core" || marker.protocolVersion !== DISTRIBUTION_PROTOCOL) {
+  if (!["head-agent-core", "lode-agent-core"].includes(marker.product) || marker.protocolVersion !== DISTRIBUTION_PROTOCOL) {
     fail("HEAD_DISTRIBUTION_OWNERSHIP_INVALID", "Installation root is not owned by this HEAD Agent distribution protocol.");
   }
 }
@@ -398,25 +531,60 @@ function releaseRoot(installRoot, releaseId) {
 
 function launcherSource(installRoot) {
   const encodedRoot = Buffer.from(installRoot, "utf8").toString("base64");
-  return `#!/usr/bin/env node\nimport fs from "node:fs";\nimport path from "node:path";\nimport { spawnSync } from "node:child_process";\nconst root = Buffer.from("${encodedRoot}", "base64").toString("utf8");\nconst pointer = JSON.parse(fs.readFileSync(path.join(root, "current.json"), "utf8"));\nif (!/^release-[a-f0-9]{24}$/.test(pointer.activeReleaseId)) throw new Error("Invalid active HEAD Agent release pointer.");\nconst cli = path.join(root, "releases", pointer.activeReleaseId, "scripts", "head.mjs");\nconst child = spawnSync(process.execPath, [cli, ...process.argv.slice(2)], { stdio: "inherit", shell: false });\nif (child.error) throw child.error;\nprocess.exitCode = child.status == null ? 1 : child.status;\n`;
+  // Embed the trusted verifier; never import code from an unverified release to
+  // decide which entrypoint to execute. Both command names share this pointer.
+  return [
+    '#!/usr/bin/env node',
+    'import crypto from "node:crypto";',
+    'import fs from "node:fs";',
+    'import path from "node:path";',
+    'import { spawnSync } from "node:child_process";',
+    `const root = Buffer.from("${encodedRoot}", "base64").toString("utf8");`,
+    `const DISTRIBUTION_PROTOCOL = ${JSON.stringify(DISTRIBUTION_PROTOCOL)};`,
+    fail.toString(), canonical.toString(), sha256.toString(), readJson.toString(),
+    `const compositions = ${JSON.stringify(["lode", "head"].map((identity) => artifactCompositionForIdentity(identity)))};`,
+    'function artifactCompositionForIdentity(identity) { const value = compositions.find(item => item.identity === identity); if (!value) throw new Error("Unknown package artifact composition."); return value; }',
+    compositionForMetadata.toString(),
+    ownershipFile.toString(), verifyInstallRootOwnership.toString(),
+    pointerFile.toString(), readPointer.toString(), releaseRoot.toString(),
+    verifiedCliEntry.toString(), verifyRelease.toString(),
+    'verifyInstallRootOwnership(root);',
+    'const pointer = readPointer(root);',
+    'const target = releaseRoot(root, pointer.activeReleaseId);',
+    'const manifest = verifyRelease(target, pointer.activeReleaseId);',
+    'const cli = path.join(target, ...verifiedCliEntry(manifest).split("/"));',
+    'const child = spawnSync(process.execPath, [cli, ...process.argv.slice(2)], { stdio: "inherit", shell: false, windowsHide: true });',
+    'if (child.error) throw child.error;',
+    'if (child.signal) process.kill(process.pid, child.signal);',
+    'process.exitCode = child.status == null ? 1 : child.status;',
+    '',
+  ].join("\n");
 }
 
-function launcherPaths(binDirectory) {
-  const launcher = path.join(binDirectory, "head-agent-launcher.mjs");
-  const shellLauncher = path.join(binDirectory, "head-agent");
-  const cmdLauncher = path.join(binDirectory, "head-agent.cmd");
-  const markerFile = path.join(binDirectory, "head-agent-installation.json");
+function launcherPaths(binDirectory, identity = "head") {
+  const command = `${identity}-agent`;
+  const launcher = path.join(binDirectory, `${command}-launcher.mjs`);
+  const shellLauncher = path.join(binDirectory, command);
+  const cmdLauncher = path.join(binDirectory, `${command}.cmd`);
+  const markerFile = path.join(binDirectory, `${command}-installation.json`);
   return { launcher, shellLauncher, cmdLauncher, markerFile };
 }
 
 function verifyLauncherOwnership(installRoot, binDirectory) {
-  const { launcher, shellLauncher, cmdLauncher, markerFile } = launcherPaths(binDirectory);
-  const commandFiles = [launcher, shellLauncher, cmdLauncher];
-  if (commandFiles.some((file) => fs.existsSync(file))) {
-    if (!fs.existsSync(markerFile)) fail("HEAD_DISTRIBUTION_COMMAND_CONFLICT", "Command directory already contains an unowned head-agent launcher.");
-    const marker = readJson(markerFile, "HEAD_DISTRIBUTION_COMMAND_OWNERSHIP_INVALID");
-    if (marker.product !== "head-agent-core" || marker.installRoot !== installRoot) {
-      fail("HEAD_DISTRIBUTION_COMMAND_CONFLICT", "Command directory belongs to another HEAD Agent installation.");
+  for (const identity of ["head", "lode"]) {
+    const { launcher, shellLauncher, cmdLauncher, markerFile } = launcherPaths(binDirectory, identity);
+    const commandFiles = [launcher, shellLauncher, cmdLauncher];
+    if (commandFiles.some((file) => existingPath(file)) || existingPath(markerFile)) {
+      if (!existingPath(markerFile)) fail("HEAD_DISTRIBUTION_COMMAND_CONFLICT", `Command directory already contains an unowned ${identity}-agent launcher.`);
+      for (const file of [...commandFiles, markerFile].filter((candidate) => existingPath(candidate))) {
+        const stat = fs.lstatSync(file);
+        if (!stat.isFile() || stat.isSymbolicLink()) fail("HEAD_DISTRIBUTION_COMMAND_CONFLICT", `Launcher ownership requires a regular file: ${file}`);
+      }
+      const marker = readJson(markerFile, "HEAD_DISTRIBUTION_COMMAND_OWNERSHIP_INVALID");
+      if (!["head-agent-core", "lode-agent-core"].includes(marker.product) || marker.installRoot !== installRoot
+        || marker.protocolVersion !== DISTRIBUTION_PROTOCOL) {
+        fail("HEAD_DISTRIBUTION_COMMAND_CONFLICT", "Command directory belongs to another agent installation.");
+      }
     }
   }
 }
@@ -424,13 +592,17 @@ function verifyLauncherOwnership(installRoot, binDirectory) {
 function writeLaunchers(installRoot, binDirectory) {
   ensureDirectory(binDirectory);
   verifyLauncherOwnership(installRoot, binDirectory);
-  const { launcher, shellLauncher, cmdLauncher, markerFile } = launcherPaths(binDirectory);
-  atomicWriteFile(launcher, launcherSource(installRoot));
-  atomicWriteFile(shellLauncher, `#!/bin/sh\nscript_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nexec node "$script_dir/head-agent-launcher.mjs" "$@"\n`, { mode: 0o755 });
-  if (process.platform !== "win32") fs.chmodSync(shellLauncher, 0o755);
-  atomicWriteFile(cmdLauncher, "@echo off\r\nnode \"%~dp0head-agent-launcher.mjs\" %*\r\n");
-  atomicWriteJson(markerFile, { product: "head-agent-core", protocolVersion: DISTRIBUTION_PROTOCOL, installRoot });
-  return { launcher, commands: [shellLauncher, cmdLauncher] };
+  const commands = [];
+  for (const identity of ["head", "lode"]) {
+    const { launcher, shellLauncher, cmdLauncher, markerFile } = launcherPaths(binDirectory, identity);
+    atomicWriteFile(launcher, launcherSource(installRoot));
+    atomicWriteFile(shellLauncher, `#!/bin/sh\nscript_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nexec node "$script_dir/${identity}-agent-launcher.mjs" "$@"\n`, { mode: 0o755 });
+    if (process.platform !== "win32") fs.chmodSync(shellLauncher, 0o755);
+    atomicWriteFile(cmdLauncher, `@echo off\r\nnode "%~dp0${identity}-agent-launcher.mjs" %*\r\n`);
+    if (!fs.existsSync(markerFile)) atomicWriteJson(markerFile, { product: "lode-agent-core", protocolVersion: DISTRIBUTION_PROTOCOL, installRoot });
+    commands.push(shellLauncher, cmdLauncher);
+  }
+  return { commands };
 }
 
 export function installDistribution({ sourceRoot, installRoot, binDirectory, nativeOverlayRoot = null, platform = process.platform, arch = process.arch } = {}) {
@@ -477,7 +649,10 @@ export function installDistribution({ sourceRoot, installRoot, binDirectory, nat
     else fs.rmSync(pointerFile(locations.installRoot), { force: true });
     throw error;
   }
-  const launchers = { commands: [path.join(locations.binDirectory, "head-agent"), path.join(locations.binDirectory, "head-agent.cmd")] };
+  const launchers = { commands: ["head", "lode"].flatMap((identity) => {
+    const paths = launcherPaths(locations.binDirectory, identity);
+    return [paths.shellLauncher, paths.cmdLauncher];
+  }) };
   return {
     status: previous?.activeReleaseId === manifest.releaseId ? "already-current" : previous ? "upgraded" : "installed",
     version: manifest.version,
@@ -517,6 +692,7 @@ export function rollbackDistribution({ installRoot, binDirectory } = {}) {
   const target = pointer.history[0];
   if (!target) fail("HEAD_DISTRIBUTION_ROLLBACK_UNAVAILABLE", "No prior verified release is available for rollback.");
   const manifest = verifyRelease(releaseRoot(locations.installRoot, target), target);
+  verifyLauncherOwnership(locations.installRoot, locations.binDirectory);
   atomicWriteJson(pointerFile(locations.installRoot), {
     protocolVersion: DISTRIBUTION_PROTOCOL,
     activeReleaseId: target,
@@ -529,20 +705,12 @@ export function uninstallDistribution({ installRoot, binDirectory, purge = false
   const locations = resolveLocations({ installRoot, binDirectory });
   const pointer = readPointer(locations.installRoot, { required: false });
   verifyInstallRootOwnership(locations.installRoot);
-  const commandMarker = path.join(locations.binDirectory, "head-agent-installation.json");
-  let commandOwnershipVerified = false;
-  if (fs.existsSync(commandMarker)) {
-    const marker = readJson(commandMarker, "HEAD_DISTRIBUTION_COMMAND_OWNERSHIP_INVALID");
-    commandOwnershipVerified = marker.product === "head-agent-core" && marker.installRoot === locations.installRoot;
-  }
-  const commands = [
-    path.join(locations.binDirectory, "head-agent"),
-    path.join(locations.binDirectory, "head-agent.cmd"),
-    path.join(locations.binDirectory, "head-agent-launcher.mjs"),
-    commandMarker,
-  ];
-  if (commandOwnershipVerified) {
-    for (const command of commands) if (fs.existsSync(command)) fs.rmSync(command, { force: true });
+  verifyLauncherOwnership(locations.installRoot, locations.binDirectory);
+  const commandOwnershipVerified = ["head", "lode"].some((identity) => fs.existsSync(launcherPaths(locations.binDirectory, identity).markerFile));
+  for (const identity of ["head", "lode"]) {
+    const paths = launcherPaths(locations.binDirectory, identity);
+    if (!fs.existsSync(paths.markerFile)) continue;
+    for (const command of Object.values(paths)) if (fs.existsSync(command)) fs.rmSync(command, { force: true });
   }
   for (const file of [pointerFile(locations.installRoot)]) {
     if (fs.existsSync(file)) fs.rmSync(file, { force: true });

@@ -118,7 +118,7 @@ detail unavailable.
 Admission events and projections have no instruction, review, promotion,
 Product Canon, completion, or recovery authority. Wave `started` continues to
 mean durable authorization consumption or terminal runtime result, never queue
-or reservation state. Result flow remains `ResultPacket -> Fresh HEAD ->
+or reservation state. Result flow remains `ResultPacket -> Fresh Lode ->
 explicit ReviewDecision -> explicit P2 checkpoint integration`.
 
 There is intentionally no public CLI/MCP surface in this slice. Provisioning,

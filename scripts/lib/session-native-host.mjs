@@ -1,7 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
+import { resolveOperation } from "./lode-operation-contract.mjs";
+const semanticToolName = name => resolveOperation(name)?.semanticName ?? name;
+const helperName = name => semanticToolName(name) === "head_session_host_request_prepare";
+const routerName = name => ["head_tools_read", "head_tools_call"].includes(semanticToolName(name));
+const hasProjectMarker = root => [".head", ".lode"].some(directory => fs.existsSync(path.join(root, directory, "project.json")));
 import { sessionCallRequiresBinding } from "./session-routing.mjs";
-import { SESSION_HOST_REQUEST_HELPER, createSessionHostRequestRegistry } from "./session-host-request.mjs";
+import { createSessionHostRequestRegistry } from "./session-host-request.mjs";
 
 const validCaller = (id) => typeof id === "string" && id.length > 0 && id.length <= 512 && !/[\u0000-\u001f]/u.test(id);
 const missingCaller = () => { throw Object.assign(new Error("Native caller metadata is unavailable; never substitute another caller."), { code: "NATIVE_SESSION_CALLER_UNAVAILABLE" }); };
@@ -55,13 +60,13 @@ export function createNativeSessionHostBridge({ environment = process.env, runti
         || ![value.native_session_id, value.tool_use_id, value.outer_tool_name].every(id => validCaller(id) && !id.includes("${"))
         || value.native_agent_id != null && value.native_agent_id !== "" && (!validCaller(value.native_agent_id) || value.native_agent_id.includes("${"))
         || typeof value.original_arguments !== "string") throw Object.assign(new Error(), { code: "INVALID_NATIVE_HOOK_INPUT" });
-      const match = /^mcp__.+__(head_[a-z0-9_]+)$/u.exec(value.outer_tool_name);
-      if (!match || match[1] === SESSION_HOST_REQUEST_HELPER) throw Object.assign(new Error(), { code: "INVALID_NATIVE_HOOK_TARGET" });
+      const match = /^mcp__.+__([a-z][a-z0-9_]+)$/u.exec(value.outer_tool_name);
+      if (!match || !resolveOperation(match[1]) || helperName(match[1])) throw Object.assign(new Error(), { code: "INVALID_NATIVE_HOOK_TARGET" });
       const original = JSON.parse(value.original_arguments);
       if (!original || typeof original !== "object" || Array.isArray(original)) throw Object.assign(new Error(), { code: "INVALID_NATIVE_HOOK_ARGUMENTS" });
-      const routed = ["head_tools_read", "head_tools_call"].includes(match[1]);
-      const name = routed ? original.name : match[1];
-      if (name === SESSION_HOST_REQUEST_HELPER) throw Object.assign(new Error(), { code: "NATIVE_HOOK_RECURSION" });
+      const routed = routerName(match[1]);
+      const name = semanticToolName(routed ? original.name : match[1]);
+      if (helperName(name)) throw Object.assign(new Error(), { code: "NATIVE_HOOK_RECURSION" });
       // Router Project-only no-op: no registry, Session/P5 read or graph work.
       if (!sessionCallRequiresBinding(name)) return reply(request);
       requestRegistry.prepare({ key: value.tool_use_id, name: match[1], arguments: original,
@@ -71,10 +76,10 @@ export function createNativeSessionHostBridge({ environment = process.env, runti
   }
   async function dispatchProjectRequest(request, handler, caller) {
       const outer = request.params?.arguments;
-      const routed = ["head_tools_read", "head_tools_call"].includes(request.params?.name);
+      const routed = routerName(request.params?.name);
       const args = routed ? outer?.arguments : outer;
-      const name = routed ? outer?.name : request.params?.name;
-      if (name === SESSION_HOST_REQUEST_HELPER) return reply(request, Object.assign(new Error(), { code: "NATIVE_HOOK_DIRECT_INGRESS_REQUIRED" }));
+      const name = semanticToolName(routed ? outer?.name : request.params?.name);
+      if (helperName(name)) return reply(request, Object.assign(new Error(), { code: "NATIVE_HOOK_DIRECT_INGRESS_REQUIRED" }));
       if (typeof args?.project_root !== "string" || !args.project_root) return handler(request, {});
       if (caller.status === "legacy") return handler(request, {});
       if (!sessionCallRequiresBinding(name) && !Object.hasOwn(args, "session_id")) return handler(request, {});
@@ -82,7 +87,7 @@ export function createNativeSessionHostBridge({ environment = process.env, runti
         // Creating a new Project has no existing Session to guess or lose.
         // Keep that original Core setup usable, but never claim native linkage.
         if (name === "head_project_initialize_or_resume" && !Object.hasOwn(args, "session_id")
-          && !fs.existsSync(path.join(args.project_root, ".head", "project.json"))) {
+          && !hasProjectMarker(args.project_root)) {
           const response = await handler(request, {});
           if (response?.result) response.result._meta = { ...response.result._meta,
             headSessionBinding: { status: "unavailable", reasonCode: "NATIVE_SESSION_CALLER_UNAVAILABLE",
@@ -94,8 +99,8 @@ export function createNativeSessionHostBridge({ environment = process.env, runti
       let adapter;
       try { adapter = await adapterFor(caller); }
       catch (error) { return handler(request, { resolveSessionContext: () => { throw error; } }); }
-      const initialized = fs.existsSync(path.join(args.project_root, ".head", "project.json"));
-      const selecting = name === "head_project_initialize_or_resume" && request.params?.name !== "head_tools_read"
+      const initialized = hasProjectMarker(args.project_root);
+      const selecting = name === "head_project_initialize_or_resume" && semanticToolName(request.params?.name) !== "head_tools_read"
         && (args.profile === undefined || ["core", "product"].includes(args.profile));
       let prepared = null, preparationFailure = null, selectionBasis = null, requestContext = null;
       const resolveSessionContext = (original) => {
@@ -165,10 +170,10 @@ export function createNativeSessionHostBridge({ environment = process.env, runti
         return handler(request, {});
       }
       if (request.method !== "tools/call") return handler(request, {});
-      if (request.params?.name === SESSION_HOST_REQUEST_HELPER) return prepareHookRequest(request);
-      const routed = ["head_tools_read", "head_tools_call"].includes(request.params?.name);
+      if (helperName(request.params?.name)) return prepareHookRequest(request);
+      const routed = routerName(request.params?.name);
       const targetName = routed ? request.params?.arguments?.name : request.params?.name;
-      if (targetName === SESSION_HOST_REQUEST_HELPER) return reply(request, Object.assign(new Error(), { code: "NATIVE_HOOK_DIRECT_INGRESS_REQUIRED" }));
+      if (helperName(targetName)) return reply(request, Object.assign(new Error(), { code: "NATIVE_HOOK_DIRECT_INGRESS_REQUIRED" }));
       if (!sessionCallRequiresBinding(targetName)) return handler(request, {});
       const caller = callerFor(request);
       try { return await dispatchProjectRequest(request, handler, caller); }

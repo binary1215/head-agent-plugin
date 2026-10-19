@@ -1,8 +1,9 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { familyFormatForOriginal, formatForVerifiedOwner, relativeProjectArtifact } from "./project-storage-format.mjs";
 import { atomicWriteArtifact } from "./artifact-storage.mjs";
-import { inspectProject, SCHEMA_VERSION } from "./head-core.mjs";
+import { inspectProject, SCHEMA_VERSION } from "./lode-core.mjs";
 import {
   createDocumentProjectionAdapter,
   materializeReviewedMarkdownProjection,
@@ -103,10 +104,10 @@ function assertAuthorityMutable(inspected) {
   }
 }
 
-function safeFile(projectRoot, relativeDirectory, id, pattern, code) {
+function safeFile(projectRoot, relativeDirectory, id, pattern, code, storage) {
   if (!pattern.test(id || "")) fail("Document-change artifact id is invalid.", code);
   const root = path.resolve(projectRoot);
-  const file = path.resolve(root, ...relativeDirectory.split("/"), `${id}.json`);
+  const file = path.resolve(root, ...relativeProjectArtifact(storage, ...relativeDirectory.split("/").slice(1)).split("/"), `${id}.json`);
   const relative = path.relative(root, file);
   if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
     fail("Document-change artifact path escapes the project root.", "DOCUMENT_CHANGE_PATH_ESCAPE");
@@ -121,16 +122,16 @@ function safeFile(projectRoot, relativeDirectory, id, pattern, code) {
   return file;
 }
 
-function reviewFile(projectRoot, id) {
-  return safeFile(projectRoot, DOCUMENT_CHANGE_REVIEW_DIRECTORY, id, REVIEW_ID_PATTERN, "INVALID_DOCUMENT_CHANGE_REVIEW_ID");
+function reviewFile(projectRoot, id, storage) {
+  return safeFile(projectRoot, DOCUMENT_CHANGE_REVIEW_DIRECTORY, id, REVIEW_ID_PATTERN, "INVALID_DOCUMENT_CHANGE_REVIEW_ID", storage);
 }
 
-function applicationFile(projectRoot, id) {
-  return safeFile(projectRoot, DOCUMENT_CHANGE_APPLICATION_DIRECTORY, id, APPLICATION_ID_PATTERN, "INVALID_DOCUMENT_CHANGE_APPLICATION_ID");
+function applicationFile(projectRoot, id, storage) {
+  return safeFile(projectRoot, DOCUMENT_CHANGE_APPLICATION_DIRECTORY, id, APPLICATION_ID_PATTERN, "INVALID_DOCUMENT_CHANGE_APPLICATION_ID", storage);
 }
 
-function revisionFile(projectRoot, id) {
-  return safeFile(projectRoot, DOCUMENT_CHANGE_PRODUCT_REVISION_DIRECTORY, id, PRODUCT_MODEL_ID_PATTERN, "INVALID_PRODUCT_MODEL_REVISION");
+function revisionFile(projectRoot, id, storage) {
+  return safeFile(projectRoot, DOCUMENT_CHANGE_PRODUCT_REVISION_DIRECTORY, id, PRODUCT_MODEL_ID_PATTERN, "INVALID_PRODUCT_MODEL_REVISION", storage);
 }
 
 function parseJson(file, label) {
@@ -158,11 +159,11 @@ function persistImmutable(file, document, verifier, label) {
   return { file, created: true, document: verifier(parseJson(file, label)) };
 }
 
-function buildProductModelRevision({ projectId, model }) {
+function buildProductModelRevision({ projectId, model }, storage) {
   const payload = {
     schemaVersion: SCHEMA_VERSION,
     kind: "ProductModelRevision",
-    protocol: { name: "head-agent-core-document-change-product-revision", version: DOCUMENT_CHANGE_REVIEW_VERSION },
+    protocol: { name: formatForVerifiedOwner(storage).protocol("head-agent-core-document-change-product-revision"), version: DOCUMENT_CHANGE_REVIEW_VERSION },
     projectId,
     authorityBoundary: artifactAuthorityBoundary("ProductModelRevision"),
     productModelId: model.productModelId,
@@ -175,9 +176,9 @@ function buildProductModelRevision({ projectId, model }) {
   return { ...payload, revisionHash: digest(documentChangeReviewCanonicalJson(payload)) };
 }
 
-export function verifyDocumentChangeProductModelRevision(document, projectId = "") {
+export function verifyDocumentChangeProductModelRevision(document, projectId = "", storage = undefined) {
   if (!document || document.schemaVersion !== 1 || document.kind !== "ProductModelRevision"
-    || document.protocol?.name !== "head-agent-core-document-change-product-revision"
+    || !familyFormatForOriginal("head-agent-core-document-change-product-revision", document, storage)
     || document.protocol?.version !== DOCUMENT_CHANGE_REVIEW_VERSION
     || (projectId && document.projectId !== projectId)
     || !PRODUCT_MODEL_ID_PATTERN.test(document.productModelId || "")
@@ -188,7 +189,7 @@ export function verifyDocumentChangeProductModelRevision(document, projectId = "
     fail("Document-change ProductModelRevision is invalid.", "INVALID_DOCUMENT_CHANGE_PRODUCT_REVISION");
   }
   if (document.authorityBoundary) verifyArtifactAuthorityBoundary("ProductModelRevision", document.authorityBoundary);
-  const normalized = normalizeProductModelDocument(document.document);
+  const normalized = normalizeProductModelDocument(document.document, familyFormatForOriginal("head-agent-core-document-change-product-revision", document, storage));
   if (normalized.productModelId !== document.productModelId || normalized.productModelHash !== document.productModelHash) {
     fail("Document-change ProductModelRevision does not match its Product Model.", "DOCUMENT_CHANGE_PRODUCT_REVISION_MISMATCH");
   }
@@ -200,11 +201,11 @@ export function verifyDocumentChangeProductModelRevision(document, projectId = "
   return document;
 }
 
-function buildReviewDecision({ candidateSet, disposition, acceptedCandidateIds, rejectedCandidateIds, rationale, candidateProductModel, reviewedProductModel, resultingProductModel }) {
+function buildReviewDecision({ candidateSet, disposition, acceptedCandidateIds, rejectedCandidateIds, rationale, candidateProductModel, reviewedProductModel, resultingProductModel }, storage) {
   const payload = {
     schemaVersion: SCHEMA_VERSION,
     kind: "ReviewDecision",
-    protocol: { name: "head-agent-core-document-change-review", version: DOCUMENT_CHANGE_REVIEW_VERSION },
+    protocol: { name: formatForVerifiedOwner(storage).protocol("head-agent-core-document-change-review"), version: DOCUMENT_CHANGE_REVIEW_VERSION },
     decisionScope: "document-to-product-canon",
     projectId: candidateSet.projectId,
     authorityBoundary: artifactAuthorityBoundary("ReviewDecision"),
@@ -239,9 +240,9 @@ function buildReviewDecision({ candidateSet, disposition, acceptedCandidateIds, 
   return { ...payload, reviewDecisionId: `document-change-review-decision-${hash.slice(0, 24)}`, reviewDecisionHash: hash };
 }
 
-export function verifyDocumentChangeReviewDecision(document, candidateSet = null, projectId = "") {
+export function verifyDocumentChangeReviewDecision(document, candidateSet = null, projectId = "", storage = undefined) {
   if (!document || document.schemaVersion !== 1 || document.kind !== "ReviewDecision"
-    || document.protocol?.name !== "head-agent-core-document-change-review"
+    || !familyFormatForOriginal("head-agent-core-document-change-review", document, storage ?? (candidateSet ? familyFormatForOriginal("head-agent-core-document-change-candidates", candidateSet) : undefined))
     || document.protocol?.version !== DOCUMENT_CHANGE_REVIEW_VERSION
     || document.decisionScope !== "document-to-product-canon"
     || (projectId && document.projectId !== projectId)
@@ -295,11 +296,11 @@ export function verifyDocumentChangeReviewDecision(document, candidateSet = null
   return document;
 }
 
-function buildApplicationReceipt({ review, candidateSet, beforeWorld, afterWorld, projection, canonChanged }) {
+function buildApplicationReceipt({ review, candidateSet, beforeWorld, afterWorld, projection, canonChanged }, storage) {
   const payload = {
     schemaVersion: SCHEMA_VERSION,
     kind: "DocumentCanonApplicationReceipt",
-    protocol: { name: "head-agent-core-document-change-application", version: DOCUMENT_CHANGE_REVIEW_VERSION },
+    protocol: { name: formatForVerifiedOwner(storage).protocol("head-agent-core-document-change-application"), version: DOCUMENT_CHANGE_REVIEW_VERSION },
     projectId: review.projectId,
     reviewDecisionId: review.reviewDecisionId,
     reviewDecisionHash: review.reviewDecisionHash,
@@ -336,9 +337,9 @@ function buildApplicationReceipt({ review, candidateSet, beforeWorld, afterWorld
   return { ...payload, applicationReceiptId: `document-change-application-${hash.slice(0, 24)}`, applicationReceiptHash: hash };
 }
 
-export function verifyDocumentChangeApplicationReceipt(document, review = null, candidateSet = null, projectId = "") {
+export function verifyDocumentChangeApplicationReceipt(document, review = null, candidateSet = null, projectId = "", storage = undefined) {
   if (!document || document.schemaVersion !== 1 || document.kind !== "DocumentCanonApplicationReceipt"
-    || document.protocol?.name !== "head-agent-core-document-change-application"
+    || !familyFormatForOriginal("head-agent-core-document-change-application", document, storage ?? (review ? familyFormatForOriginal("head-agent-core-document-change-review", review) : undefined))
     || document.protocol?.version !== DOCUMENT_CHANGE_REVIEW_VERSION
     || (projectId && document.projectId !== projectId)
     || !APPLICATION_ID_PATTERN.test(document.applicationReceiptId || "")
@@ -379,8 +380,8 @@ export function verifyDocumentChangeApplicationReceipt(document, review = null, 
   return document;
 }
 
-function artifactFiles(projectRoot, relativeDirectory) {
-  const directory = path.resolve(projectRoot, ...relativeDirectory.split("/"));
+function artifactFiles(projectRoot, relativeDirectory, storage) {
+  const directory = path.resolve(projectRoot, ...relativeProjectArtifact(storage, ...relativeDirectory.split("/").slice(1)).split("/"));
   if (!fs.existsSync(directory)) return [];
   const files = fs.readdirSync(directory, { withFileTypes: true })
     .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
@@ -390,10 +391,10 @@ function artifactFiles(projectRoot, relativeDirectory) {
   return files;
 }
 
-function reviewForCandidate(projectRoot, candidateSetId) {
+function reviewForCandidate(projectRoot, candidateSetId, storage) {
   let found = null;
-  for (const file of artifactFiles(projectRoot, DOCUMENT_CHANGE_REVIEW_DIRECTORY)) {
-    const review = verifyDocumentChangeReviewDecision(parseJson(file, "Document-change ReviewDecision"));
+  for (const file of artifactFiles(projectRoot, DOCUMENT_CHANGE_REVIEW_DIRECTORY, storage)) {
+    const review = verifyDocumentChangeReviewDecision(parseJson(file, "Document-change ReviewDecision"), undefined, undefined, storage);
     if (path.basename(file) !== `${review.reviewDecisionId}.json`) fail("Document-change ReviewDecision file name does not match its identity.", "DOCUMENT_CHANGE_ARTIFACT_ID_MISMATCH");
     if (review.candidateSetId !== candidateSetId) continue;
     if (found && found.reviewDecisionId !== review.reviewDecisionId) fail("DocumentChangeCandidateSet has conflicting ReviewDecisions.", "DOCUMENT_CHANGE_REVIEW_CONFLICT");
@@ -402,10 +403,10 @@ function reviewForCandidate(projectRoot, candidateSetId) {
   return found;
 }
 
-function applicationForReview(projectRoot, reviewDecisionId) {
+function applicationForReview(projectRoot, reviewDecisionId, storage) {
   let found = null;
-  for (const file of artifactFiles(projectRoot, DOCUMENT_CHANGE_APPLICATION_DIRECTORY)) {
-    const receipt = verifyDocumentChangeApplicationReceipt(parseJson(file, "Document-change application receipt"));
+  for (const file of artifactFiles(projectRoot, DOCUMENT_CHANGE_APPLICATION_DIRECTORY, storage)) {
+    const receipt = verifyDocumentChangeApplicationReceipt(parseJson(file, "Document-change application receipt"), undefined, undefined, undefined, storage);
     if (path.basename(file) !== `${receipt.applicationReceiptId}.json`) fail("Document-change application file name does not match its identity.", "DOCUMENT_CHANGE_ARTIFACT_ID_MISMATCH");
     if (receipt.reviewDecisionId !== reviewDecisionId) continue;
     if (found && found.applicationReceiptId !== receipt.applicationReceiptId) fail("Document-change ReviewDecision has conflicting application receipts.", "DOCUMENT_CHANGE_APPLICATION_CONFLICT");
@@ -416,17 +417,18 @@ function applicationForReview(projectRoot, reviewDecisionId) {
 
 export function readDocumentChangeReviewDecision({ root = ".", reviewDecisionId } = {}) {
   const inspected = readyProject(root, "document-change review inspection");
-  const file = reviewFile(inspected.project.projectRoot, reviewDecisionId);
+  const storage = inspected.storage;
+  const file = reviewFile(inspected.project.projectRoot, reviewDecisionId, storage);
   if (!fs.existsSync(file)) fail(`Document-change ReviewDecision is missing: ${reviewDecisionId}`, "DOCUMENT_CHANGE_REVIEW_NOT_FOUND");
-  const review = verifyDocumentChangeReviewDecision(parseJson(file, "Document-change ReviewDecision"), null, inspected.project.projectId);
+  const review = verifyDocumentChangeReviewDecision(parseJson(file, "Document-change ReviewDecision"), null, inspected.project.projectId, storage);
   if (review.reviewDecisionId !== reviewDecisionId) fail("Document-change ReviewDecision file does not contain the requested identity.", "DOCUMENT_CHANGE_ARTIFACT_ID_MISMATCH");
-  const candidateSet = readDocumentChangeCandidateSet({ projectRoot: inspected.project.projectRoot, id: review.candidateSetId }).candidateSet;
-  verifyDocumentChangeReviewDecision(review, candidateSet, inspected.project.projectId);
+  const candidateSet = readDocumentChangeCandidateSet({ storage, projectRoot: inspected.project.projectRoot, id: review.candidateSetId }).candidateSet;
+  verifyDocumentChangeReviewDecision(review, candidateSet, inspected.project.projectId, storage);
   let resultingProductModelRevision = null;
   if (review.resultingProductModelId) {
-    const revision = revisionFile(inspected.project.projectRoot, review.resultingProductModelId);
+    const revision = revisionFile(inspected.project.projectRoot, review.resultingProductModelId, storage);
     if (!fs.existsSync(revision)) fail("Reviewed ProductModelRevision is missing.", "DOCUMENT_CHANGE_PRODUCT_REVISION_NOT_FOUND");
-    resultingProductModelRevision = verifyDocumentChangeProductModelRevision(parseJson(revision, "Document-change ProductModelRevision"), inspected.project.projectId);
+    resultingProductModelRevision = verifyDocumentChangeProductModelRevision(parseJson(revision, "Document-change ProductModelRevision"), inspected.project.projectId, storage);
     if (resultingProductModelRevision.productModelId !== review.resultingProductModelId
       || resultingProductModelRevision.productModelHash !== review.resultingProductModelHash) fail("ReviewDecision ProductModelRevision binding is inconsistent.", "DOCUMENT_CHANGE_PRODUCT_REVISION_MISMATCH");
   }
@@ -435,12 +437,13 @@ export function readDocumentChangeReviewDecision({ root = ".", reviewDecisionId 
 
 export function readDocumentChangeApplicationReceipt({ root = ".", applicationReceiptId } = {}) {
   const inspected = readyProject(root, "document-change application inspection");
-  const file = applicationFile(inspected.project.projectRoot, applicationReceiptId);
+  const storage = inspected.storage;
+  const file = applicationFile(inspected.project.projectRoot, applicationReceiptId, storage);
   if (!fs.existsSync(file)) fail(`Document-change application receipt is missing: ${applicationReceiptId}`, "DOCUMENT_CHANGE_APPLICATION_NOT_FOUND");
-  const receipt = verifyDocumentChangeApplicationReceipt(parseJson(file, "Document-change application receipt"), null, null, inspected.project.projectId);
+  const receipt = verifyDocumentChangeApplicationReceipt(parseJson(file, "Document-change application receipt"), null, null, inspected.project.projectId, storage);
   if (receipt.applicationReceiptId !== applicationReceiptId) fail("Document-change application file does not contain the requested identity.", "DOCUMENT_CHANGE_ARTIFACT_ID_MISMATCH");
   const review = readDocumentChangeReviewDecision({ root: inspected.project.projectRoot, reviewDecisionId: receipt.reviewDecisionId });
-  verifyDocumentChangeApplicationReceipt(receipt, review.reviewDecision, review.candidateSet, inspected.project.projectId);
+  verifyDocumentChangeApplicationReceipt(receipt, review.reviewDecision, review.candidateSet, inspected.project.projectId, storage);
   return { status: "verified", file, applicationReceipt: receipt, reviewDecision: review.reviewDecision, candidateSet: review.candidateSet };
 }
 
@@ -473,17 +476,18 @@ async function buildDocumentAuditChild({ projectRoot, beforeWorld, storeAdapter,
 }
 
 async function applyReviewLocked({ inspected, reviewDecisionId, storeAdapter = null, graphProjectionAdapter = null, documentProjectionAdapter = null, computeAdapter = null, writerLease }) {
+  const storage = inspected.storage;
   assertAuthorityMutable(inspected);
   const projectRoot = inspected.project.projectRoot;
   const reviewed = readDocumentChangeReviewDecision({ root: projectRoot, reviewDecisionId });
   const review = reviewed.reviewDecision;
   const candidateSet = reviewed.candidateSet;
-  const existingApplication = applicationForReview(projectRoot, review.reviewDecisionId);
-  const currentCanon = readProductModelCanon({ projectRoot });
+  const existingApplication = applicationForReview(projectRoot, review.reviewDecisionId, storage);
+  const currentCanon = readProductModelCanon({ storage, projectRoot });
   const canonBefore = currentCanon.model.productModelId === review.reviewedProductModelId && currentCanon.model.productModelHash === review.reviewedProductModelHash;
   const canonApplied = review.promotionAuthority && currentCanon.model.productModelId === review.resultingProductModelId && currentCanon.model.productModelHash === review.resultingProductModelHash;
   if (existingApplication) {
-    verifyDocumentChangeApplicationReceipt(existingApplication, review, candidateSet, inspected.project.projectId);
+    verifyDocumentChangeApplicationReceipt(existingApplication, review, candidateSet, inspected.project.projectId, storage);
     if (currentCanon.model.productModelHash !== existingApplication.resultingProductModelHash) return { status: "already-applied", currentProjection: "later-canon-preserved", applicationReceipt: existingApplication, reviewDecision: review };
   }
   if (!canonBefore && !canonApplied) fail("Product Canon has a later value; preserve it.", "DOCUMENT_CHANGE_PRODUCT_CANON_DRIFT");
@@ -502,7 +506,7 @@ async function applyReviewLocked({ inspected, reviewDecisionId, storeAdapter = n
   if (currentStatus.status !== "current" && nonDocumentDrift) {
     fail("Repository World Model has non-document drift and must be refreshed before applying a document-change review.", "DOCUMENT_CHANGE_WORLD_MODEL_STALE");
   }
-  const basisFile = safeFile(projectRoot, ".head/document-changes/application-bases", review.reviewDecisionId, REVIEW_ID_PATTERN, "INVALID_DOCUMENT_CHANGE_REVIEW_ID");
+  const basisFile = safeFile(projectRoot, ".head/document-changes/application-bases", review.reviewDecisionId, REVIEW_ID_PATTERN, "INVALID_DOCUMENT_CHANGE_REVIEW_ID", storage);
   let beforeWorld;
   if (existingApplication) beforeWorld = readWorldModelSnapshot({ root: projectRoot, worldModelId: existingApplication.before.worldModelId, storeAdapter }).snapshot;
   else if (fs.existsSync(basisFile)) {
@@ -532,10 +536,10 @@ async function applyReviewLocked({ inspected, reviewDecisionId, storeAdapter = n
   if (documentChangeReviewCanonicalJson(beforeWorld.files.map(({ path, digest }) => ({ path, digest }))) !== documentChangeReviewCanonicalJson(currentStatus.snapshot.files.map(({ path, digest }) => ({ path, digest })))) {
     fail("Later repository changes require a separate projection reconciliation.", "DOCUMENT_CHANGE_WORLD_MODEL_STALE");
   }
-  const selectedStore = createWorldModelStoreAdapter({ projectRoot, adapter: storeAdapter });
-  const selectedGraph = createGraphProjectionAdapter({ projectRoot, adapter: graphProjectionAdapter });
-  const selectedDocuments = createDocumentProjectionAdapter({ projectRoot, adapter: documentProjectionAdapter });
-  const canonFile = path.resolve(projectRoot, ...PRODUCT_MODEL_RELATIVE_PATH.split("/"));
+  const selectedStore = createWorldModelStoreAdapter({ storage, projectRoot, adapter: storeAdapter });
+  const selectedGraph = createGraphProjectionAdapter({ storage, projectRoot, adapter: graphProjectionAdapter });
+  const selectedDocuments = createDocumentProjectionAdapter({ storage, projectRoot, adapter: documentProjectionAdapter });
+  const canonFile = path.resolve(projectRoot, ...relativeProjectArtifact(storage, ...PRODUCT_MODEL_RELATIVE_PATH.split("/").slice(1)).split("/"));
   try {
     let afterWorld = existingApplication ? readWorldModelSnapshot({ root: projectRoot, worldModelId: existingApplication.after.worldModelId, storeAdapter }).snapshot : beforeWorld;
     if (review.promotionAuthority && !existingApplication) {
@@ -580,7 +584,7 @@ async function applyReviewLocked({ inspected, reviewDecisionId, storeAdapter = n
       }
     }
     const materialized = existingApplication ? { projection: selectedDocuments.readProjection(existingApplication.after.documentProjectionId)?.document } : materializeReviewedMarkdownProjection({
-      projectRoot,
+      storage, projectRoot,
       graph: afterWorld.temporalProvenanceGraph,
       candidateSet,
       reviewDecision: review,
@@ -593,8 +597,8 @@ async function applyReviewLocked({ inspected, reviewDecisionId, storeAdapter = n
       afterWorld,
       projection: materialized.projection,
       canonChanged: review.promotionAuthority,
-    }), review, candidateSet, inspected.project.projectId);
-    const persistedReceipt = persistImmutable(applicationFile(projectRoot, receipt.applicationReceiptId), receipt, (value) => verifyDocumentChangeApplicationReceipt(value, review, candidateSet, inspected.project.projectId), "Document-change application receipt");
+    }, storage), review, candidateSet, inspected.project.projectId, storage);
+    const persistedReceipt = persistImmutable(applicationFile(projectRoot, receipt.applicationReceiptId, storage), receipt, (value) => verifyDocumentChangeApplicationReceipt(value, review, candidateSet, inspected.project.projectId, storage), "Document-change application receipt");
     const auditCurrent = inspectWorldModel({ root: projectRoot, storeAdapter: selectedStore });
     const audit = auditCurrent.snapshot.temporalProvenanceGraph.documentChangeProjection.applicationReceiptIds.includes(receipt.applicationReceiptId)
       && auditCurrent.snapshot.temporalProvenanceGraph.parentSourceSnapshotIds.includes(afterWorld.temporalProvenanceGraph.sourceSnapshotId)
@@ -615,7 +619,7 @@ async function applyReviewLocked({ inspected, reviewDecisionId, storeAdapter = n
       childParentSourceSnapshotIds: audit.snapshot.temporalProvenanceGraph.parentSourceSnapshotIds,
       childGraphReceiptIds: audit.snapshot.temporalProvenanceGraph.documentChangeProjection.applicationReceiptIds,
     });
-    const auditProjection = resumeReviewedMarkdownProjection({ projectRoot, graph: audit.snapshot.temporalProvenanceGraph, adapter: selectedDocuments,
+    const auditProjection = resumeReviewedMarkdownProjection({ storage, projectRoot, graph: audit.snapshot.temporalProvenanceGraph, adapter: selectedDocuments,
       baseProjectionId: receipt.after.documentProjectionId });
     const verifiedWorld = inspectWorldModel({ root: projectRoot, storeAdapter: selectedStore });
     if (verifiedWorld.status !== "current" || verifiedWorld.snapshot.worldModelId !== audit.snapshot.worldModelId) {
@@ -639,8 +643,9 @@ async function applyReviewLocked({ inspected, reviewDecisionId, storeAdapter = n
 
 export async function applyDocumentChangeReview({ root = ".", reviewDecisionId, storeAdapter = null, graphProjectionAdapter = null, documentProjectionAdapter = null, computeAdapter = null } = {}) {
   const inspected = readyProject(root, "document-change review application");
+  const storage = inspected.storage;
   return withRefreshWriterLease({
-    projectRoot: inspected.project.projectRoot,
+    storage, projectRoot: inspected.project.projectRoot,
     projectId: inspected.project.projectId,
   }, (writerLease) => applyReviewLocked({ inspected, reviewDecisionId: requiredText(reviewDecisionId, "reviewDecisionId"), storeAdapter, graphProjectionAdapter, documentProjectionAdapter, computeAdapter, writerLease }));
 }
@@ -659,21 +664,22 @@ export async function reviewDocumentChanges({
   computeAdapter = null,
 } = {}) {
   const inspected = readyProject(root, "document-change review");
+  const storage = inspected.storage;
   return withRefreshWriterLease({
-    projectRoot: inspected.project.projectRoot,
+    storage, projectRoot: inspected.project.projectRoot,
     projectId: inspected.project.projectId,
   }, async (writerLease) => {
     assertAuthorityMutable(inspected);
     if (typeof apply !== "boolean") fail("apply must be a boolean.", "INVALID_DOCUMENT_CHANGE_REVIEW");
     const projectRoot = inspected.project.projectRoot;
-    const candidateSet = readDocumentChangeCandidateSet({ projectRoot, id: requiredText(candidateSetId, "candidateSetId") }).candidateSet;
+    const candidateSet = readDocumentChangeCandidateSet({ storage, projectRoot, id: requiredText(candidateSetId, "candidateSetId") }).candidateSet;
     const normalizedDisposition = requiredText(disposition, "Review disposition").toLowerCase();
     if (!["accept-all", "accept-selection", "reject"].includes(normalizedDisposition)) fail("Document-change review disposition is invalid.", "INVALID_DOCUMENT_CHANGE_REVIEW_DISPOSITION");
     const historical = findWorldModelSnapshot({ root: projectRoot, graphSnapshotId: candidateSet.graphSnapshotId, storeAdapter });
     const candidateWorld = historical.matches.find((snapshot) => snapshot.temporalProvenanceGraph.graphSnapshotHash === candidateSet.graphSnapshotHash
       && snapshot.temporalProvenanceGraph.sourceSnapshotId === candidateSet.sourceSnapshotId);
     if (!candidateWorld) fail("DocumentChangeCandidateSet base GraphSnapshot is unavailable or divergent.", "DOCUMENT_CHANGE_CANDIDATE_GRAPH_MISSING");
-    const currentCanon = readProductModelCanon({ projectRoot });
+    const currentCanon = readProductModelCanon({ storage, projectRoot });
     const allCandidateIds = candidateSet.candidates.map((candidate) => candidate.candidateId).sort();
     let accepted = [];
     if (normalizedDisposition === "accept-all") {
@@ -688,10 +694,10 @@ export async function reviewDocumentChanges({
       fail("reject cannot include accepted candidates or a resulting Product Model.", "INVALID_DOCUMENT_CHANGE_REVIEW_SELECTION");
     }
     const rejected = allCandidateIds.filter((id) => !accepted.includes(id));
-    const priorReview = reviewForCandidate(projectRoot, candidateSet.candidateSetId);
+    const priorReview = reviewForCandidate(projectRoot, candidateSet.candidateSetId, storage);
     if (priorReview) {
-      verifyDocumentChangeReviewDecision(priorReview, candidateSet, inspected.project.projectId);
-      const proposedHash = resultingProductModel ? normalizeProductModelDocument(resultingProductModel).productModelHash : null;
+      verifyDocumentChangeReviewDecision(priorReview, candidateSet, inspected.project.projectId, storage);
+      const proposedHash = resultingProductModel ? normalizeProductModelDocument(resultingProductModel, storage).productModelHash : null;
       if (priorReview.disposition !== normalizedDisposition || priorReview.rationale !== rationale
         || documentChangeReviewCanonicalJson(priorReview.acceptedCandidateIds) !== documentChangeReviewCanonicalJson(accepted)
         || priorReview.resultingProductModelHash !== proposedHash) {
@@ -700,7 +706,7 @@ export async function reviewDocumentChanges({
       return apply ? applyReviewLocked({ inspected, reviewDecisionId: priorReview.reviewDecisionId, storeAdapter, graphProjectionAdapter, documentProjectionAdapter, computeAdapter, writerLease })
         : { status: "reviewed-awaiting-application", reviewDecision: priorReview };
     }
-    verifyDocumentChangeCandidateSetAgainstPublished({ projectRoot, candidateSet, adapter: documentProjectionAdapter });
+    verifyDocumentChangeCandidateSetAgainstPublished({ storage, projectRoot, candidateSet, adapter: documentProjectionAdapter });
     let nextModel = null;
     if (normalizedDisposition.startsWith("accept")) {
       if (currentCanon.model.productModelId !== candidateWorld.productModel.productModelId
@@ -708,7 +714,7 @@ export async function reviewDocumentChanges({
         fail("Product Canon changed after the candidate document projection; capture and review a new candidate set.", "DOCUMENT_CHANGE_PRODUCT_CANON_DRIFT");
       }
       if (!resultingProductModel) fail("Accepted document changes require an explicit complete resultingProductModel.", "DOCUMENT_CHANGE_PRODUCT_MODEL_REQUIRED");
-      nextModel = normalizeProductModelDocument(resultingProductModel);
+      nextModel = normalizeProductModelDocument(resultingProductModel, storage);
       if (nextModel.productModelId === currentCanon.model.productModelId) {
         fail("Accepted document changes must produce a different explicit Product Model; reject the candidates to discard them.", "DOCUMENT_CHANGE_CANON_CHANGE_REQUIRED");
       }
@@ -722,15 +728,15 @@ export async function reviewDocumentChanges({
       candidateProductModel: candidateWorld.productModel,
       reviewedProductModel: currentCanon.model,
       resultingProductModel: nextModel,
-    }), candidateSet, inspected.project.projectId);
-    const existing = reviewForCandidate(projectRoot, candidateSet.candidateSetId);
+    }, storage), candidateSet, inspected.project.projectId, storage);
+    const existing = reviewForCandidate(projectRoot, candidateSet.candidateSetId, storage);
     if (existing && existing.reviewDecisionId !== review.reviewDecisionId) fail("DocumentChangeCandidateSet already has a different ReviewDecision.", "DOCUMENT_CHANGE_ALREADY_REVIEWED");
     let productRevision = null;
     if (nextModel) {
-      productRevision = verifyDocumentChangeProductModelRevision(buildProductModelRevision({ projectId: inspected.project.projectId, model: nextModel }), inspected.project.projectId);
-      persistImmutable(revisionFile(projectRoot, productRevision.productModelId), productRevision, (value) => verifyDocumentChangeProductModelRevision(value, inspected.project.projectId), "Document-change ProductModelRevision");
+      productRevision = verifyDocumentChangeProductModelRevision(buildProductModelRevision({ projectId: inspected.project.projectId, model: nextModel }, storage), inspected.project.projectId, storage);
+      persistImmutable(revisionFile(projectRoot, productRevision.productModelId, storage), productRevision, (value) => verifyDocumentChangeProductModelRevision(value, inspected.project.projectId, storage), "Document-change ProductModelRevision");
     }
-    persistImmutable(reviewFile(projectRoot, review.reviewDecisionId), review, (value) => verifyDocumentChangeReviewDecision(value, candidateSet, inspected.project.projectId), "Document-change ReviewDecision");
+    persistImmutable(reviewFile(projectRoot, review.reviewDecisionId, storage), review, (value) => verifyDocumentChangeReviewDecision(value, candidateSet, inspected.project.projectId, storage), "Document-change ReviewDecision");
     if (!apply) return { status: "reviewed-awaiting-application", reviewDecision: review, productModelRevision: productRevision };
     return applyReviewLocked({ inspected, reviewDecisionId: review.reviewDecisionId, storeAdapter, graphProjectionAdapter, documentProjectionAdapter, computeAdapter, writerLease });
   });
@@ -738,13 +744,14 @@ export async function reviewDocumentChanges({
 
 export function inspectDocumentChangeReviewStatus({ root = ".", candidateSetId } = {}) {
   const inspected = readyProject(root, "document-change review status");
-  const candidateSet = readDocumentChangeCandidateSet({ projectRoot: inspected.project.projectRoot, id: requiredText(candidateSetId, "candidateSetId") }).candidateSet;
-  const review = reviewForCandidate(inspected.project.projectRoot, candidateSet.candidateSetId);
+  const storage = inspected.storage;
+  const candidateSet = readDocumentChangeCandidateSet({ storage, projectRoot: inspected.project.projectRoot, id: requiredText(candidateSetId, "candidateSetId") }).candidateSet;
+  const review = reviewForCandidate(inspected.project.projectRoot, candidateSet.candidateSetId, storage);
   if (!review) return { status: "awaiting-review", candidateSetId: candidateSet.candidateSetId, candidateCount: candidateSet.candidates.length };
-  verifyDocumentChangeReviewDecision(review, candidateSet, inspected.project.projectId);
-  const application = applicationForReview(inspected.project.projectRoot, review.reviewDecisionId);
-  if (application) verifyDocumentChangeApplicationReceipt(application, review, candidateSet, inspected.project.projectId);
-  const canon = readProductModelCanon({ projectRoot: inspected.project.projectRoot });
+  verifyDocumentChangeReviewDecision(review, candidateSet, inspected.project.projectId, storage);
+  const application = applicationForReview(inspected.project.projectRoot, review.reviewDecisionId, storage);
+  if (application) verifyDocumentChangeApplicationReceipt(application, review, candidateSet, inspected.project.projectId, storage);
+  const canon = readProductModelCanon({ storage, projectRoot: inspected.project.projectRoot });
   const canonApplied = canon.model.productModelHash === (review.resultingProductModelHash || review.reviewedProductModelHash);
   let projectionsReady = false;
   let projectionReasonCode = null;
@@ -753,7 +760,7 @@ export function inspectDocumentChangeReviewStatus({ root = ".", candidateSetId }
       const world = inspectWorldModel({ root: inspected.project.projectRoot });
       projectionsReady = world.status === "current"
         && world.snapshot.temporalProvenanceGraph.documentChangeProjection.applicationReceiptIds.includes(application.applicationReceiptId)
-        && inspectMarkdownProjection({ projectRoot: inspected.project.projectRoot, graph: world.snapshot.temporalProvenanceGraph }).status === "current";
+        && inspectMarkdownProjection({ storage, projectRoot: inspected.project.projectRoot, graph: world.snapshot.temporalProvenanceGraph }).status === "current";
     } catch (error) { projectionReasonCode = error.code || "DOCUMENT_CHANGE_PROJECTION_UNVERIFIABLE"; }
   }
   return {

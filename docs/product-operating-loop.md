@@ -5,7 +5,7 @@
 New ProductHypothesis artifacts alone use protocol 0.5.0 and a required
 referenceSemantics value of neutral. Their Signal and Observation links are
 REFERENCES, not a mechanical claim that every citation supports the hypothesis.
-HEAD explains support, challenges, and uncertainty in the existing rationale;
+Lode explains support, challenges, and uncertainty in the existing rationale;
 no evidence-role form is required. Other operating artifacts remain at 0.4.0.
 Historical hypotheses retain their bytes, hashes, and SUPPORTED_BY interpretation.
 The new reader accepts them without migration. Older readers reject the new
@@ -15,7 +15,7 @@ ordinary independent work is unaffected. Measurement trace follows both relation
 
 Status: implemented minimal vertical under Product Operating Loop protocol `0.4.0`, with digest-readable `0.1.0`, `0.2.0`, and `0.3.0` compatibility.
 
-The Product Operating Loop connects product learning to reviewed execution without turning observations, model inference, GraphDB, or a continuity summary into HEAD or user authority.
+The Product Operating Loop connects product learning to reviewed execution without turning observations, model inference, GraphDB, or a continuity summary into Lode or user authority.
 
 ## Development spine and operating flow
 
@@ -33,11 +33,11 @@ The loop uses five epistemic classes:
 | hypothesis | `ProductHypothesis` | no decision authority |
 | inferred meaning | `ProductInitiativeCandidate`, `ProductFeatureCandidate` | candidate only |
 | approved decision | `ReviewedProductInitiative` | explicit reviewed initiative; not Product Canon |
-| derived projection | Product Graph and `HEADContinuitySnapshot` | rebuildable reference view only |
+| derived projection | Product Graph and `LodeContinuitySnapshot` | rebuildable reference view only |
 
-`ProductSignal → ProductHypothesis → ProductInitiativeCandidate` is a reasoning trail, not an authority chain or a required persistence chain. Everyday observations, hypotheses, and inferred meanings remain plain conversation content with their evidence; they need no formatting API, content identity, or graph rebuild. Persist Signal/Hypothesis artifacts only at cross-Run, rebuttal/audit, product-state, or handoff/context-loss boundaries. A Product Initiative becomes reviewed only through an explicit `ReviewDecision` with `decisionScope: product-initiative`. Product Canon remains `.head/context/product-model.json` and is not mutated by this flow.
+`ProductSignal → ProductHypothesis → ProductInitiativeCandidate` is a reasoning trail, not an authority chain or a required persistence chain. Everyday observations, hypotheses, and inferred meanings remain plain conversation content with their evidence; they need no formatting API, content identity, or graph rebuild. Persist Signal/Hypothesis artifacts only at cross-Run, rebuttal/audit, product-state, or handoff/context-loss boundaries. A Product Initiative becomes reviewed only through an explicit `ReviewDecision` with `decisionScope: product-initiative`. Product Canon remains `.lode/context/product-model.json` and is not mutated by this flow.
 
-A durable `ProductHypothesis` may now cite exact `ObservationRecord` or `DerivedObservationRecord` identities through `observationIds`, with or without a separately persisted `ProductSignal`. This removes manual restatement of already verified evidence without letting an adapter author meaning: HEAD still writes the hypothesis, and the reference grants no review, promotion, success, or recovery authority.
+A durable `ProductHypothesis` may now cite exact `ObservationRecord` or `DerivedObservationRecord` identities through `observationIds`, with or without a separately persisted `ProductSignal`. This removes manual restatement of already verified evidence without letting an adapter author meaning: Lode still writes the hypothesis, and the reference grants no review, promotion, success, or recovery authority.
 
 Observation storage remains optional and isolated. Product Operating projection and signal-only flows do not load or validate it unless a durable hypothesis actually cites an exact Observation ID. Once cited, current Observation integrity and receipt lineage fail closed as before.
 
@@ -57,7 +57,7 @@ Feature resolution:
 
 accepted execution ReviewDecision + ResultPacket -> ChangeSet
   -> OutcomeObservation (observed-fact or derived-projection)
-  -> HEAD reevaluates product meaning and success
+  -> Lode reevaluates product meaning and success
 ```
 
 The persisted Signal/Hypothesis path remains available for explicit audit boundaries. The lighter path may create an immutable `ProductInitiativeCandidate` directly from explicit inline reasoning. It may defer Feature resolution until accept review, so no `ProductFeatureCandidate` exists before the user decision. The reviewed Initiative preserves the candidate's title, description, reasoning, and hypothesis references byte-independently while adding exactly one `existing-feature | candidate | gap` resolution in the decision-derived reviewed view.
@@ -96,9 +96,9 @@ uncertain primary publication and partially failed primary transactions still
 fail. Damaged originals are preserved. Exact retry reuses the verified record;
 it does not create another decision or widen execution authority.
 
-## HEAD continuity boundary
+## Lode continuity boundary
 
-`HEADContinuitySnapshot` is built on demand and is never written to project storage. It contains exact references to current Project, Session, Run, WholePlan, ExecutionContract, ResultPacket, ReviewDecision, checkpoint, Product Model, World Model, and product-operating identities when present.
+`LodeContinuitySnapshot` is built on demand and is never written to project storage. It contains exact references to current Project, Session, Run, WholePlan, ExecutionContract, ResultPacket, ReviewDecision, checkpoint, Product Model, World Model, and product-operating identities when present.
 
 It has all of these fixed properties:
 
@@ -108,7 +108,7 @@ It has all of these fixed properties:
 - `promotionAuthority: false`
 - `objectiveRewrite: false`
 
-Recovery authority remains `.head/sessions/current.json`, Run canon, and Session/Run checkpoints. The snapshot cannot replace continuous HEAD whole-outcome judgment.
+Recovery authority remains `.lode/sessions/current.json`, Run canon, and Session/Run checkpoints. The snapshot cannot replace continuous Lode whole-outcome judgment.
 
 Repeated `product-operating-status` and `head-continuity` reads in the same process use a disclosed verified-snapshot cache keyed by the Product Operating projection identity and World Model content identity. A Core write invalidates the cache. Use `--fresh` or MCP `fresh: true` to force full artifact and World Model verification. Cache state is operational only and is never authority or recovery evidence.
 
@@ -117,7 +117,7 @@ Repeated `product-operating-status` and `head-continuity` reads in the same proc
 `head help` exposes Core work and recovery. Reason about risk directly and keep
 ephemeral facts, hypotheses, inferences and their evidence in the conversation.
 Use `head help-all` only when durable Signal/Hypothesis, audit or recovery work is
-needed. HEAD chooses means and expresses ephemeral learning directly; no Core
+needed. Lode chooses means and expresses ephemeral learning directly; no Core
 lane classifier or note-formatting operation is retained.
 
 ```text
@@ -134,31 +134,31 @@ The record/review/observe commands attempt to rebuild the local World Model and 
 
 ## MCP
 
-HEAD works directly by default and uses ordinary Host delegation when useful.
+Lode works directly by default and uses ordinary Host delegation when useful.
 Managed execution is selected only when actual recovery/effect tracking requires
 it; worker count is not a risk score. Existing protected transitions verify their
 own authority, rather than trusting a lane recommendation.
 
 The optional typed MCP catalog includes:
 
-- `head_product_signal_record`
-- `head_product_hypothesis_record`
-- `head_product_initiative_propose`
-- `head_product_initiative_review`
-- `head_product_outcome_observe`
-- `head_product_operating_status`
-- `head_continuity_snapshot`
+- `lode_product_signal_record`
+- `lode_product_hypothesis_record`
+- `lode_product_initiative_propose`
+- `lode_product_initiative_review`
+- `lode_product_outcome_observe`
+- `lode_product_operating_status`
+- `lode_continuity_snapshot`
 
 The default MCP list focuses on Core and recovery, including independent Session
 creation and current common-direction updates. Use an already-provided typed tool
 directly for normal first use. For a needed optional schema, use
-`head_tools_discover` (exact name or returned prefix). Its compatible `invokeWith`
-still names `head_tools_read` or `head_tools_call`, accepting `{name, arguments}`
+`lode_tools_discover` (exact name or returned prefix). Its compatible `invokeWith`
+still names `lode_tools_read` or `lode_tools_call`, accepting `{name, arguments}`
 with the original inner schema. These stateless routes preserve dispatch, checks
 and results; no registration, activation or new internal approval gate is added.
 Read-only calls retain their separate route. A known optional contract needs no
 prior discovery. Normal first use is not a route around a refused effect. Managed mutations
-use the explicit managed route when useful for durable work: `head_tools_call`
+use the explicit managed route when useful for durable work: `lode_tools_call`
 with `execution_mode: "managed"`, preserving the original checks without user unlock.
 
 Session creation adds or reuses a no-clobber canonical Session; its replaceable

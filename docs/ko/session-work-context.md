@@ -4,7 +4,7 @@
 
 [한국어](session-work-context.md)
 
-일반 조사와 직접 수정에는 Run이나 저장 의식이 필요하지 않습니다. HEAD는
+일반 조사와 직접 수정에는 Run이나 저장 의식이 필요하지 않습니다. Lode는
 의미 있는 인계·맥락 유실 경계에서 필요한 내용을 보존하고, 같은 논리 Session의
 진입에서 선택된 원본을 다시 구성합니다. 전체 대화 복구나 저장하지 않은 내용의
 무손실 보존을 보장하는 기능은 아닙니다.
@@ -16,7 +16,7 @@
 Project 갱신이나 P3 메모로 대신하지 않습니다. 예를 들어 “로컬 조사만, 네트워크
 금지”를 목적·명시 결정에 보존하고, 이후 checkpoint에서 이전 재작성 제안을
 “재작성 취소, 설명만”으로 바꿀 수 있습니다. 다른 Session은 변하지 않습니다.
-이 텍스트의 작성·해석은 HEAD의 몫이며 Core는 단어에서 승인을 추출하지 않습니다.
+이 텍스트의 작성·해석은 Lode의 몫이며 Core는 단어에서 승인을 추출하지 않습니다.
 과거 결정이나 다음 단계는 현재 실행 권한이 아닙니다.
 
 먼저 기존 checkpoint·결과·검토·소스 원본을 재사용합니다. 거기에 없는 판단 이유,
@@ -29,7 +29,7 @@ Project 갱신이나 P3 메모로 대신하지 않습니다. 예를 들어 “�
 
 ### Session·선언된 작업 root·작성된 주제
 
-의미 있는 완료·인계·조건 변경에서 HEAD는 기존 두 writer로 실제 소비 경로의 결과,
+의미 있는 완료·인계·조건 변경에서 Lode는 기존 두 writer로 실제 소비 경로의 결과,
 판단 이유·대안, 남은 일과 불확실성을 보존할 수 있습니다. 선택적 `workTopics: string[]`는
 작성된 탐색 라벨이며 Product 온보딩이나 사용자 분류표가 필요하지
 않습니다. 라벨만으로는 의미 있는 작업 근거가 되지 않습니다. 필드가 없으면 정규화
@@ -59,20 +59,20 @@ startup은 실제로 출력에 담은 record의 index로 group을 만들고 Host
 이 정리는 native 자동종료·ancestry·실시간 활동판정을 구현하지 않습니다. 로컬 fixture와
 지침 검사는 실제 Host 전달이나 모델 준수의 증거가 아닙니다.
 
-- checkpoint 동기화가 이미 유용한 경우 HEAD는 기존 `head_checkpoint_sync`
+- checkpoint 동기화가 이미 유용한 경우 Lode는 기존 `lode_checkpoint_sync`
   요청에 선택적인 `work_evidence`를 함께 넣습니다. P2와 P3 결과는 별개입니다.
   stale·deferred checkpoint 때문에 근거가 방향으로 승격되지 않으며, 선택적
   근거 저장 실패가 유효한 명시적 P2 게시를 막지도 않습니다.
-- checkpoint가 불필요한 의미 있는 작업에는 선택적 `head_session_work_record`
-  한 번으로 Run 없는 맥락을 보존합니다. HEAD가 대화에서 필요한 항목만 작성합니다.
+- checkpoint가 불필요한 의미 있는 작업에는 선택적 `lode_session_work_record`
+  한 번으로 Run 없는 맥락을 보존합니다. Lode가 대화에서 필요한 항목만 작성합니다.
   사용자는 JSON·ID·저장 승인·Run·Capsule을 준비하지 않습니다.
-- `head_conversation_enter`는 선택된 Session의 원본과 P2 방향을 현재 공통
+- `lode_conversation_enter`는 선택된 Session의 원본과 P2 방향을 현재 공통
   제약·취소와 함께 읽습니다. 쓰기는 없으며 선택적 근거의 누락·손상은 해당 계층만
   제한합니다.
-- `head_session_work_read`로 알고 있는 정확한 원본이나 명시적 ID anchor의 조회
+- `lode_session_work_read`로 알고 있는 정확한 원본이나 명시적 ID anchor의 조회
   페이지를 펼칩니다. 필요에 따른 확대이지 의무적인 도구 호출 순서는 아닙니다.
 
-이미 저장한 작업도 기존 `head_project_graph` 탐색에 나타납니다. 질문·경로·anchor·
+이미 저장한 작업도 기존 `lode_project_graph` 탐색에 나타납니다. 질문·경로·anchor·
 이웃 조회에서 검증된 실제 소유 Session별 이유·대안·관측한 작업·남은 일·불확실성을
 읽을 수 있습니다. 그래프 탐색은 Project 범위이며 native 연결이나 Session 전환이
 필요하지 않고, 선택된 Session의 진입이나 현재 P2 방향을 대체하지 않습니다.
@@ -107,8 +107,8 @@ Hook, 선택과 proof 검사는 그대로입니다. 완전한 반환 본문은 �
 확대 또는 해당 소스 확인이 필요할 수 있습니다. 과거 내용은 현재 효과 권한이
 아니며, 실제로 비어 있는 정상 진입은 조용히 유지합니다.
 
-자체완결적인 [head-conversation Skill](../../skills/head-conversation/SKILL.md)은
-HEAD 작업·선택·진행·결과를 사용자 언어로 설명하도록 돕습니다. 일반적인 implicit
+자체완결적인 [lode-conversation Skill](../../skills/lode-conversation/SKILL.md)은
+Lode 작업·선택·진행·결과를 사용자 언어로 설명하도록 돕습니다. 일반적인 implicit
 Skill 발견에 참여하지만 Core 실행·복구·권한 보호의 전제는 아닙니다. 로컬 패키지
 검증은 동봉한 bytes를 확인할 뿐 설치나 실제 Host 선택을 증명하지 않습니다.
 
@@ -129,7 +129,7 @@ Session의 복구나 작업 맥락 조회를 막지 않습니다. 진입은 수�
 
 방향 포인터가 없더라도 원본 revision이나 식별 가능한 저장 중단 staging이 남아
 있으면 빈 방향으로 처리하지 않습니다. 진입은 공통 방향만 확인 불가로 표시하고,
-독립적으로 검증된 checkpoint와 작업 근거는 유지합니다. HEAD는 저장·수리·승인
+독립적으로 검증된 checkpoint와 작업 근거는 유지합니다. Lode는 저장·수리·승인
 절차를 추가하지 않고 독립 작업을 계속합니다. 현재 방향에 의존하는 효과와
 checkpoint CAS는 계속 엄격하게 검사하며, 과거 결정·다음 작업으로 현재 제약이나
 취소를 대신하지 않습니다. 기존 continuation 검사는 일회용 token 소비 전에 수행합니다.
@@ -144,7 +144,7 @@ Project-only 분류를 사용합니다. 기존 readiness 검사는 유지하며 
 고르거나 Host binding을 고치지는 않습니다.
 
 짧은 작업은 추가 기록을 만들지 않습니다. 동일한 선택 입력은 원본 바이트를
-재사용하고, 정말 다른 반복 관찰은 HEAD가 사건 구분을 붙일 수 있습니다.
+재사용하고, 정말 다른 반복 관찰은 Lode가 사건 구분을 붙일 수 있습니다.
 중복 제거는 효과 발생의 증명이 아닙니다. 다른 판단은 마지막 작성자로 덮지 않고
 별도 근거로 남깁니다. 재시도는 저장만 보완하며 코드·provider·외부 효과를 반복하지
 않습니다. 지원되는 보존 경계 전에 갑자기 종료되면 미저장 내용은 유실될 수 있습니다.
@@ -156,7 +156,7 @@ Project-only 분류를 사용합니다. 기존 readiness 검사는 유지하며 
 기존 두 선택적 근거 입력은 `workLink: {root, predecessor}`와
 `executionObservation: {state, target?}`을 받습니다. 각 selector는 같은 Project와
 선택 논리 Session에 실제 보존된 원본의 `{evidenceId, evidenceDigest}`입니다.
-상태는 `running`, `paused`, `ended`, `unknown`입니다. HEAD가 기존의 의미 있는
+상태는 `running`, `paused`, `ended`, `unknown`입니다. Lode가 기존의 의미 있는
 보존 경계에서 필요한 경우에만 내부적으로 공급합니다. 별도 시작·종료·저장 호출,
 사용자 ID 양식이나 승인은 필요하지 않습니다. 관측 자체는 의미 있는 근거일 수
 있지만 연결만으로는 작업 내용을 보존한 것이 아닙니다.
@@ -313,7 +313,7 @@ proof-only 원본을 세지 않습니다. 따라서
 가져오지 않습니다. 변경·누락을 표시하고 경로·digest만으로 내용을 복구했다고 하지
 않습니다. 손상된 원본 하나는 해당 항목만 제외하며 유효한 근거·P2 복구·독립 작업을
 막지 않습니다. 진입 중 P2나 공통 방향의 변경을 감지하면 섞인 맥락을 폐기하고
-HEAD가 의존하는 조회만 다시 하도록 합니다. 순차 읽기는 원자적 snapshot이 아니므로
+Lode가 의존하는 조회만 다시 하도록 합니다. 순차 읽기는 원자적 snapshot이 아니므로
 모든 ABA 변경을 감지할 수는 없습니다.
 
 ## 식별자 추정 없는 Host 지원
@@ -410,7 +410,7 @@ selector를 넣지 않습니다. 선택적 연결 유실 후에도 정확한 명
 
 ### 어떤 작업이 선택을 유지하나?
 
-기존 `head_project_initialize_or_resume`의 성공한 선택만 보존합니다. 첫 초기화는
+기존 `lode_project_initialize_or_resume`의 성공한 선택만 보존합니다. 첫 초기화는
 검증된 default를 유지하며 명시 재개로 기존 Session을 공유·분리할 수 있습니다.
 동일 선택 반복에는 쓰기가 없습니다. 별도 select/bind 도구, 사용자 ID 입력,
 save 절차나 승인 결정을 추가하지 않습니다. Session 생성만 하거나 일회성으로
@@ -467,3 +467,15 @@ default를 추정하지 않습니다. 정확한 명시 route와 독립 작업은
 소스·command fixture는 로컬 계약을 입증할 뿐 설치 Hook 신뢰·실제 provider 호출·모델
 이해를 입증하지 않습니다. 패키지 설치만으로 Hook 실행이 증명되지는 않으며 실제
 활성화와 계정·모델 시험은 별도입니다.
+
+## 경로 기준과 기존 Project
+
+Project 내부 참조는 검증된 Project root를 기준으로 한 `/` 상대경로입니다. 생성
+Markdown의 `relativePath`는 게시 root 기준이고, href는 해당 문서 위치 기준입니다.
+문서의 `../` 링크가 원본 selector의 `..`를 허용하는 것은 아닙니다.
+
+런타임 `project_root`, 저장된 `projectRoot`, 설치의 `pluginRoot`와 root 기반 식별자는
+검증된 절대 root와 실제 Session 소유자에 계속 결합됩니다. 새 Project는 `.lode/`를
+사용하고 기존 `.head/` 원문과 exact selector는 그대로 유지합니다. 이는 기존 경로
+계약의 설명이며, workspace 이동 지원이나 자동 repair 기능이 아닙니다.
+

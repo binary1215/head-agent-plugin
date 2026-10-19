@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { buildCodexMarketplaceSnapshot, verifyCodexMarketplaceSnapshot } from "./lib/codex-marketplace.mjs";
+import { ARTIFACT_COMPOSITION } from "./lib/lode-artifact-composition.mjs";
 
 function canonical(value) {
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
@@ -38,15 +39,23 @@ if (providedRoot) {
     requireNativeBundle,
   }), null, 2)}\n`);
 } else {
-  const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "head-agent-codex-marketplace-"));
+  const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "lode-agent-codex-marketplace-"));
   const snapshotRoot = path.join(temporaryRoot, "snapshot");
   try {
     const built = buildCodexMarketplaceSnapshot({ sourceRoot: path.resolve("."), outputRoot: snapshotRoot });
     const verified = verifyCodexMarketplaceSnapshot({ root: snapshotRoot });
     assert.deepEqual(verified, built);
+    const carrierRoot = path.join(temporaryRoot, "legacy-carrier");
+    const carrier = buildCodexMarketplaceSnapshot({ sourceRoot: path.resolve("."), outputRoot: carrierRoot, name: "head-agent-plugin" });
+    assert.equal(carrier.marketplaceName, "head-agent-plugin");
+    assert.equal(carrier.pluginName, "head-agent-core");
+    const carrierPluginRoot = path.join(carrierRoot, "plugins", carrier.pluginName);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(carrierPluginRoot, "package.json"), "utf8")).name, "@local/head-agent-core-plugin");
+    assert.equal(JSON.parse(fs.readFileSync(path.join(carrierRoot, ".head-agent-marketplace-generated.json"), "utf8")).kind, "HeadAgentCodexMarketplaceSnapshot");
+    assert.equal(fs.existsSync(path.join(carrierRoot, ".lode-agent-marketplace-generated.json")), false);
     const skillFiles = ["SKILL.md", "references/runtime-composition.md", "references/conversation-ux.md", "references/authority-and-roles.md"];
     for (const file of skillFiles) {
-      const relative = path.join("skills", "head-agent-core", file);
+      const relative = path.join("skills", ARTIFACT_COMPOSITION.skills.core, file);
       assert.deepEqual(fs.readFileSync(path.join(snapshotRoot, "plugins", built.pluginName, relative)),
         fs.readFileSync(path.resolve(relative)), `Generated Codex skill bytes differ: ${file}`);
     }
@@ -55,7 +64,7 @@ if (providedRoot) {
     assert.equal(fs.existsSync(path.join(snapshotRoot, "plugins", built.pluginName, ".git")), false);
     assert.equal(fs.existsSync(path.join(snapshotRoot, "plugins", built.pluginName, "legacy")), false);
     const runtimeManifest = JSON.parse(fs.readFileSync(path.join(snapshotRoot, "plugins", built.pluginName, "distribution-manifest.json"), "utf8"));
-    const conversationSkill = "skills/head-conversation/SKILL.md";
+    const conversationSkill = `skills/${ARTIFACT_COMPOSITION.skills.conversation}/SKILL.md`;
     const conversationBytes = fs.readFileSync(path.resolve(conversationSkill));
     assert.deepEqual(fs.readFileSync(path.join(snapshotRoot, "plugins", built.pluginName, conversationSkill)), conversationBytes);
     const conversationEntry = runtimeManifest.files.find(file => file.path === conversationSkill);
@@ -101,7 +110,7 @@ if (providedRoot) {
     legacyDistribution.releaseId = `release-${sha256(Buffer.from(canonical(legacyDistributionIdentity))).slice(0, 24)}`;
     fs.writeFileSync(legacyDistributionFile, `${JSON.stringify(legacyDistribution, null, 2)}\n`, "utf8");
 
-    const legacyMarkerFile = path.join(legacySnapshotRoot, ".head-agent-marketplace-generated.json");
+    const legacyMarkerFile = path.join(legacySnapshotRoot, `.${ARTIFACT_COMPOSITION.identity}-agent-marketplace-generated.json`);
     const legacyMarker = JSON.parse(fs.readFileSync(legacyMarkerFile, "utf8"));
     legacyMarker.distributionReleaseId = legacyDistribution.releaseId;
     const legacyMarkerIdentity = { ...legacyMarker };
@@ -153,6 +162,7 @@ if (providedRoot) {
 
     process.stdout.write(`${JSON.stringify({
       status: "codex_marketplace_packaging_verified",
+      legacyCarrierIdentityVerified: true,
       marketplaceName: built.marketplaceName,
       pluginName: built.pluginName,
       pluginVersion: built.pluginVersion,
@@ -175,7 +185,7 @@ if (providedRoot) {
     const resolvedTemporaryRoot = path.resolve(temporaryRoot);
     const resolvedOsTemp = path.resolve(os.tmpdir());
     if (path.dirname(resolvedTemporaryRoot) === resolvedOsTemp
-      && path.basename(resolvedTemporaryRoot).startsWith("head-agent-codex-marketplace-")) {
+      && path.basename(resolvedTemporaryRoot).startsWith("lode-agent-codex-marketplace-")) {
       fs.rmSync(resolvedTemporaryRoot, { recursive: true, force: true });
     }
   }

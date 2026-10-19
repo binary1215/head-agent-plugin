@@ -1,3 +1,4 @@
+import { relativeProjectArtifact } from "../scripts/lib/project-storage-format.mjs";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -62,6 +63,7 @@ async function fixture(t) {
     fs.rmSync(container, { recursive: true, force: true });
   });
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const storage = inspectProject(root).storage;
   const capsule = compileContext({ root, task: "Verify synthetic connected worker execution evidence", persist: true }).capsule;
   const plan = createWholePlanSnapshot({ root, objective: "Verify bounded worker process and Git evidence",
     plan: [{ id: "verify", outcome: "Verified local fixtures, no model invocation" }] }).artifact;
@@ -75,13 +77,13 @@ async function fixture(t) {
   const versionEvidence = await buildRuntimeVersionEvidence({ runtimes: ["codex"], environment, spawnImplementation: capabilitySpawn });
   const protocolEvidence = await buildRuntimeProtocolEvidence({ runtimes: ["codex"], environment, versionEvidence, spawnImplementation: capabilitySpawn });
   const inspected = inspectProject(root);
-  const projectBinding = buildRuntimeProjectBinding({ projectId: inspected.project.projectId, headSessionId: inspected.state.sessionId,
+  const projectBinding = buildRuntimeProjectBinding({ storage, projectId: inspected.project.projectId, headSessionId: inspected.state.sessionId,
     projectRoot: root, projectStatus: "ready", versionEvidence, protocolEvidence });
   const authorize = worker => buildRuntimeInvocationAuthorization({ root, runtime: "codex", protocolEvidence, projectBinding,
     runtimeSelection: { model: "fixture/same-model" }, limits: { timeoutMs: 20000 }, worker, persist: true }).authorization;
-  const protectedFiles = [".head/project.json", ".head/sessions/current.json", `.head/sessions/runs/${run.runId}/run.json`];
+  const protectedFiles = [["project.json"], ["sessions", "current.json"], ["sessions", "runs", run.runId, "run.json"]].map(parts => relativeProjectArtifact(storage, ...parts));
   const protectedSnapshot = () => protectedFiles.map(file => fs.readFileSync(path.join(root, file)).toString("base64"));
-  return { root, container, operational, barrierDirectory, protocolEvidence, projectBinding, authorize, cleanups, protectedSnapshot };
+  return { root, storage, container, operational, barrierDirectory, protocolEvidence, projectBinding, authorize, cleanups, protectedSnapshot };
 }
 
 async function git(root, args, expectedCode = 0) {
@@ -175,7 +177,7 @@ test("C02 same-model workers actually overlap with distinct authorization/owners
     assert.equal(reconcileBoundedWorkerJob(worker.input, { onProcess }).status, "completed");
     assert.equal((await startBoundedWorkerJob(worker.input, { host, supervisorSelection: selection, onProcess })).status, "completed");
     assert.deepEqual(fs.readFileSync(path.join(jobDirectory(worker), "launch.json")), launchBytes[index]);
-    const record = readRuntimeInvocationRecord(worker.input);
+    const record = readRuntimeInvocationRecord({ ...worker.input, storage: f.storage });
     assert.equal(record.authorization.authorizationId, worker.authorization.authorizationId);
     assert.equal(record.receipt.providerBoundary.actualProviderInvoked, false);
     assert.equal(record.receipt.processBoundary.descendantTreeOwnershipValidated, true);
@@ -229,6 +231,7 @@ test("C04 real Git dirty and untracked selections preserve exact bytes and rejec
   }
   assert.equal(fs.existsSync(path.join(workspaceBinding.executionRoot, ".git")), false);
   assert.equal(fs.existsSync(path.join(workspaceBinding.executionRoot, ".head")), false);
+  assert.equal(fs.existsSync(path.join(workspaceBinding.executionRoot, ".lode")), false);
   assert.equal(await git(f.root, porcelainArgs), porcelain);
   fs.writeFileSync(path.join(f.root, "unrelated.txt"), "Unselected change must not block preparation");
   prepareRuntimeInvocationExecution({ root: f.root, authorization });

@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { catalogTools, dispatch } from '../scripts/mcp-server.mjs';
 import { runCommand, usage } from '../scripts/head.mjs';
-import { initializeProject } from '../scripts/lib/head-core.mjs';
+import { initializeProject, inspectProject } from '../scripts/lib/head-core.mjs';
 import { buildWorldModel } from '../scripts/lib/world-model.mjs';
 import { updateProjectDirection } from '../scripts/lib/project-direction.mjs';
 
@@ -20,10 +20,11 @@ function fixture(t) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(parent, 'head-light-surface-')));
   t.after(() => { assert.equal(path.dirname(root), parent); fs.rmSync(root, { recursive: true, force: true }); });
   initializeProject({ root, pluginRoot, runtimes: ['codex'] });
+  const layout = inspectProject(root).storage;
   fs.writeFileSync(path.join(root, 'queue.mjs'), 'export function drain(items) { return items.shift(); }\n');
-  return root;
+  return { root, layout };
 }
-function originals(root) {
+function originals(root, layout) {
   const files = {};
   const walk = directory => {
     for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
@@ -32,14 +33,16 @@ function originals(root) {
       else files[path.relative(root, file)] = fs.readFileSync(file).toString('base64');
     }
   };
-  walk(path.join(root, '.head'));
+  walk(path.join(root, layout.directory));
+  assert.ok(Object.hasOwn(files, path.join(layout.directory, 'project.json')));
+  assert.ok(Object.hasOwn(files, path.join(layout.directory, 'sessions', 'current.json')));
   return files;
 }
 
 test('removed role-mail APIs have no discovery, CLI or hidden dispatch route', async t => {
-  const root = fixture(t), before = originals(root);
-  for (const suffix of ['send_message', 'read_inbox', 'wait_reply', 'reply_message']) {
-    const name = `head_coordination_${suffix}`;
+  const { root, layout } = fixture(t), before = originals(root, layout);
+  for (const prefix of ['head', 'lode']) for (const suffix of ['send_message', 'read_inbox', 'wait_reply', 'reply_message']) {
+    const name = `${prefix}_coordination_${suffix}`;
     assert(!catalogTools.some(tool => tool.name === name));
     const discovery = await dispatch({ id: 1, method: 'tools/call', params: {
       name: 'head_tools_discover', arguments: { name }
@@ -52,15 +55,15 @@ test('removed role-mail APIs have no discovery, CLI or hidden dispatch route', a
     assert.throws(() => runCommand([`coordination-${suffix}`, root]), /Unknown command/);
   }
   assert(!usage({ all: true }).commands.some(command => /coordination-/.test(command)));
-  assert.deepEqual(originals(root), before);
+  assert.deepEqual(originals(root, layout), before);
 });
 
 test('CLI and typed MCP keep arbitrary Context budgets advisory with exact current direction', async t => {
-  const root = fixture(t);
+  const { root, layout } = fixture(t);
   const direction = updateProjectDirection({ root, expectedDirectionId: null, input: {
     goal: 'Investigate the queue', constraints: ['Keep source local'], cancelledActions: ['Deploy']
   } }).direction;
-  const before = originals(root), task = '  Investigate queue\n';
+  const before = originals(root, layout), task = '  Investigate queue\n';
   const prepared = await call('head_context_prepare', { project_root: root, task, budget: 50000 });
   const cliPrepared = await runCommand(['context-prepare', root, '--task', task, '--budget', '50000']);
   assert.deepEqual(prepared, cliPrepared);
@@ -74,13 +77,13 @@ test('CLI and typed MCP keep arbitrary Context budgets advisory with exact curre
   assert.equal(preview.workflow.authority.judgesSemanticSufficiency, false);
   assert.equal('coverageAssessment' in preview.capsule, false);
   assert.equal('attemptedTiers' in preview.workflow.budget, false);
-  assert.deepEqual(originals(root), before);
+  assert.deepEqual(originals(root, layout), before);
 });
 
 test('CLI and typed MCP share compact graph defaults and explicit original-detail expansion', async t => {
-  const root = fixture(t);
+  const { root, layout } = fixture(t);
   await buildWorldModel({ root });
-  const before = originals(root);
+  const before = originals(root, layout);
   const compact = await call('head_project_graph', { project_root: root, query: 'queue' });
   const cliCompact = await runCommand(['graph-query', root, '--query', 'queue']);
   assert.equal(compact.resultId, cliCompact.resultId);
@@ -99,5 +102,5 @@ test('CLI and typed MCP share compact graph defaults and explicit original-detai
   assert.equal(detail.query.details, true);
   assert(detail.nodes.some(node => node.nodeId === anchor));
   assert.equal(detail.authority.recoveryAuthority, false);
-  assert.deepEqual(originals(root), before);
+  assert.deepEqual(originals(root, layout), before);
 });

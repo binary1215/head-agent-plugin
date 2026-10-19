@@ -1,9 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
-import { inspectProject, isProjectRecoveryReadable, SCHEMA_VERSION } from "./head-core.mjs";
+import { inspectProject, isProjectRecoveryReadable, SCHEMA_VERSION } from "./lode-core.mjs";
 import { inspectRecoveryCheckpointBasis } from "./compaction-recovery.mjs";
 import { sessionStateHash } from "./run-lineage.mjs";
 import { restoreSessionFromArtifacts } from "./session-recovery.mjs";
+
+import { formatForVerifiedOwner } from "./project-storage-format.mjs";
+import { publicToolName } from "./lode-artifact-composition.mjs";
 
 export const RECOVERY_CHECKPOINT_DIAGNOSIS_VERSION = "0.1.0";
 
@@ -54,10 +57,11 @@ function observedProject(root) {
       ? "not-applicable"
       : !/^run-[0-9]+-[a-f0-9]{6}$/.test(selectedRunId)
         ? "invalid-id"
-        : fs.existsSync(path.join(inspected.project.projectRoot, ".head", "sessions", "runs", selectedRunId, "run.json"))
+        : fs.existsSync(path.join(inspected.project.projectRoot, formatForVerifiedOwner(inspected.storage).directory, "sessions", "runs", selectedRunId, "run.json"))
           ? "present"
           : "missing";
     return {
+      storage: inspected.storage,
       status: inspected.status,
       recoveryReadable: isProjectRecoveryReadable(inspected),
       projectId: inspected.project?.projectId || null,
@@ -200,14 +204,14 @@ function unavailableCheckpointUpdate(reasonCode, status = "unavailable") {
   };
 }
 
-function semanticFreshnessBoundary() {
+function semanticFreshnessBoundary(storage) {
   return {
     status: "not-mechanically-determined",
     mechanicallyDetermined: false,
     basisEqualityProvesCurrentIntent: false,
     digestEqualityProvesCurrentIntent: false,
     automaticHeadAssessmentTriggered: false,
-    requiredEvaluator: "current-provider-head-when-recovery-direction-is-materially-relevant",
+    requiredEvaluator: formatForVerifiedOwner(storage).value("current-provider-head-when-recovery-direction-is-materially-relevant"),
   };
 }
 
@@ -243,7 +247,7 @@ function baseProjection({ project, checkpoint, diagnosis, artifactRecovery, chec
   return {
     schemaVersion: SCHEMA_VERSION,
     kind: "RecoveryCheckpointDiagnosisProjection",
-    protocol: { name: "head-agent-core-recovery-checkpoint-diagnosis", version: RECOVERY_CHECKPOINT_DIAGNOSIS_VERSION },
+    protocol: { name: formatForVerifiedOwner(project.storage).protocol("head-agent-core-recovery-checkpoint-diagnosis"), version: RECOVERY_CHECKPOINT_DIAGNOSIS_VERSION },
     status: "recovery_checkpoint_diagnosed",
     projectId: project.projectId,
     sessionId: project.sessionId,
@@ -251,7 +255,7 @@ function baseProjection({ project, checkpoint, diagnosis, artifactRecovery, chec
     diagnosis,
     artifactRecovery,
     checkpointUpdate,
-    semanticFreshness: semanticFreshnessBoundary(),
+    semanticFreshness: semanticFreshnessBoundary(project.storage),
     observationConsistency: consistency,
     nextHeadAction,
     headActionRequired,
@@ -540,7 +544,7 @@ export function inspectRecoveryCheckpointDiagnosis({ root = ".", includeRestore 
       }),
       nextHeadAction: {
         id: "continue-or-assess-checkpoint-need",
-        summary: "Continue ordinary work. Only if durable recovery is useful, read a fresh head_checkpoint_basis, then let the current provider HEAD derive direction before sync.",
+        summary: `Continue ordinary work. Only if durable recovery is useful, read a fresh ${publicToolName("head_checkpoint_basis")}, then let the current provider Lode derive direction before sync.`,
       },
       headActionRequired: false,
       recoveryDependentWorkBlocked: false,

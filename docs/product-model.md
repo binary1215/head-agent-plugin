@@ -8,9 +8,9 @@ validation fixtures, or model output.
 
 ## Authority and lifecycle
 
-`.head/context/product-model.json` is mutable project canon for `FeatureGroup`, `Capability`, `Feature`, `Requirement`, `Constraint`, `Decision`, and optional schema-v2 `Policy`. New project initialization creates an explicit empty schema-v1 document. Existing schema-v1 bytes, protocol, hash, read, and replay behavior remain exact; schema v2 is entered only by an explicitly accepted Policy candidate or another already-authorized complete Product Model write. An older initialized project without the file is interpreted as the same empty semantic model until an authorized process creates the file, so migration does not invent product meaning.
+`.lode/context/product-model.json` is mutable project canon for `FeatureGroup`, `Capability`, `Feature`, `Requirement`, `Constraint`, `Decision`, and optional schema-v2 `Policy`. New project initialization creates an explicit empty schema-v1 document. Existing schema-v1 bytes, protocol, hash, read, and replay behavior remain exact; schema v2 is entered only by an explicitly accepted Policy candidate or another already-authorized complete Product Model write. An older initialized project without the file is interpreted as the same empty semantic model until an authorized process creates the file, so migration does not invent product meaning.
 
-An empty Product Model means “HEAD has no approved product concepts yet.” Existing source files, tests, README headings, issues, or directory names remain Evidence and do not automatically become Features. The active onboarding flow can normalize immutable candidates from a provider HEAD semantic proposal grounded in bounded current repository evidence, or from a structured new-project brief, but requires an explicit batch ReviewDecision before promotion into this canon. Directory structure is never converted into authoritative FeatureGroup taxonomy.
+An empty Product Model means “Lode has no approved product concepts yet.” Existing source files, tests, README headings, issues, or directory names remain Evidence and do not automatically become Features. The active onboarding flow can normalize immutable candidates from a provider Lode semantic proposal grounded in bounded current repository evidence, or from a structured new-project brief, but requires an explicit batch ReviewDecision before promotion into this canon. Directory structure is never converted into authoritative FeatureGroup taxonomy.
 
 ## Schema
 
@@ -77,11 +77,11 @@ Keys use letters, digits, dot, underscore, colon, or hyphen. Keys must be unique
 
 ## Policy proposal and review
 
-In conversation, HEAD may use `head_product_policy_propose` to record one immutable create, revise, or retire candidate against the exact current Product Model. The proposal can cite bounded local source evidence and exact semantic references, but missing optional evidence or references are disclosed rather than made a gate. It does not change Canon or block ordinary work. HEAD presents the meaning, exact applications, references, evidence state, and impact as one compact decision card; only after an unambiguous current user decision may it call `head_product_policy_review`. `head_product_policy_status` is a read-only inspection surface.
+In conversation, Lode may use `lode_product_policy_propose` to record one immutable create, revise, or retire candidate against the exact current Product Model. The proposal can cite bounded local source evidence and exact semantic references, but missing optional evidence or references are disclosed rather than made a gate. It does not change Canon or block ordinary work. Lode presents the meaning, exact applications, references, evidence state, and impact as one compact decision card; only after an unambiguous current user decision may it call `lode_product_policy_review`. `lode_product_policy_status` is a read-only inspection surface.
 
 Acceptance is the one protected transition: it rechecks the current Session, Product Model base, active Run conflict, candidate identity, and any bound local evidence, then records the ReviewDecision and writes the exact schema-v2 result under the common mutation lock. Exact replay completes only missing outputs of that same immutable decision and does not ask for another decision; when the approved Canon is already published, replay repairs only missing derived projection output. Rejection records the disposition without changing Canon. Candidate and ReviewDecision artifacts are projected into the graph for audit; there is no second Policy store.
 
-After review, source evidence can change without silently revising or invalidating the accepted Policy. Status and lineage trace expose one shared bounded P4 currentness projection: each source is `unchanged`, `changed`, `missing`, or `not-assessed`, while external evidence remains `not-assessed`. Byte freshness is not semantic reassessment, does not require an automatic second review, and never blocks ordinary work. HEAD may use the disclosed change as evidence for a new proposal when the task warrants it.
+After review, source evidence can change without silently revising or invalidating the accepted Policy. Status and lineage trace expose one shared bounded P4 currentness projection: each source is `unchanged`, `changed`, `missing`, or `not-assessed`, while external evidence remains `not-assessed`. Byte freshness is not semantic reassessment, does not require an automatic second review, and never blocks ordinary work. Lode may use the disclosed change as evidence for a new proposal when the task warrants it.
 
 ## Temporal projection
 
@@ -106,7 +106,7 @@ Whitespace, object-field ordering, and set-like reference ordering do not change
 After `world-index`, product concepts can be traversed with the same bounded temporal query contract:
 
 ```powershell
-node scripts/head.mjs world-temporal <project> --query "Message delivery" --kind Feature,FeatureRevision,Capability --relations REALIZES,HAS_REVISION,CURRENT_REVISION --depth 2 --limit 100 --edge-limit 200
+node scripts/lode.mjs world-temporal <project> --query "Message delivery" --kind Feature,FeatureRevision,Capability --relations REALIZES,HAS_REVISION,CURRENT_REVISION --depth 2 --limit 100 --edge-limit 200
 ```
 
 The Context Compiler may include a task-relevant bounded Product Context only from a current verified World Model. It records GraphSnapshot, query, and result digests, allows only `canon-projected` product relations, and excludes unreviewed candidates.
@@ -117,7 +117,7 @@ The project-scoped onboarding state machine stores candidate sets and `decisionS
 
 Acceptance records previous and resulting Product Model identities and immutable Product Model revision documents. It then rebuilds a child SourceSnapshot and verifies that the new Product Model identity is present in the current temporal GraphSnapshot before onboarding becomes ready. See [`onboarding.md`](onboarding.md) for the complete state and input contracts.
 
-The temporal graph also projects the immutable candidate, Evidence, Unknown, ReviewDecision, and ProductModelRevision receipts needed to explain how a concept reached canon. These receipts do not become Product Model entities. Candidate nodes point to separate `ProductConceptReference` nodes, while only the reviewed resulting `.head/context/product-model.json` content creates `canon-projected` Product entities and revisions.
+The temporal graph also projects the immutable candidate, Evidence, Unknown, ReviewDecision, and ProductModelRevision receipts needed to explain how a concept reached canon. These receipts do not become Product Model entities. Candidate nodes point to separate `ProductConceptReference` nodes, while only the reviewed resulting `.lode/context/product-model.json` content creates `canon-projected` Product entities and revisions.
 
 ## Document-change application
 

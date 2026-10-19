@@ -2,11 +2,9 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { defaultSessionStatePath, sessionStatePath } from "./session-routing.mjs";
-import { inspectProject } from "./head-core.mjs";
+import { inspectProject } from "./lode-core.mjs";
 import {
-  ONBOARDING_PRODUCT_REVISION_DIRECTORY,
   ONBOARDING_STATE_PROTOCOL_VERSION,
-  ONBOARDING_STATE_RELATIVE_PATH,
   onboardingCanonicalJson,
   verifyOnboardingState,
 } from "./onboarding-contract.mjs";
@@ -26,6 +24,8 @@ import {
   verifyHistoricalBoundaryReceipt,
   verifyHistoricalInventoryEntries,
 } from "./historical-artifact-boundary-store.mjs";
+
+import { formatForVerifiedOwner, familyFormatForOriginal, relativeProjectArtifact } from "./project-storage-format.mjs";
 
 const verifiedInventories = new WeakSet();
 const MAX_BASIS_FILES = 16;
@@ -58,7 +58,7 @@ function fileBasis(projectRoot, relative, id = null) {
   return { path: relative, id, byteLength: bytes.byteLength, sha256: historicalBoundaryDigest(bytes) };
 }
 
-function verifyReferencedP2(projectRoot, state) {
+function verifyReferencedP2(projectRoot, state, storage) {
   const before = inspectRecoveryCheckpointBasis({ root: projectRoot }).basis;
   const files = [];
   if (state.latestCheckpoint) {
@@ -72,7 +72,7 @@ function verifyReferencedP2(projectRoot, state) {
   }
   const runIds = [...new Set([state.activeRunId, state.pendingReview?.runId, state.lastReviewedRunId].filter(Boolean))];
   for (const runId of runIds) {
-    const relative = `.head/sessions/runs/${runId}/run.json`;
+    const relative = relativeProjectArtifact(storage, "sessions", "runs", runId, "run.json");
     files.push(fileBasis(projectRoot, relative, runId));
   }
   if (files.length > MAX_BASIS_FILES) fail("Current P2 basis exceeds its bound.", "HISTORICAL_BOUNDARY_LIMIT");
@@ -118,31 +118,33 @@ export function captureHistoricalBoundaryApplicationBasis({ root = "." } = {}) {
   if (onboardingOwner.status !== "ready" || onboardingOwner.project.projectId !== inspected.project.projectId) {
     fail("Common onboarding Session identity must be independently readable.", "HISTORICAL_BOUNDARY_P2_UNREADABLE");
   }
-  const stateFile = path.join(projectRoot, ...ONBOARDING_STATE_RELATIVE_PATH.split("/"));
+  const stateFile = path.join(projectRoot, relativeProjectArtifact(inspected.storage, "onboarding", "current.json"));
   if (!fs.existsSync(stateFile)) fail("Onboarding state is missing.", "HISTORICAL_BOUNDARY_STATE_UNSUPPORTED");
   const onboardingState = verifyOnboardingState(readJson(stateFile, "Onboarding state"), {
     projectId: inspected.project.projectId,
     sessionId: onboardingOwner.state.sessionId,
+    storage: inspected.storage,
   });
   if (onboardingState.protocol?.version !== ONBOARDING_STATE_PROTOCOL_VERSION || onboardingState.phase !== "ready") {
     fail("The first migration slice supports only current ready onboarding state.", "HISTORICAL_BOUNDARY_STATE_UNSUPPORTED");
   }
-  const canon = readProductModelCanon({ projectRoot });
+  const canon = readProductModelCanon({ projectRoot, storage: inspected.storage });
   if (canon.status !== "present") fail("A real current Product Canon is required.", "HISTORICAL_BOUNDARY_CANON_MISSING");
   if (canon.model.productModelId !== onboardingState.productModelId) fail("Current Canon and onboarding state do not agree.", "HISTORICAL_BOUNDARY_CANON_DRIFT");
-  const revisionRelative = `${ONBOARDING_PRODUCT_REVISION_DIRECTORY}/${onboardingState.productModelId}.json`;
+  const revisionRelative = relativeProjectArtifact(inspected.storage, "onboarding", "product-model-revisions", `${onboardingState.productModelId}.json`);
   const revisionFile = path.join(projectRoot, ...revisionRelative.split("/"));
   const revision = verifyProductModelRevisionForProjection(readJson(revisionFile, "Current Product Model revision"));
   if (revision.productModelId !== canon.model.productModelId || revision.productModelHash !== canon.model.productModelHash) {
     fail("Current Canon revision is not independently readable.", "HISTORICAL_BOUNDARY_CURRENT_CANON_REVISION_UNSUPPORTED");
   }
-  const projectFile = fileBasis(projectRoot, ".head/project.json", inspected.project.projectId);
-  const sessionFile = fileBasis(projectRoot, path.relative(projectRoot, sessionStatePath(projectRoot)).split(path.sep).join("/"), inspected.state.sessionId);
-  const stateBasis = fileBasis(projectRoot, ONBOARDING_STATE_RELATIVE_PATH, onboardingState.pointerHash);
+  const projectFile = fileBasis(projectRoot, relativeProjectArtifact(inspected.storage, "project.json"), inspected.project.projectId);
+  const sessionFile = fileBasis(projectRoot, path.relative(projectRoot, sessionStatePath(projectRoot, inspected.storage)).split(path.sep).join("/"), inspected.state.sessionId);
+  const stateBasis = fileBasis(projectRoot, relativeProjectArtifact(inspected.storage, "onboarding", "current.json"), onboardingState.pointerHash);
   const canonBasis = fileBasis(projectRoot, canon.relativePath, canon.model.productModelId);
-  const referencedP2 = verifyReferencedP2(projectRoot, inspected.state);
+  const referencedP2 = verifyReferencedP2(projectRoot, inspected.state, inspected.storage);
   return {
     projectRoot,
+    storage: inspected.storage,
     projectId: inspected.project.projectId,
     sessionId: inspected.state.sessionId,
     onboardingState,
@@ -151,7 +153,7 @@ export function captureHistoricalBoundaryApplicationBasis({ root = "." } = {}) {
       project: projectFile,
       session: sessionFile,
       ...(onboardingOwner.state.sessionId !== inspected.state.sessionId ? {
-        onboardingSession: fileBasis(projectRoot, relativePath(projectRoot, defaultSessionStatePath(projectRoot)), onboardingOwner.state.sessionId),
+        onboardingSession: fileBasis(projectRoot, relativePath(projectRoot, defaultSessionStatePath(projectRoot, inspected.storage)), onboardingOwner.state.sessionId),
       } : {}),
       onboardingState: {
         ...stateBasis,
@@ -165,7 +167,7 @@ export function captureHistoricalBoundaryApplicationBasis({ root = "." } = {}) {
   };
 }
 
-export function createVerifiedHistoricalInventoryCapability({ root = ".", projectId, entries, validation } = {}) {
+export function createVerifiedHistoricalInventoryCapability({ root = ".", projectId, entries, validation, storage } = {}) {
   const projectRoot = fs.realpathSync(path.resolve(root));
   if (!validation || validation.status !== "complete-ready-verified" || validation.instructionAuthority !== false
     || validation.promotionAuthority !== false || !Array.isArray(validation.supportedCandidateVersions)
@@ -175,7 +177,7 @@ export function createVerifiedHistoricalInventoryCapability({ root = ".", projec
     || validation.supportedCandidateVersions.some((version) => !["0.1.0", "0.2.0", "0.3.0"].includes(version))) {
     fail("External historical validation is incomplete.", "HISTORICAL_BOUNDARY_EXTERNAL_VALIDATION_REQUIRED");
   }
-  verifyHistoricalInventoryEntries(entries, { projectRoot, projectId, verifyBytes: true });
+  verifyHistoricalInventoryEntries(entries, { projectRoot, projectId, verifyBytes: true, storage });
   verifyHistoricalRevisionInterpretations(entries, projectRoot);
   const basis = captureHistoricalBoundaryApplicationBasis({ root: projectRoot });
   if (basis.projectId !== projectId) fail("Historical inventory belongs to another Project.", "HISTORICAL_BOUNDARY_PROJECT_MISMATCH");
@@ -195,12 +197,12 @@ function documentIdentity(payload, idField, hashField, prefix) {
   return { ...payload, [idField]: `${prefix}-${hash.slice(0, 24)}`, [hashField]: hash };
 }
 
-function buildBoundary({ projectId, entries, appliedAtBasis, validatedHistoricalApproval }) {
+function buildBoundary({ projectId, entries, appliedAtBasis, validatedHistoricalApproval, storage }) {
   const inventoryHash = historicalBoundaryDigest(historicalBoundaryCanonicalJson({ projectId, entries }));
   const payload = {
     schemaVersion: 1,
     kind: "HistoricalArtifactBoundary",
-    protocol: { name: "head-agent-core-historical-artifact-boundary", version: HISTORICAL_BOUNDARY_PROTOCOL_VERSION },
+    protocol: { name: formatForVerifiedOwner(storage).protocol("head-agent-core-historical-artifact-boundary"), version: HISTORICAL_BOUNDARY_PROTOCOL_VERSION },
     projectId,
     inventoryHash,
     entries,
@@ -218,7 +220,7 @@ function buildReceipt(boundary) {
   return documentIdentity({
     schemaVersion: 1,
     kind: "HistoricalBoundaryApplicationReceipt",
-    protocol: { name: "head-agent-core-historical-boundary-application", version: HISTORICAL_BOUNDARY_PROTOCOL_VERSION },
+    protocol: { name: familyFormatForOriginal("head-agent-core-historical-artifact-boundary", boundary).protocol("head-agent-core-historical-boundary-application"), version: HISTORICAL_BOUNDARY_PROTOCOL_VERSION },
     projectId: boundary.projectId,
     boundaryId: boundary.boundaryId,
     boundaryHash: boundary.boundaryHash,
@@ -234,7 +236,7 @@ function buildCommit(boundary, receipt) {
   return documentIdentity({
     schemaVersion: 1,
     kind: "HistoricalBoundaryCommitMarker",
-    protocol: { name: "head-agent-core-historical-boundary-commit", version: HISTORICAL_BOUNDARY_PROTOCOL_VERSION },
+    protocol: { name: familyFormatForOriginal("head-agent-core-historical-artifact-boundary", boundary).protocol("head-agent-core-historical-boundary-commit"), version: HISTORICAL_BOUNDARY_PROTOCOL_VERSION },
     projectId: boundary.projectId,
     boundaryId: boundary.boundaryId,
     boundaryHash: boundary.boundaryHash,
@@ -288,12 +290,12 @@ export function applyHistoricalArtifactBoundary({ root = ".", verifiedInventory,
     if (verifiedInventory.projectRoot !== projectRoot || verifiedInventory.projectId !== inspected.project.projectId) {
       fail("Historical inventory belongs to another Project.", "HISTORICAL_BOUNDARY_PROJECT_MISMATCH");
     }
-    verifyHistoricalInventoryEntries(verifiedInventory.entries, { projectRoot, projectId: inspected.project.projectId, verifyBytes: true });
+    verifyHistoricalInventoryEntries(verifiedInventory.entries, { projectRoot, projectId: inspected.project.projectId, verifyBytes: true, storage: inspected.storage });
     const inventoryHash = historicalBoundaryDigest(historicalBoundaryCanonicalJson({
       projectId: inspected.project.projectId,
       entries: verifiedInventory.entries,
     }));
-    const existing = readHistoricalBoundaryApplication({ root: projectRoot, projectId: inspected.project.projectId, allowAbsent: true, verifyBytes: true });
+    const existing = readHistoricalBoundaryApplication({ root: projectRoot, projectId: inspected.project.projectId, allowAbsent: true, verifyBytes: true, storage: inspected.storage });
     // A committed boundary is governed by historicalIntegrityBasis, not by the
     // one-time appliedAtBasis. Normal current Canon/Session/P2 evolution must
     // therefore make an exact retry read-only rather than look like drift.
@@ -314,6 +316,7 @@ export function applyHistoricalArtifactBoundary({ root = ".", verifiedInventory,
     assertInventoryMatchesReadyState(verifiedInventory, basis);
     const candidate = buildBoundary({
       projectId: basis.projectId,
+      storage: inspected.storage,
       entries: [...verifiedInventory.entries],
       appliedAtBasis: basis.appliedAtBasis,
       validatedHistoricalApproval: {
@@ -329,14 +332,14 @@ export function applyHistoricalArtifactBoundary({ root = ".", verifiedInventory,
     const boundary = existing?.boundary || candidate;
     const receipt = existing?.receipt || buildReceipt(boundary);
     const commit = buildCommit(boundary, receipt);
-    verifyHistoricalArtifactBoundary(boundary, { projectRoot: basis.projectRoot, projectId: basis.projectId, verifyBytes: true });
+    verifyHistoricalArtifactBoundary(boundary, { projectRoot: basis.projectRoot, projectId: basis.projectId, verifyBytes: true, storage: inspected.storage });
     verifyHistoricalBoundaryReceipt(receipt, boundary);
     verifyHistoricalBoundaryCommit(commit, boundary, receipt);
-    const files = historicalBoundaryStorageFiles(basis.projectRoot, boundary.boundaryId);
+    const files = historicalBoundaryStorageFiles(basis.projectRoot, boundary.boundaryId, inspected.storage);
     let writes = 0;
     writes += Number(exactJsonWrite(files.boundary, boundary));
     writes += Number(exactJsonWrite(files.receipt, receipt));
     writes += Number(exactJsonWrite(files.commit, commit));
-    return { status: "applied", writes, boundary, receipt, commit, coverage: readHistoricalBoundaryApplication({ root: basis.projectRoot, projectId: basis.projectId, requireCommitted: true }).coverage };
+    return { status: "applied", writes, boundary, receipt, commit, coverage: readHistoricalBoundaryApplication({ root: basis.projectRoot, projectId: basis.projectId, requireCommitted: true, storage: inspected.storage }).coverage };
   });
 }

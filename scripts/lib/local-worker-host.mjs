@@ -1,9 +1,16 @@
+import { publicToolName } from "./lode-artifact-composition.mjs";
+import { formatForVerifiedOwner, familyFormatForOriginal } from "./project-storage-format.mjs";
+const sessionIdOf = record => {
+  const format = familyFormatForOriginal({ sessionIdentity: true }, record);
+  return format ? record?.[format.sessionIdField] : undefined;
+};
+const originalFormat = record => familyFormatForOriginal({ kind: record?.kind }, record);
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
-import { inspectProject } from "./head-core.mjs";
+import { inspectProject } from "./lode-core.mjs";
 import { withProjectMutation } from "./project-mutation-lock.mjs";
 import { buildRuntimeVersionEvidence } from "./runtime-machine-execution.mjs";
 import { resolveReadOnlyRuntimeExecutableTarget } from "./runtime-machine-discovery.mjs";
@@ -42,8 +49,8 @@ function directory(parent, name, create) {
   if (fs.existsSync(result) && (!fs.lstatSync(result).isDirectory() || fs.lstatSync(result).isSymbolicLink() || fs.realpathSync(result) !== result)) fail("Local Host directory traverses a link.");
   return result;
 }
-function location(root, projectId, sessionId, runId, taskKey, create = false) {
-  let parent = resolveRuntimeOperationalStateRoot({ projectRoot: root, create });
+function location(root, projectId, sessionId, runId, taskKey, create = false, storage) {
+  let parent = resolveRuntimeOperationalStateRoot({ projectRoot: root, storage, create });
   parent = directory(parent, "worker-preparations", create);
   parent = directory(parent, projectId, create);
   return { parent, file: path.join(parent, `${digest({ projectId, sessionId, runId, taskKey })}.json`) };
@@ -114,7 +121,7 @@ function readPreparedUnlocked(file, root, projectId, sessionId, runId, request =
     verifyCodexNativePrefixPolicyPlan(record.policy);
     if (record.policy.seed.text !== record.request.selectedContext) fail("Prepared native prefix differs from the selected input.");
   } else verifyCodexFreshProposalPolicyPlan(record.policy);
-  const destination = location(root, projectId, sessionId, runId, record.request.taskKey);
+  const destination = location(root, projectId, sessionId, runId, record.request.taskKey, false, originalFormat(record.projectBinding));
   if (file !== destination.file && file !== basisFile(destination, record.sourceBasis, record.proposalBasis)) fail("Preparation file does not match its exact member/basis.");
   if (fs.lstatSync(file).nlink === 2) {
     const stage = path.dirname(record.workspaceBinding.executionRoot);
@@ -168,10 +175,10 @@ async function prepareLocalBoundedWorkerInternal(input, { root = ".", supervisor
   const request = normalize(input), inspected = inspectProject(root), projectRoot = fs.realpathSync(root);
   if (inspected.status !== "ready") fail("Initialize or resume this HEAD Project before preparing its worker.", "PROJECT_NOT_READY");
   const { projectId } = inspected.project, sessionId = inspected.state.sessionId, runId = inspected.state.activeRunId || null;
-  const memberDestination = location(projectRoot, projectId, sessionId, runId, request.taskKey, true);
+  const memberDestination = location(projectRoot, projectId, sessionId, runId, request.taskKey, true, inspected.storage);
   let destination = memberDestination;
-  const sourceBasis = captureWorkerSourceBasis({ root: projectRoot, paths: request.sourcePaths, maxBytes: 1024 * 1024 });
-  const proposalBasis = captureWorkerWriteBasis({ root: projectRoot, paths: request.proposalPaths, maxBytes: 1024 * 1024 });
+  const sourceBasis = captureWorkerSourceBasis({ root: projectRoot, paths: request.sourcePaths, maxBytes: 1024 * 1024, storage: inspected.storage });
+  const proposalBasis = captureWorkerWriteBasis({ root: projectRoot, paths: request.proposalPaths, maxBytes: 1024 * 1024, storage: inspected.storage });
   let record;
   if (fs.existsSync(memberDestination.file)) {
     record = readPrepared(memberDestination.file, projectRoot, projectId, sessionId, runId);
@@ -194,7 +201,7 @@ async function prepareLocalBoundedWorkerInternal(input, { root = ".", supervisor
       approvedGlobalInstructionDigests: selectedInstructions(codexHome, request.instructionScope) });
     const selection = supervisorSelection || resolveVerifiedProcessSupervisor({ pluginRoot });
     const stage = fs.mkdtempSync(path.join(destination.parent, "selected-"));
-    const workspaceBinding = prepareWorkerWorkspace({ projectRoot, workspaceRoot: path.join(stage, "workspace"), sourceBasis, maxBytes: 1024 * 1024 });
+    const workspaceBinding = prepareWorkerWorkspace({ projectRoot, workspaceRoot: path.join(stage, "workspace"), sourceBasis, maxBytes: 1024 * 1024, storage: inspected.storage });
     let policy = initialPolicy;
     if (!fixture) {
       const inventory = await inspectCodexFreshProposalHostInventory({ policy, executionRoot: workspaceBinding.executionRoot,
@@ -217,7 +224,7 @@ async function prepareLocalBoundedWorkerInternal(input, { root = ".", supervisor
     const protocolEvidence = await buildRuntimeProtocolEvidence({ runtimes: ["codex"], environment, versionEvidence, spawnImplementation: observeSpawn });
     if (observerFailure) throw observerFailure;
     const projectBinding = buildRuntimeProjectBinding({ projectId, headSessionId: sessionId, projectRoot,
-      projectStatus: inspected.status, versionEvidence, protocolEvidence });
+      projectStatus: inspected.status, versionEvidence, protocolEvidence, storage: inspected.storage });
     // A controlled seed is a different, explicit two-turn contract, never an
     // arbitrary parent fork or a proof of the stronger code-worker backend.
     if (request.contextMode === "native-prefix") policy = buildCodexNativePrefixPolicyPlan({ freshPolicy: policy, seedText: request.selectedContext });
@@ -236,7 +243,7 @@ async function prepareLocalBoundedWorkerInternal(input, { root = ".", supervisor
   }
   if (!sameBasis(record, sourceBasis, proposalBasis)) fail("Concurrent preparation selected a different source basis; prepare the same member again.");
   if (signal?.aborted) fail("Worker preparation cancelled.", "LOCAL_WORKER_PREPARATION_CANCELLED");
-  verifyWorkerWorkspace({ binding: record.workspaceBinding, sourceBasis: record.sourceBasis });
+  verifyWorkerWorkspace({ binding: record.workspaceBinding, sourceBasis: record.sourceBasis, storage: originalFormat(record.projectBinding) });
   const built = buildRuntimeInvocationAuthorization(authorizationInput(record));
   if (built.authorization.workerInput.executionBoundary.policyDigest !== hash(JSON.stringify(record.policy))) fail("Prepared policy changed.");
   return { status: built.status === "existing" ? "reused" : "prepared", taskKey: request.taskKey, role: request.role,
@@ -248,14 +255,14 @@ async function prepareLocalBoundedWorkerInternal(input, { root = ".", supervisor
       durableSeedHistory: request.contextMode === "native-prefix", inheritsParentThread: false,
       automaticFileApplication: false, grantsPermission: false },
     modelCallAttempted: false, accountInspected: false, workersStarted: 0, recoveryAuthority: false,
-    nextAction: { tool: "head_bounded_worker_start", task_key: request.taskKey } };
+    nextAction: { tool: publicToolName("head_bounded_worker_start"), task_key: request.taskKey } };
 }
 function authorizationInput(record) {
   const { request, root, policy, workspaceBinding, sourceBasis, proposalBasis, protocolEvidence, projectBinding } = record;
   const current = inspectProject(root);
   if (current.status !== "ready" || current.project.projectId !== record.projectId || current.state.sessionId !== record.sessionId
     || (current.state.activeRunId || null) !== record.runId) fail("Session or Run changed during worker preparation; no new authority may use the old Host selection.");
-  const boundary = workerPatchProposalExecutionBoundary({ binding: workspaceBinding, policy, sourceBasis, proposalBasis });
+  const boundary = workerPatchProposalExecutionBoundary({ binding: workspaceBinding, policy, sourceBasis, proposalBasis, storage: current.storage });
   return { root, runtime: "codex", runtimeSelection: { model: policy.model }, workspaceMode: "read-only",
     scope: record.runId ? { kind: "run" } : { kind: "session", request: request.task }, protocolEvidence, projectBinding,
     limits: { timeoutMs: request.timeoutMs }, worker: { taskKey: request.taskKey, role: request.role, outcome: request.outcome,
@@ -271,17 +278,17 @@ export async function startLocalBoundedWorker({ root = ".", authorizationId, tas
   role ??= authorization.workerInput?.role;
   // Repeating a start is a historical job read, not new execution. Preserve
   // that behavior after Run/Session drift or loss of preparation-only state.
-  const operational = resolveRuntimeOperationalStateRoot({ projectRoot, create: false });
+  const operational = resolveRuntimeOperationalStateRoot({ projectRoot, storage: originalFormat(authorization), create: false });
   if (fs.existsSync(path.join(operational, "worker-jobs", authorization.projectId, authorization.authorizationId, "binding.json"))) {
     return startBoundedWorkerJob({ root: projectRoot, authorizationId: authorization.authorizationId, role }, options);
   }
   if (options.host) return startBoundedWorkerJob({ root: projectRoot, authorizationId: authorization.authorizationId, role }, options);
-  const destination = location(projectRoot, authorization.projectId, authorization.headSessionId, authorization.scope.runId, authorization.workerInput.taskKey);
+  const destination = location(projectRoot, authorization.projectId, sessionIdOf(authorization), authorization.scope.runId, authorization.workerInput.taskKey, false, originalFormat(authorization));
   if (!fs.existsSync(destination.file)) fail("This member has no retained built-in Host preparation. No job was started. Inspect its existing authorization and effects before deciding how to settle this managed task; ordinary independent work remains available.", "LOCAL_WORKER_PREPARATION_REQUIRED");
-  let record = readPrepared(destination.file, projectRoot, authorization.projectId, authorization.headSessionId, authorization.scope.runId);
+  let record = readPrepared(destination.file, projectRoot, authorization.projectId, sessionIdOf(authorization), authorization.scope.runId);
   if (!sameBasis(record, authorization.workerInput.sourceBasis, authorization.workerInput.proposalBasis)) {
     record = readPrepared(basisFile(destination, authorization.workerInput.sourceBasis, authorization.workerInput.proposalBasis),
-      projectRoot, authorization.projectId, authorization.headSessionId, authorization.scope.runId,
+      projectRoot, authorization.projectId, sessionIdOf(authorization), authorization.scope.runId,
       { ...record.request, sourcePaths: authorization.workerInput.sourceBasis.map(entry => entry.path) });
   }
   if (authorization.workerInput.executionBoundary?.workspaceBindingDigest !== record.workspaceBinding.bindingDigest

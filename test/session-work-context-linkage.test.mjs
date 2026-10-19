@@ -1,3 +1,4 @@
+import { relativeProjectArtifact } from "../scripts/lib/project-storage-format.mjs";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
@@ -25,12 +26,12 @@ function accounting(value, maxRecords = value.coverage.maxRecords, maxCharacters
   }
 }
 function legacyFullScan(f) {
-  const file = path.join(f.root, ".head/graph-discovery/index.json"), index = JSON.parse(fs.readFileSync(file));
+  const file = path.join(f.root, relativeProjectArtifact(f.storage, "graph-discovery", "index.json")), index = JSON.parse(fs.readFileSync(file));
   delete index.sessionWorkNavigation;
   fs.writeFileSync(file, JSON.stringify(index)); // Explicit legacy fixture preparation, never a read-side repair.
 }
 
-test("legacy optional-absent normalized bytes, identity, protocol and exact retry remain unchanged", t => {
+test("legacy optional-absent normalization remains exact; fresh owner identity, protocol and exact retry remain consistent", t => {
   const f = fixture(t), input = { summary: "  Legacy selected work  ", judgments: [{ assessment: "Keep", reason: "Original reason" }] };
   const legacy = { summary: "Legacy selected work", judgments: [{ assessment: "Keep", reason: "Original reason", alternatives: [] }],
     observedWork: [], pending: [], unknowns: [], suggestedFollowUp: [], references: [], occurrenceKey: null };
@@ -40,7 +41,7 @@ test("legacy optional-absent normalized bytes, identity, protocol and exact retr
   const owner = f.route(() => inspectProject(f.root)), saved = f.save(input);
   const id = "work-evidence-" + sha(encoded({ projectId: owner.project.projectId, sessionId: f.session.sessionId, content: legacy })).slice(0, 24);
   assert.equal(saved.evidence.evidenceId, id);
-  assert.deepEqual(saved.evidence.protocol, { name: "head-agent-core-session-work-evidence", version: "0.1.0" });
+  assert.deepEqual(saved.evidence.protocol, { name: "lode-agent-core-session-work-evidence", version: "0.1.0" });
   assert.equal(saved.evidence.schemaVersion, 1);
   const { evidenceDigest, ...payload } = saved.evidence;
   assert.equal(evidenceDigest, sha(encoded(payload)));

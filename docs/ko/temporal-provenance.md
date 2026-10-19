@@ -11,7 +11,7 @@ temporal provenance graph는 Git이나 GraphDB를 제품의 필수 조건으로 
 graph builder는 다음과 같은 제공자 중립적 입력만 사용합니다.
 
 - 프로젝트 ID
-- 정규화된 `.head/context/product-model.json` 콘텐츠와 그 evidence ID
+- 정규화된 `.lode/context/product-model.json` 콘텐츠와 그 evidence ID
 - digest 검증을 거친 onboarding 아티팩트, FeatureMappingCandidateSets와 mapping ReviewDecisions, change-impact review 아티팩트를 갖춘 제공자 중립적 ChangeSets, Product Operating Loop 아티팩트 및 선택적 불변 VCS evidence attachment
 - 정규화된 파일 경로, SHA-256 콘텐츠 digest, classification, language 및 추출된 symbol
 - 0개 이상의 명시적 parent `SourceSnapshot` ID
@@ -81,7 +81,7 @@ verifier는 digest mismatch, 지원되지 않는 node 또는 relation type, 중�
 
 ## 결정론적 제한 순회
 
-`queryTemporalProvenanceGraph`는 먼저 전체 GraphSnapshot을 검증한 다음 temporal traversal protocol `0.3.0`을 구성합니다. anchor mode는 명시적 검색용 `lexical-discovery`와 HEAD가 의미 분석 후 제공하는 `exact-head-proposed` 중 하나입니다. exact mode는 1~32개의 고유 node ID와 현재 `expectedGraphSnapshotId`를 요구하며, 모든 anchor가 요청한 kind·authority·freshness·confidence·candidate policy를 충족해야 합니다.
+`queryTemporalProvenanceGraph`는 먼저 전체 GraphSnapshot을 검증한 다음 temporal traversal protocol `0.3.0`을 구성합니다. anchor mode는 명시적 검색용 `lexical-discovery`와 Lode가 의미 분석 후 제공하는 `exact-head-proposed` 중 하나입니다. exact mode는 1~32개의 고유 node ID와 현재 `expectedGraphSnapshotId`를 요구하며, 모든 anchor가 요청한 kind·authority·freshness·confidence·candidate policy를 충족해야 합니다.
 
 - node-kind, relation, authority-class 및 freshness allowlist
 - minimum confidence
@@ -96,18 +96,18 @@ result는 graph, query 및 result ID와 hash, 선택된 node와 edge, inclusion 
 ## CLI 및 MCP
 
 ```text
-node scripts/head.mjs world-index <project> --parent-snapshot <id,id>
-node scripts/head.mjs world-index <project> --revision-parents <json-file>
-node scripts/head.mjs world-temporal <project> --query <text> --kind File,FileRevision --relations HAS_REVISION,CURRENT_REVISION --depth 1 --limit 100 --edge-limit 200
-node scripts/head.mjs world-temporal <project> --anchor-ids <node-id,node-id> --graph-snapshot <graph-snapshot-id> --relations HAS_REVISION,CURRENT_REVISION --depth 1 --limit 100 --edge-limit 200
-node scripts/head.mjs world-temporal <project> --query <candidate-id> --kind FeatureMappingCandidate,FeatureMappingEvidence --include-candidates true --depth 1 --limit 100 --edge-limit 200
-node scripts/head.mjs world-temporal <project> --query <change-set-id> --relations CHANGES,IMPACTS,SUPERSEDES --depth 3 --limit 200 --edge-limit 400
-node scripts/head.mjs world-temporal <project> --query <change-set-id> --relations MATERIALIZED_AS,REFERENCES --depth 2 --limit 200 --edge-limit 400
+node scripts/lode.mjs world-index <project> --parent-snapshot <id,id>
+node scripts/lode.mjs world-index <project> --revision-parents <json-file>
+node scripts/lode.mjs world-temporal <project> --query <text> --kind File,FileRevision --relations HAS_REVISION,CURRENT_REVISION --depth 1 --limit 100 --edge-limit 200
+node scripts/lode.mjs world-temporal <project> --anchor-ids <node-id,node-id> --graph-snapshot <graph-snapshot-id> --relations HAS_REVISION,CURRENT_REVISION --depth 1 --limit 100 --edge-limit 200
+node scripts/lode.mjs world-temporal <project> --query <candidate-id> --kind FeatureMappingCandidate,FeatureMappingEvidence --include-candidates true --depth 1 --limit 100 --edge-limit 200
+node scripts/lode.mjs world-temporal <project> --query <change-set-id> --relations CHANGES,IMPACTS,SUPERSEDES --depth 3 --limit 200 --edge-limit 400
+node scripts/lode.mjs world-temporal <project> --query <change-set-id> --relations MATERIALIZED_AS,REFERENCES --depth 2 --limit 200 --edge-limit 400
 ```
 
-`--revision-parents`는 key가 현재 logical entity ID이고 value가 parent Revision ID array인 JSON object를 읽습니다. read-only MCP tool `head_temporal_graph`는 `include_unreviewed_candidates`를 통해 동일한 제한 순회를 노출합니다. 둘 다 stale World Model을 거부합니다. ReviewDecision 및 ProductModelRevision receipt는 일반적인 reviewed traversal에서 계속 표시됩니다. unreviewed candidate surface에는 명시적 opt-in이 필요하며, opt-in하더라도 권한에는 영향을 주지 않습니다.
+`--revision-parents`는 key가 현재 logical entity ID이고 value가 parent Revision ID array인 JSON object를 읽습니다. read-only MCP tool `lode_temporal_graph`는 `include_unreviewed_candidates`를 통해 동일한 제한 순회를 노출합니다. 둘 다 stale World Model을 거부합니다. ReviewDecision 및 ProductModelRevision receipt는 일반적인 reviewed traversal에서 계속 표시됩니다. unreviewed candidate surface에는 명시적 opt-in이 필요하며, opt-in하더라도 권한에는 영향을 주지 않습니다.
 
-Context Compiler는 task-token overlap으로 temporal anchor를 추론하지 않습니다. HEAD가 `temporal-relation` EvidenceNeed에 현재 exact `graphAnchor`를 붙이면 Core는 Project·World Model·GraphSnapshot·node eligibility·relation allowlist·traversal bound를 검증한 뒤 별도 `GraphTraversalEvidence` carrier를 만듭니다. Local JSON, in-memory 및 활성 ArcadeDB adapter는 정확한 reference result를 반환해야 하며 adapter identity는 Capsule identity 바깥에 유지됩니다. [`graph-projection-adapter.md`](graph-projection-adapter.md)를 참조하세요.
+Context Compiler는 task-token overlap으로 temporal anchor를 추론하지 않습니다. Lode가 `temporal-relation` EvidenceNeed에 현재 exact `graphAnchor`를 붙이면 Core는 Project·World Model·GraphSnapshot·node eligibility·relation allowlist·traversal bound를 검증한 뒤 별도 `GraphTraversalEvidence` carrier를 만듭니다. Local JSON, in-memory 및 활성 ArcadeDB adapter는 정확한 reference result를 반환해야 하며 adapter identity는 Capsule identity 바깥에 유지됩니다. [`graph-projection-adapter.md`](graph-projection-adapter.md)를 참조하세요.
 
 review된 execution change는 `ChangeSet` record를 정확한 before/after source revision에 결속합니다. review를 거친 current product impact는 정확한 Feature 또는 Capability revision에도 `AT_REVISION`으로 결속되며, 이후 drift가 생기면 historical receipt는 유지하되 current-impact claim은 제거합니다. Git ref만으로는 `DeploymentResultObservation` 또는 `ReleaseObservation`을 만들지 않습니다. Delivery lineage는 Host가 별도로 승인되고 성공했으며 exact commit이 일치하는 deployment evidence를 제출한 뒤에만 나타납니다.
 

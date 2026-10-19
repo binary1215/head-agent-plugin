@@ -1,3 +1,9 @@
+import { formatForVerifiedOwner, familyFormatForOriginal } from "./project-storage-format.mjs";
+const sessionIdOf = record => {
+  const format = familyFormatForOriginal({ sessionIdentity: true }, record);
+  return format ? record?.[format.sessionIdField] : undefined;
+};
+const originalFormat = record => familyFormatForOriginal({ kind: record?.kind }, record);
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -174,7 +180,7 @@ function workspaceBoundary(authorization, projectRoot, policy, workspaceBinding,
     || hash(encode(policy)) !== boundary.policyDigest) fail("Host workspace/policy differs from the pre-authorized worker input.");
   const { bindingDigest, ...payload } = workspaceBinding;
   if (hash(encode(payload)) !== bindingDigest || hash(workspaceBinding.executionRoot) !== boundary.executionRootDigest) fail("Host workspace binding changed.");
-  if (inspectFiles) verifyWorkerWorkspace({ binding: workspaceBinding, sourceBasis: authorization.workerInput.sourceBasis });
+  if (inspectFiles) verifyWorkerWorkspace({ binding: workspaceBinding, sourceBasis: authorization.workerInput.sourceBasis, storage: originalFormat(authorization) });
   return workspaceBinding.executionRoot;
 }
 function frozenProviderProposal({ projectRoot, authorization, binding, record }) {
@@ -220,7 +226,7 @@ function verifiedBinding(directory, projectRoot, authorization) {
   if (hash(encode(binding)) !== bindingDigest || binding.projectRoot !== projectRoot
     || binding.authorizationId !== authorization.authorizationId || binding.authorizationHash !== authorization.authorizationHash
     || binding.inputDigest !== authorization.executionInput.digest || binding.taskKey !== authorization.workerInput.taskKey
-    || binding.role !== authorization.workerInput.role || binding.operationalRoot !== resolveRuntimeOperationalStateRoot({ projectRoot, create: false })
+    || binding.role !== authorization.workerInput.role || binding.operationalRoot !== resolveRuntimeOperationalStateRoot({ projectRoot, storage: originalFormat(authorization), create: false })
     || binding.policyDigest !== hash(encode(binding.policy))) fail("Worker job binding differs from exact authorization.");
   workspaceBoundary(authorization, projectRoot, binding.policy, binding.workspaceBinding || null);
   const requestBytes = regularBytes(path.join(directory, "request.json"), 8 * 1024 * 1024, true);
@@ -285,7 +291,7 @@ async function launch(selection, file, environment, onProcess, spawnImplementati
 export async function startBoundedWorkerJob({ root = ".", authorizationId, role } = {}, { host = null, supervisorSelection = null, onProcess = () => {}, spawnImplementation = spawn } = {}) {
   const { projectRoot, authorization } = identity(root, authorizationId);
   if (role !== authorization.workerInput.role) fail("Worker job role differs.");
-  const operationalRoot = resolveRuntimeOperationalStateRoot({ projectRoot, create: false });
+  const operationalRoot = resolveRuntimeOperationalStateRoot({ projectRoot, storage: originalFormat(authorization), create: false });
   const directory = jobDirectory(operationalRoot, authorization);
   if (fs.existsSync(path.join(directory, "binding.json"))) return readBoundedWorkerJob({ root: projectRoot, authorizationId });
   current(projectRoot, authorization);
@@ -304,9 +310,9 @@ export async function startBoundedWorkerJob({ root = ".", authorizationId, role 
   if (process.platform !== "win32") fail("Detached nested process ownership is not verified on this platform.", "WORKER_JOB_PLATFORM_UNSUPPORTED");
   const selection = supervisorSelection || resolveVerifiedProcessSupervisor({ pluginRoot });
   createBoundedWorkerDispatch({ root: projectRoot, authorizationId, role });
-  const lease = inspectRuntimeExecutionLease({ projectRoot, projectId: authorization.projectId, authorizationId });
+  const lease = inspectRuntimeExecutionLease({ projectRoot, projectId: authorization.projectId, authorizationId, storage: originalFormat(authorization) });
   if (lease.status !== "available") fail("An existing lease cannot be relaunched by a job.", "WORKER_JOB_ALREADY_CONSUMED");
-  resolveRuntimeOperationalStateRoot({ projectRoot });
+  resolveRuntimeOperationalStateRoot({ projectRoot, storage: originalFormat(authorization) });
   jobDirectory(operationalRoot, authorization, true);
   const deadlineUnixMs = Date.now() + authorization.limits.timeoutMs;
   const environment = Object.fromEntries(Object.entries(process.env).filter(([key]) => ["systemroot", "windir", "temp", "tmp"].includes(key.toLowerCase())));
@@ -339,7 +345,7 @@ export async function startBoundedWorkerJob({ root = ".", authorizationId, role 
 export function readBoundedWorkerJob({ root = ".", authorizationId } = {}, { onProcess = () => {}, inspectorSelection = null } = {}) {
   const { projectRoot, authorization } = identity(root, authorizationId);
   readBoundedWorkerDispatch({ root: projectRoot, authorizationId });
-  const operationalRoot = resolveRuntimeOperationalStateRoot({ projectRoot, create: false });
+  const operationalRoot = resolveRuntimeOperationalStateRoot({ projectRoot, storage: originalFormat(authorization), create: false });
   const directory = jobDirectory(operationalRoot, authorization);
   const projection = { authorizationId, taskKey: authorization.workerInput.taskKey, status: "not-started", replayAllowed: false,
     recoveryAuthority: false, result: null, ownerExitObserved: false, current: true };
@@ -373,10 +379,10 @@ export function readBoundedWorkerJob({ root = ".", authorizationId } = {}, { onP
     || events[2].exitCode !== terminal.exitCode || events[3].cleanupAttempted !== true
     || !(events[3].cleanupVerified === true || events[3].kernelCleanupOnExit === true)) fail("Worker tree cleanup is not verified.");
   projection.ownerExitCode = terminal.exitCode;
-  const lease = inspectRuntimeExecutionLease({ projectRoot, projectId: authorization.projectId, authorizationId });
+  const lease = inspectRuntimeExecutionLease({ projectRoot, projectId: authorization.projectId, authorizationId, storage: originalFormat(authorization) });
   if (lease.status !== "consumed-released" || lease.release.operationStatus === "threw") return { ...projection, status: "incomplete" };
   let record;
-  try { record = readRuntimeInvocationRecord({ root: projectRoot, authorizationId }); }
+  try { record = readRuntimeInvocationRecord({ root: projectRoot, authorizationId, storage: originalFormat(authorization) }); }
   catch (error) { if (error.code === "RUNTIME_INVOCATION_RESULT_NOT_FOUND") return { ...projection, status: "incomplete" }; throw error; }
   if (record.receipt.receiptId !== lease.release.lifecycleReceiptId || record.authorization.authorizationHash !== authorization.authorizationHash) fail("Worker result differs from its exact lease.");
   if ((binding.policy.actualProviderInvoked === false || binding.policy.evidenceMode === "protocol-fixture") && record.receipt.providerBoundary.actualProviderInvoked) fail("A fixture cannot claim actual provider execution.");
@@ -404,7 +410,7 @@ export function readBoundedWorkerJob({ root = ".", authorizationId } = {}, { onP
       || frozenPatch.workspaceBindingDigest !== binding.workspaceBinding.bindingDigest
       || frozenPatch.lifecycleReceiptId !== record.receipt.receiptId
       || JSON.stringify(frozenPatch.candidate.basis) !== JSON.stringify(authorization.workerInput.writeBasis)) fail("Worker patch differs from exact owner/input/result evidence.");
-    const candidate = verifyWorkerPatchCandidate(frozenPatch.candidate);
+    const candidate = verifyWorkerPatchCandidate(frozenPatch.candidate, originalFormat(authorization));
     workspacePatch = { candidateId: candidate.candidateId, candidateHash: candidate.candidateHash, frozenDigest: ownerResult.workspacePatchDigest };
   }
   return { ...projection, status: record.receipt.status === "completed" ? "completed" : "failed",
@@ -418,7 +424,7 @@ export function cancelBoundedWorkerJob({ root = ".", authorizationId } = {}, ins
   if (status.ownerExitObserved || status.status === "not-started") return status;
   // Protective cancellation narrows an existing exact effect. Source or Session
   // drift forbids new execution/application, not stopping this owned job.
-  const directory = jobDirectory(resolveRuntimeOperationalStateRoot({ projectRoot, create: false }), authorization);
+  const directory = jobDirectory(resolveRuntimeOperationalStateRoot({ projectRoot, storage: originalFormat(authorization), create: false }), authorization);
   const { binding } = verifiedBinding(directory, projectRoot, authorization);
   const file = path.join(directory, "cancel");
   const value = { requestDigest: binding.requestDigest, authorizationId };
@@ -431,13 +437,13 @@ export function readBoundedWorkerPatch({ root = ".", authorizationId } = {}, ins
   const { projectRoot, authorization } = identity(root, authorizationId);
   const state = readBoundedWorkerJob({ root: projectRoot, authorizationId }, inspection);
   if (state.status !== "completed" || !state.workspacePatch) fail("No complete terminal-bound workspace patch is available.", "WORKER_PATCH_NOT_AVAILABLE");
-  const directory = jobDirectory(resolveRuntimeOperationalStateRoot({ projectRoot, create: false }), authorization);
+  const directory = jobDirectory(resolveRuntimeOperationalStateRoot({ projectRoot, storage: originalFormat(authorization), create: false }), authorization);
   const frozen = read(path.join(directory, "workspace-patch.json"), authorization.limits.maxInputBytes * 4 + 1024 * 1024);
   if (hash(encode(frozen)) !== state.workspacePatch.frozenDigest) fail("Worker patch changed during its read.");
   return { authorizationId, authorizationHash: authorization.authorizationHash, inputDigest: authorization.executionInput.digest,
     lifecycleReceiptId: state.result.receiptId, actualProviderInvoked: state.result.actualProviderInvoked,
     ...(frozen.origin ? { origin: frozen.origin, source: frozen.source } : {}),
-    candidate: verifyWorkerPatchCandidate(frozen.candidate), current: state.current,
+    candidate: verifyWorkerPatchCandidate(frozen.candidate, originalFormat(authorization)), current: state.current,
     storage: "host-frozen-unintegrated-evidence", applied: false, instructionAuthority: false,
     promotionAuthority: false, recoveryAuthority: false };
 }
@@ -451,12 +457,12 @@ export function reconcileBoundedWorkerJob(input, inspection = {}) {
     if (!status.ownerExitObserved || !Number.isInteger(status.ownerExitCode)) return status;
     const settlement = readRuntimeExecutionSettlement({ projectRoot, authorization });
     if (!settlement || settlement.release.operationStatus === "threw") return status;
-    const operationalRoot = resolveRuntimeOperationalStateRoot({ projectRoot, create: false });
+    const operationalRoot = resolveRuntimeOperationalStateRoot({ projectRoot, storage: originalFormat(authorization), create: false });
     const directory = jobDirectory(operationalRoot, authorization);
     const { binding } = verifiedBinding(directory, projectRoot, authorization);
     if (proposalMode(authorization)) {
       let retained;
-      try { retained = readRuntimeInvocationRecord({ root: projectRoot, authorizationId: authorization.authorizationId }); }
+      try { retained = readRuntimeInvocationRecord({ root: projectRoot, authorizationId: authorization.authorizationId, storage: originalFormat(authorization) }); }
       catch (error) { if (error.code !== "RUNTIME_INVOCATION_RESULT_NOT_FOUND") throw error; }
       if (retained?.receipt.status === "completed") {
         publishProviderProposal(directory, frozenProviderProposal({ projectRoot, authorization, binding, record: retained }));
@@ -480,7 +486,7 @@ export function reconcileBoundedWorkerJob(input, inspection = {}) {
     if ((binding.policy.actualProviderInvoked === false || binding.policy.evidenceMode === "protocol-fixture") && receipt.providerBoundary.actualProviderInvoked) fail("Fixture recovery cannot claim an actual provider.");
     const draft = buildRuntimeResultPacketDraft({ authorization, receipt, leaseRelease: settlement.release, providerResult });
     let existing;
-    try { existing = readRuntimeInvocationRecord({ root: projectRoot, authorizationId: authorization.authorizationId }); }
+    try { existing = readRuntimeInvocationRecord({ root: projectRoot, authorizationId: authorization.authorizationId, storage: originalFormat(authorization) }); }
     catch (error) { if (error.code !== "RUNTIME_INVOCATION_RESULT_NOT_FOUND") throw error; }
     if (existing) {
       if (existing.receipt.receiptHash !== receipt.receiptHash || existing.draft.draftHash !== draft.draftHash
@@ -489,7 +495,7 @@ export function reconcileBoundedWorkerJob(input, inspection = {}) {
       persistRuntimeInvocationRecord({ projectRoot, authorization, events, receipt, draft });
     }
     if (proposalMode(authorization) && receipt.status === "completed") {
-      const record = readRuntimeInvocationRecord({ root: projectRoot, authorizationId: authorization.authorizationId });
+      const record = readRuntimeInvocationRecord({ root: projectRoot, authorizationId: authorization.authorizationId, storage: originalFormat(authorization) });
       publishProviderProposal(directory, frozenProviderProposal({ projectRoot, authorization, binding, record }));
     }
     return readBoundedWorkerJob(input, inspection);
@@ -501,11 +507,11 @@ export async function runBoundedWorkerJobOwner(bindingFile, { signal, onProcess 
   const { projectRoot, authorization } = identity(initial.projectRoot, initial.authorizationId);
   // Detached owners recreate the exact logical Session route from the verified
   // Project-bound authorization, never from a provider/session environment.
-  return withSessionRoute(projectRoot, authorization.headSessionId, () => runRoutedOwner(bindingFile, { signal, onProcess }, { projectRoot, authorization }));
+  return withSessionRoute(projectRoot, sessionIdOf(authorization), () => runRoutedOwner(bindingFile, { signal, onProcess }, { projectRoot, authorization }));
 }
 
 async function runRoutedOwner(bindingFile, { signal, onProcess }, { projectRoot, authorization }) {
-  const directory = jobDirectory(resolveRuntimeOperationalStateRoot({ projectRoot, create: false }), authorization);
+  const directory = jobDirectory(resolveRuntimeOperationalStateRoot({ projectRoot, storage: originalFormat(authorization), create: false }), authorization);
   if (path.resolve(bindingFile) !== path.join(directory, "binding.json")) fail("Owner binding path differs.");
   const { binding } = verifiedBinding(directory, projectRoot, authorization);
   if (binding.codeDigest !== codeIdentity(binding.runnerFile, binding.hostModuleFile)) fail("Worker owner code changed after preparation.", "WORKER_JOB_CODE_DRIFT");
@@ -535,7 +541,7 @@ async function runRoutedOwner(bindingFile, { signal, onProcess }, { projectRoot,
     ...(proposalSupervisor ? { supervisorSelection: proposalSupervisor } : {}) });
   let workspacePatchDigest;
   if (proposalMode(authorization)) {
-    const record = readRuntimeInvocationRecord({ root: projectRoot, authorizationId: authorization.authorizationId });
+    const record = readRuntimeInvocationRecord({ root: projectRoot, authorizationId: authorization.authorizationId, storage: originalFormat(authorization) });
     // Failed output remains failure evidence; it cannot become a patch candidate.
     if (record.receipt.status === "completed") {
       const frozenPatch = frozenProviderProposal({ projectRoot, authorization, binding, record });
@@ -543,11 +549,11 @@ async function runRoutedOwner(bindingFile, { signal, onProcess }, { projectRoot,
       workspacePatchDigest = hash(encode(frozenPatch));
     }
   } else if (authorization.workerInput.writeBasis) {
-    const record = readRuntimeInvocationRecord({ root: projectRoot, authorizationId: authorization.authorizationId });
+    const record = readRuntimeInvocationRecord({ root: projectRoot, authorizationId: authorization.authorizationId, storage: originalFormat(authorization) });
     const settlement = readRuntimeExecutionSettlement({ projectRoot, authorization });
     if (!settlement || settlement.release.lifecycleReceiptId !== record.receipt.receiptId || record.receipt.status !== "completed") fail("Worker patch collection requires its settled invocation result.");
     const candidate = collectWorkerWorkspacePatch({ binding: binding.workspaceBinding,
-      sourceBasis: authorization.workerInput.sourceBasis, writeBasis: authorization.workerInput.writeBasis });
+      sourceBasis: authorization.workerInput.sourceBasis, writeBasis: authorization.workerInput.writeBasis, storage: originalFormat(authorization) });
     const frozenPatch = { authorizationHash: authorization.authorizationHash, inputDigest: authorization.executionInput.digest,
       workspaceBindingDigest: binding.workspaceBinding.bindingDigest, lifecycleReceiptId: record.receipt.receiptId, candidate };
     publish(path.join(directory, "workspace-patch.json"), frozenPatch);

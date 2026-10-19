@@ -1,3 +1,9 @@
+import { formatForVerifiedOwner, familyFormatForOriginal } from "./project-storage-format.mjs";
+const sessionIdOf = record => {
+  const format = familyFormatForOriginal({ sessionIdentity: true }, record);
+  return format ? record?.[format.sessionIdField] : undefined;
+};
+const originalFormat = record => familyFormatForOriginal({ kind: record?.kind }, record);
 import crypto from "node:crypto";
 import path from "node:path";
 import { artifactAuthorityBoundary, verifyArtifactAuthorityBoundary } from "./authority-plane-contract.mjs";
@@ -38,8 +44,9 @@ function identify(payload) {
 }
 
 export function verifyContinuationOutcome(document) {
+  const format = familyFormatForOriginal("head-agent-core-runtime-session-continuation", document);
   const fields = [
-    "schemaVersion", "kind", "protocol", "authorityBoundary", "projectId", "headSessionId", "runtime",
+    "schemaVersion", "kind", "protocol", "authorityBoundary", "projectId", (format?.sessionIdField || "headSessionId"), "runtime",
     "status", "disclosure", "checkpointId", "sessionRestoreId", "attachmentVerified", "attachmentRole",
     "providerSessionIdentityPersisted", "providerSessionIdentityCanonical", "providerTranscriptUsed",
     "providerSummaryUsed", "p2RestoredBeforeAttachment", "p2DirectionChanged", "persisted",
@@ -56,10 +63,10 @@ export function verifyContinuationOutcome(document) {
   delete payload.continuationOutcomeHash;
   const expected = identify(payload);
   if (document.schemaVersion !== 1 || document.kind !== "ContinuationOutcome"
-    || document.protocol?.name !== "head-agent-core-runtime-session-continuation"
+    || !format || document.protocol?.name !== format.protocol("head-agent-core-runtime-session-continuation")
     || document.protocol?.version !== RUNTIME_SESSION_CONTINUATION_VERSION
-    || !/^head-[a-f0-9]{20}$/.test(document.projectId || "")
-    || !/^session-[A-Fa-f0-9-]{36}$/.test(document.headSessionId || "")
+    || !new RegExp(`^${format?.projectPrefix || "head-"}[a-f0-9]{20}$`).test(document.projectId || "")
+    || !/^session-[A-Fa-f0-9-]{36}$/.test(sessionIdOf(document) || "")
     || document.runtime !== runtimeName(document.runtime)
     || !new Set(["attached", "fresh-logical-head"]).has(document.status)
     || !new Set(["exact-live-provider-attachment", "provider-attachment-not-requested", "provider-attachment-unavailable"]).has(document.disclosure)
@@ -81,10 +88,11 @@ export function verifyContinuationOutcome(document) {
 
 export function continueSessionFromArtifacts({
   root = ".", checkpointId = null, runtime, hostAttachment = null, attachmentRequested = false,
-  workspaceHostAdapter = null,
+  workspaceHostAdapter = null, storage,
 } = {}) {
   const selectedRuntime = runtimeName(runtime);
   const before = restoreSessionFromArtifacts({ root, checkpointId });
+  const format = formatForVerifiedOwner(storage ?? before.storage);
   let attachment = null;
   let status = "fresh-logical-head";
   let disclosure = attachmentRequested ? "provider-attachment-unavailable" : "provider-attachment-not-requested";
@@ -95,7 +103,7 @@ export function continueSessionFromArtifacts({
     }
     if (workspaceHostAdapter !== null) {
       const received = workspaceHostAdapter.receive({ attachment, boundary: {
-        projectId: before.projection.projectId, headSessionId: before.projection.sessionId,
+        projectId: before.projection.projectId, [format.sessionIdField]: before.projection.sessionId,
         role: "head", projectRoot: path.resolve(root),
       } });
       if (received.status === "attached") {
@@ -115,10 +123,10 @@ export function continueSessionFromArtifacts({
   const outcome = verifyContinuationOutcome(identify({
     schemaVersion: 1,
     kind: "ContinuationOutcome",
-    protocol: { name: "head-agent-core-runtime-session-continuation", version: RUNTIME_SESSION_CONTINUATION_VERSION },
+    protocol: { name: format.protocol("head-agent-core-runtime-session-continuation"), version: RUNTIME_SESSION_CONTINUATION_VERSION },
     authorityBoundary: artifactAuthorityBoundary("ContinuationOutcome"),
     projectId: before.projection.projectId,
-    headSessionId: before.projection.sessionId,
+    [format.sessionIdField]: before.projection.sessionId,
     runtime: selectedRuntime,
     status,
     disclosure,

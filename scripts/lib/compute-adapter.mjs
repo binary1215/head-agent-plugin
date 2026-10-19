@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { familyFormatForOriginal, formatForVerifiedOwner } from "./project-storage-format.mjs";
 
 export const COMPUTE_ADAPTER_CONTRACT_VERSION = "0.3.0";
 export const WORKER_PROTOCOL_VERSION = "0.2.0";
@@ -180,7 +181,7 @@ function assertNoAuthorityEscalation(value, label = "Compute result") {
   }
 }
 
-export function buildComputeRequest({ operation, input, semanticProducer, limits = {} } = {}) {
+function buildRequest({ operation, input, semanticProducer, limits = {} }, protocolName) {
   const normalizedOperation = requiredText(operation, "Compute operation");
   if (!OPERATION_PATTERN.test(normalizedOperation)) fail("Compute operation is invalid.", "INVALID_COMPUTE_OPERATION");
   assertJsonValue(input, "Compute input");
@@ -192,7 +193,7 @@ export function buildComputeRequest({ operation, input, semanticProducer, limits
   const inputDigest = digest(canonicalJson(normalizedInput));
   const identity = {
     schemaVersion: 1,
-    protocol: { name: "head-agent-core-worker-protocol", version: WORKER_PROTOCOL_VERSION },
+    protocol: { name: protocolName, version: WORKER_PROTOCOL_VERSION },
     kind: "ComputeRequest",
     operation: normalizedOperation,
     inputDigest,
@@ -203,16 +204,37 @@ export function buildComputeRequest({ operation, input, semanticProducer, limits
   return deepFreeze({ ...identity, requestId, input: normalizedInput, authorityEffect: "none" });
 }
 
+export function buildComputeRequest({ storage = null, ...options } = {}) {
+  return buildRequest(options, formatForVerifiedOwner(storage).dialect === "lode"
+    ? "lode-agent-core-worker-protocol" : "head-agent-core-worker-protocol");
+}
+
 export function validateComputeRequest(request) {
   assertFields(request, ["schemaVersion", "protocol", "kind", "requestId", "operation", "inputDigest", "semanticProducer", "limits", "input", "authorityEffect"], "Compute request");
-  const rebuilt = buildComputeRequest({
+  if (!["head-agent-core-worker-protocol", "lode-agent-core-worker-protocol"].includes(request.protocol?.name)) {
+    fail("Compute request identity or protocol verification failed.", "COMPUTE_REQUEST_MISMATCH");
+  }
+  const lode = request.protocol.name === "lode-agent-core-worker-protocol";
+  const producers = {
+    "worker.health.v1": lode ? "lode-agent-core-worker-health" : "head-agent-core-worker-health",
+    "worker.lifecycle.v1": lode ? "lode-agent-core-worker-lifecycle" : "head-agent-core-worker-lifecycle",
+  };
+  const rebuilt = buildRequest({
     operation: request.operation,
     input: request.input,
     semanticProducer: request.semanticProducer,
     limits: request.limits,
-  });
+  }, request.protocol.name);
   if (canonicalJson(request) !== canonicalJson(rebuilt)) {
     fail("Compute request identity or protocol verification failed.", "COMPUTE_REQUEST_MISMATCH");
+  }
+  const scopeFormat = request.operation === "repository.scan.v1"
+    ? familyFormatForOriginal("head-agent-core-repository-source-scope", request.input?.sourceScope) : null;
+  if (producers[request.operation] && request.semanticProducer?.name !== producers[request.operation]
+    || request.operation === "worker.health.v1" && request.input?.probe !== (lode ? "lode-agent-core" : "head-agent-core")
+    || request.operation === "repository.scan.v1" && (!scopeFormat || (scopeFormat.dialect === "lode") !== lode
+      || request.semanticProducer?.name !== scopeFormat.protocol("head-agent-core-repository-scan"))) {
+    fail("Compute request family is incoherent.", "COMPUTE_REQUEST_MISMATCH");
   }
   return request;
 }
@@ -355,9 +377,9 @@ export class JsReferenceComputeAdapter {
   }
 }
 
-export function validateComputeAdapter(adapter) {
+export function validateComputeAdapter(adapter, { storage = null } = {}) {
   if (!adapter || typeof adapter.describe !== "function" || typeof adapter.execute !== "function") fail("Compute adapter must implement describe and execute.", "INVALID_COMPUTE_ADAPTER");
-  const descriptor = adapter.describe();
+  const descriptor = adapter.describe({ storage });
   assertFields(descriptor, ["contractVersion", "backend", "name", "executionMode", "supportedOperations", "semanticIdentity", "authority", "instructionAuthority", "promotionAuthority", "controlAuthority", "mutatesProject", "mutatesCanon", "fallback"], "Compute adapter descriptor");
   if (descriptor.contractVersion !== COMPUTE_ADAPTER_CONTRACT_VERSION
     || descriptor.semanticIdentity !== "backend-neutral-canonical-output"
@@ -378,9 +400,9 @@ export function validateComputeAdapter(adapter) {
   return descriptor;
 }
 
-export async function executeComputeOperation({ adapter, operation, input, semanticProducer, limits = {}, signal = null } = {}) {
-  const descriptor = validateComputeAdapter(adapter);
-  const request = buildComputeRequest({ operation, input, semanticProducer, limits });
+export async function executeComputeOperation({ adapter, operation, input, semanticProducer, limits = {}, signal = null, storage = null } = {}) {
+  const descriptor = validateComputeAdapter(adapter, { storage });
+  const request = buildComputeRequest({ operation, input, semanticProducer, limits, storage });
   if (!descriptor.supportedOperations.includes(request.operation)) fail(`Compute adapter does not support ${request.operation}.`, "UNSUPPORTED_COMPUTE_OPERATION");
   if (signal?.aborted) fail("Compute operation was cancelled.", "COMPUTE_CANCELLED");
   const controller = new AbortController();

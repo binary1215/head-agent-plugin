@@ -1,3 +1,4 @@
+import { familyFormatForOriginal } from "./project-storage-format.mjs";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -84,9 +85,9 @@ export function normalizeSessionWorkEvidence(input) {
 }
 export const SESSION_WORK_DEFAULT_CHARACTERS = 32768;
 export const SESSION_WORK_MAX_CHARACTERS = 512 * 1024;
-export function createSessionWorkReadContext(root) {
+export function createSessionWorkReadContext(root, storage = undefined) {
   const files = new Map(); let retainedBytes = 0;
-  return { read(relative, maximum) {
+  return { storage, read(relative, maximum) {
     if (!files.has(relative)) {
       try {
         const file = safeSessionPath(root, relative), stat = fs.lstatSync(file);
@@ -112,16 +113,16 @@ export function createSessionWorkReadContext(root) {
   } };
 }
 export function sessionWorkPath(relative) {
-  const match = /^(\.head\/sessions(?:\/by-id\/(session-[a-fA-F0-9-]{36}))?)\/work-evidence\/(work-evidence-[a-f0-9]{24})\.json$/.exec(relative);
+  const match = /^(\.(?:head|lode)\/sessions(?:\/by-id\/(session-[a-fA-F0-9-]{36}))?)\/work-evidence\/(work-evidence-[a-f0-9]{24})\.json$/.exec(relative);
   return match ? { sessionId: match[2] || null, evidenceId: match[3], statePath: match[1] + "/current.json", directory: match[1] + "/work-evidence" } : null;
 }
-export function verifySessionWorkEvidenceOwner({ root, projectBytes, stateBytes }) {
+export function verifySessionWorkEvidenceOwner({ root, projectBytes, stateBytes, storage }) {
   const project = JSON.parse(projectBytes), state = JSON.parse(stateBytes);
   if (project.schemaVersion !== 1 || project.projectRoot !== root || typeof project.projectId !== "string"
     || !/^session-[a-fA-F0-9-]{36}$/.test(state.sessionId || "") || state.projectId && state.projectId !== project.projectId) {
     fail("Work evidence Project/Session identity differs.", "HEAD_SESSION_IDENTITY_MISMATCH");
   }
-  return { root, projectId: project.projectId, sessionId: state.sessionId, state, basis: sha(Buffer.concat([projectBytes, stateBytes])) };
+  return { root, storage, projectId: project.projectId, sessionId: state.sessionId, state, basis: sha(Buffer.concat([projectBytes, stateBytes])) };
 }
 export function inputIdentity(owner, content) { return sha(encoded({ projectId: owner.projectId, sessionId: owner.sessionId, content })); }
 export function readSessionWorkFileBytes(root, relative, maximum, context = null) {
@@ -138,9 +139,10 @@ export function verifySessionWorkEvidenceOriginal({ owner, evidenceId, bytes }) 
   const record = JSON.parse(bytes.toString("utf8"));
   object(record, ["schemaVersion", "kind", "subtype", "protocol", "projectId", "sessionId", "content", "recordedAt", "authorityBoundary", "evidenceId", "evidenceDigest"], "work original");
   const { evidenceDigest, ...payload } = record;
+  const format = familyFormatForOriginal(PROTOCOL.name, record, owner.storage);
   const content = normalizeSessionWorkEvidence(Object.fromEntries(Object.entries(record.content || {}).filter(([, value]) => value !== null)));
   if (record.schemaVersion !== 1 || record.kind !== "Evidence" || record.subtype !== "SessionWorkEvidence"
-    || encoded(record.protocol) !== encoded(PROTOCOL) || encoded(content) !== encoded(record.content)
+    || !format || encoded(record.protocol) !== encoded({ ...PROTOCOL, name: format.protocol(PROTOCOL.name) }) || encoded(content) !== encoded(record.content)
     || record.projectId !== owner.projectId || record.sessionId !== owner.sessionId
     || record.evidenceId !== evidenceId || evidenceId !== `work-evidence-${inputIdentity(owner, content).slice(0, 24)}`
     || evidenceDigest !== sha(encoded(payload)) || !Number.isFinite(Date.parse(record.recordedAt))) {

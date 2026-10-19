@@ -1,16 +1,16 @@
-# Worker context and HEAD integration
+# Worker context and Lode integration
 
-HEAD works directly by default. When ordinary delegation helps, use available Host tools with a short brief and independent ownership, then have HEAD check and combine results. No managed authorization, registry or wave is required merely to delegate. Preserve completed work; continue the unfinished part directly or sequentially only after confirming it never started or no effects remain. Inspect uncertain overlapping effects before replacement, while independent work continues.
+Lode works directly by default. When ordinary delegation helps, use available Host tools with a short brief and independent ownership, then have Lode check and combine results. No managed authorization, registry or wave is required merely to delegate. Preserve completed work; continue the unfinished part directly or sequentially only after confirming it never started or no effects remain. Inspect uncertain overlapping effects before replacement, while independent work continues.
 
-Use the detailed contracts below for useful new or retained managed work when durable ownership, recovery or effect reconciliation needs them. CLI uses `node <plugin-root>/scripts/head.mjs managed <command> ...`; typed MCP discovers the original schema and routes through `head_tools_call` with `execution_mode: "managed"`. Raw managed names remain fenced on the ordinary server. The retained maintenance CLI/server stays compatible. History/status/wait/result reads and exact owned cancellation remain ordinary diagnostics. HEAD selects the means without a user unlock or extra approval; original authorization, lease and effect checks still apply.
+Use the detailed contracts below for useful new or retained managed work when durable ownership, recovery or effect reconciliation needs them. CLI uses `node <plugin-root>/scripts/lode.mjs managed <command> ...`; typed MCP discovers the original schema and routes through `lode_tools_call` with `execution_mode: "managed"`. Raw managed names remain fenced on the ordinary server. The retained maintenance CLI/server stays compatible. History/status/wait/result reads and exact owned cancellation remain ordinary diagnostics. Lode selects the means without a user unlock or extra approval; original authorization, lease and effect checks still apply.
 
-Routing is not an authorization or automatic failure fallback. Original authorization/lease, transaction and record checks remain intact; an ordinary Host fork is not a managed launch. File edits, worker count or ordinary failure alone do not select this path. All paths preserve user edits and leave Canon/P2 authority with HEAD and the user.
+Routing is not an authorization or automatic failure fallback. Original authorization/lease, transaction and record checks remain intact; an ordinary Host fork is not a managed launch. File edits, worker count or ordinary failure alone do not select this path. All paths preserve user edits and leave Canon/P2 authority with Lode and the user.
 
 ## Current support
 
 Fresh one-shot context is the current managed adapter default, not a universal
-preference for ordinary Host delegation. HEAD chooses fork/fresh by the
-contribution's context needs using the [Skill guidance](../skills/head-agent-core/SKILL.md#choose-execution-and-preserve-judgment),
+preference for ordinary Host delegation. Lode chooses fork/fresh by the
+contribution's context needs using the [Skill guidance](../skills/lode-agent-core/SKILL.md#choose-execution-and-preserve-judgment),
 independently of choosing B or C and within actual adapter support.
 An optional Codex native-fork Host adapter
 binds a completed source-turn cutoff and exact inherited prefix; an app's fork
@@ -18,7 +18,7 @@ command is not a substitute bounded launch route. Native fork remains unavailabl
 without verified effective policy, inherited-context treatment and owned-transport
 cleanup. A source cutoff alone does not establish instruction or tool isolation.
 
-The Core exposes retained worker input, selected-workspace binding, detached job observation and combined patch/result integration. The Codex adapter code connects selected-workspace execution through a trusted Host policy verifier and the existing independent lease/result path. The installed Host does **not yet provide a verified effective-policy backend** for this connection. Synthetic protocol and local native file-effect tests do not establish model permissions, provider isolation or completion of the connected provider E2E flow. An unavailable detached or native-fork adapter affects that optional mode, not ordinary HEAD work or existing attached execution.
+The Core exposes retained worker input, selected-workspace binding, detached job observation and combined patch/result integration. The Codex adapter code connects selected-workspace execution through a trusted Host policy verifier and the existing independent lease/result path. The installed Host does **not yet provide a verified effective-policy backend** for this connection. Synthetic protocol and local native file-effect tests do not establish model permissions, provider isolation or completion of the connected provider E2E flow. An unavailable detached or native-fork adapter affects that optional mode, not ordinary Lode work or existing attached execution.
 
 The concrete App Server transport runs the installed executable through the native
 interactive supervisor, correlates bounded stdio RPCs and verifies owned-tree
@@ -33,18 +33,18 @@ A separate `fresh-selected-patch-proposal` backend candidate asks a fresh Codex
 worker for **patch data only**. It does not grant tools or file-write authority,
 and does not establish the missing selected-exec/native-fork guarantees. Its
 source-pinned runtime recipe is connected to the built-in local Host through
-`worker-prepare` / `head_bounded_worker_prepare` and the existing start operation.
+`worker-prepare` / `lode_bounded_worker_prepare` and the existing start operation.
 Fresh remains the default. Explicit `contextMode: "native-prefix"` (`context_mode`
 in MCP, `--context-mode` in CLI) uses `selectedContext` to create a controlled
 durable seed and fork its child: at most two model turns rather than one. The
 preparation's `executionPlan` discloses these effects without starting them.
 Keep seed persistence and both calls within existing authorization; this is not
-an arbitrary HEAD-history fork, a cache guarantee, or the stronger code-worker
+an arbitrary Lode-history fork, a cache guarantee, or the stronger code-worker
 backend. Source availability is not installed-cache pickup. Actual-provider E2E
 validation and whole-backend acceptance remain pending.
 
 Automatic integration status identifies unobservable read dependencies separately
-from write targets and gives HEAD a scoped recovery action. HEAD restores
+from write targets and gives Lode a scoped recovery action. Lode restores
 observability or prepares a newly justified proposal with reselected evidence;
 merely submitting a new digest cannot bypass unknown evidence. Existing results
 are preserved. Unresolved started effects take precedence and must be reconciled
@@ -53,7 +53,7 @@ this same non-persisted guidance without adding approval or recovery authority.
 
 ## 1. Prepare only what each worker needs
 
-The user describes the task; HEAD selects the purpose, expected result, non-HEAD role, owned files/actions, relevant evidence and remaining questions. These are brief contents, not a user-authored form. Implementation may need selected design background; independent review benefits from the contract and raw evidence rather than the parent's conclusion. Do not automatically copy raw history or secrets to another provider.
+The user describes the task; Lode selects the purpose, expected result, non-Lode role, owned files/actions, relevant evidence and remaining questions. These are brief contents, not a user-authored form. Implementation may need selected design background; independent review benefits from the contract and raw evidence rather than the parent's conclusion. Do not automatically copy raw history or secrets to another provider.
 
 Prepare the actual input **before authorization**:
 
@@ -61,12 +61,12 @@ Prepare the actual input **before authorization**:
 - For a Run worker, bind the accepted plan, contract and Capsule. Wave members share exact Run lineage but keep independent authorizations and leases.
 - `workerRole` records dispatch ownership; it does not itself inject instructions or enforce file permissions. Required instructions belong in the authorized input. A prompt is not an OS sandbox.
 
-Retained worker input uses a stable `taskKey`, role, outcome, selected context and optional `sourcePaths`. HEAD captures selected dirty/untracked bytes too. The same Project/Session/Run/task key identifies one logical member. An unchanged request reuses its authorization; changed input can be reprepared before consumption. After consumption, a new model, timeout, context or random task key must not bypass the at-most-once lease. Worker relaunch requires verified pre-start failure evidence; unknown execution is not failed-to-start execution.
+Retained worker input uses a stable `taskKey`, role, outcome, selected context and optional `sourcePaths`. Lode captures selected dirty/untracked bytes too. The same Project/Session/Run/task key identifies one logical member. An unchanged request reuses its authorization; changed input can be reprepared before consumption. After consumption, a new model, timeout, context or random task key must not bypass the at-most-once lease. Worker relaunch requires verified pre-start failure evidence; unknown execution is not failed-to-start execution.
 
-Selected-workspace preparation copies only selected bytes to a separate execution directory, not a second HEAD Project. It records canonical and execution roots separately, without claiming dependency completeness or effective sandboxing. Write-bound input captures exact original bytes/mode or explicit target absence. Before launch, only selected inputs and preimages are checked; unrelated repository changes are not a global freshness gate. A binding cannot be reused in a different canonical project root just because the files look alike.
+Selected-workspace preparation copies only selected bytes to a separate execution directory, not a second Lode Project. It records canonical and execution roots separately, without claiming dependency completeness or effective sandboxing. Write-bound input captures exact original bytes/mode or explicit target absence. Before launch, only selected inputs and preimages are checked; unrelated repository changes are not a global freshness gate. A binding cannot be reused in a different canonical project root just because the files look alike.
 
 Fresh proposal authorization `0.7` instead binds a read-only `proposalBasis`:
-selected target preimages or absence, with no worker-owned write paths. HEAD
+selected target preimages or absence, with no worker-owned write paths. Lode
 selects that evidence before authorization; targets identify what may be proposed,
 not what the model may modify. Existing `0.6` write-bound execution is unchanged.
 The fixed Codex proposal policy is separate from the selected-exec policy below;
@@ -98,16 +98,16 @@ never makes an already consumed authorization reusable.
 
 ## 2. Execute, observe and cancel the exact job
 
-`worker-start` / `head_bounded_worker_start` requires a trusted Host runner capability. Tool input cannot supply an executable, environment or assertion that a policy is enforced. In the validated Windows synthetic connection, a native owner controls the runner's absolute deadline and process tree. Its binding includes the exact member, authorization, input, roots, runner/Core identity and policy.
+`worker-start` / `lode_bounded_worker_start` requires a trusted Host runner capability. Tool input cannot supply an executable, environment or assertion that a policy is enforced. In the validated Windows synthetic connection, a native owner controls the runner's absolute deadline and process tree. Its binding includes the exact member, authorization, input, roots, runner/Core identity and policy.
 
 Repeated or uncertain start observes the same job; it does not launch another one. CLI and MCP provide the same operations:
 
 | Need | CLI | Typed MCP |
 | --- | --- | --- |
-| Observe | `worker-job-status` | `head_bounded_worker_job_status` |
-| Request cancellation | `worker-cancel` | `head_bounded_worker_cancel` |
-| Reconcile returned evidence | `worker-job-reconcile` | `head_bounded_worker_job_reconcile` |
-| Read the frozen patch | `worker-job-patch` | `head_bounded_worker_job_patch` |
+| Observe | `worker-job-status` | `lode_bounded_worker_job_status` |
+| Request cancellation | `worker-cancel` | `lode_bounded_worker_cancel` |
+| Reconcile returned evidence | `worker-job-reconcile` | `lode_bounded_worker_job_reconcile` |
+| Read the frozen patch | `worker-job-patch` | `lode_bounded_worker_job_patch` |
 
 Status is read-only and creates no artifacts. Success needs verified owner/tree exit, native terminal output, the exact released lease and invocation evidence—not a partial output file or cancellation request. Cancellation targets the existing job, never an arbitrary PID. Source drift or a Run transition must not prevent protective cancellation. Ownership checks use process-creation identity, not numeric PID absence alone.
 
@@ -128,13 +128,13 @@ For fresh proposal jobs, the patch is reconstructed from the exact receipt-bound
 `RuntimeStructuredResult` `0.2` `patchProposal`, not from claimed workspace writes.
 Core validates target paths, proposed images and the frozen proposal basis; it
 does not treat a model's proposed bytes or verification statements as applied
-effects or executed tests. HEAD still decides whether the proposal is suitable.
+effects or executed tests. Lode still decides whether the proposal is suitable.
 
 Wave completion remains operational evidence, not whole-task acceptance. For a partial launch, inspect individual jobs and use wave status/abandonment without forcing a seal. A failed or abandoned wave may still have live members; abandonment does not terminate them.
 
-## 3. Combine and apply changes through one HEAD flow
+## 3. Combine and apply changes through one Lode flow
 
-HEAD uses `head_worker_integration` or the equivalent `worker-integrate --input <head-integration-request.json>`. HEAD prepares the structured input from the conversation and verified results; users are not asked to author that file. `head_worker_integration_status` / `worker-integration-status` gives one non-persisted view of provenance, effects, current dependencies, overlapping unfinished effects and whole-result state, without duplicating raw patch bytes.
+Lode uses `lode_worker_integration` or the equivalent `worker-integrate --input <head-integration-request.json>`. Lode prepares the structured input from the conversation and verified results; users are not asked to author that file. `lode_worker_integration_status` / `worker-integration-status` gives one non-persisted view of provenance, effects, current dependencies, overlapping unfinished effects and whole-result state, without duplicating raw patch bytes.
 
 | Action | What it does |
 | --- | --- |
@@ -142,20 +142,20 @@ HEAD uses `head_worker_integration` or the equivalent `worker-integrate --input 
 | `apply` | Apply supported exact file effects after current-lineage, dependency and preimage checks. |
 | `reconcile` | Inspect retained effect evidence without rerunning workers or guessing success. |
 | `settle-incomplete` | Record an honestly incomplete outcome when exact evidence proves no owner can continue writing. |
-| `prepare-result` | Freeze HEAD's combined assessment and one proposed whole-Run ResultPacket against the current basis. |
-| `publish-result` | Publish that exact result through the existing Run finish and Fresh HEAD review path. |
+| `prepare-result` | Freeze Lode's combined assessment and one proposed whole-Run ResultPacket against the current basis. |
+| `publish-result` | Publish that exact result through the existing Run finish and Fresh Lode review path. |
 
-Identical file effects coalesce while preserving every contributing member. Different preimages/postimages, path aliases and ancestor overlaps among actual changes remain conflicts for HEAD to resolve. Unchanged files and read dependencies are **not reservations**. Dependency drift is evidence for HEAD to reassess. The current `basis_digest` links that assessment to observed evidence; it is not a new user approval token or a machine judgment of semantic sufficiency.
+Identical file effects coalesce while preserving every contributing member. Different preimages/postimages, path aliases and ancestor overlaps among actual changes remain conflicts for Lode to resolve. Unchanged files and read dependencies are **not reservations**. Dependency drift is evidence for Lode to reassess. The current `basis_digest` links that assessment to observed evidence; it is not a new user approval token or a machine judgment of semantic sufficiency.
 
 A completed Run-bound read-only proposal can be prepared and inspected without delegated
-write permission. Only a non-empty `apply` requires `project.write` in HEAD's
+write permission. Only a non-empty `apply` requires `project.write` in Lode's
 exact current Run contract. Neither the proposal nor its consumed runtime lease
 grants that permission. An empty integration adds no write gate. The same
 preimage, ownership and native-effect checks protect actual application.
 
 Apply checks native support for **all** effects before publishing a claim or writing the first file. Durable P3 claims, started attempts and receipts distinguish preparation, possible mutation and known outcome. Overlapping unfinished effects remain visible across Run/Session changes and Host-cache loss; they do not block unrelated paths or ordinary Session work. Coordination closes the race between collision checks, claim publication and effect start. A claim with no started attempt resumes in the same integration.
 
-If one effect succeeds and the next fails, the applied effect stays recorded and remaining work stays incomplete. New external dependency drift between effects pauses only the remaining effects for HEAD reassessment; verified postimages from this integration are expected changes. Do not reapply an earlier effect over a later external edit, infer whole-task success or automatically roll back. An explicit known-no-write retry stays linked to the same integration and requires exact quiescence, native no-write evidence and a matching current preimage (`retry_known_no_write` in MCP). Unknown effects never qualify merely because a process or cache disappeared.
+If one effect succeeds and the next fails, the applied effect stays recorded and remaining work stays incomplete. New external dependency drift between effects pauses only the remaining effects for Lode reassessment; verified postimages from this integration are expected changes. Do not reapply an earlier effect over a later external edit, infer whole-task success or automatically roll back. An explicit known-no-write retry stays linked to the same integration and requires exact quiescence, native no-write evidence and a matching current preimage (`retry_known_no_write` in MCP). Unknown effects never qualify merely because a process or cache disappeared.
 
 Reconciliation preserves the original unknown receipt. Exact later native completion evidence can add a separate reconciled observation; matching postimage bytes alone cannot. Missing evidence is reported rather than repaired by inventing lease settlement or an outcome. Once owner quiescence and current effect-path evidence are established, a genuinely incomplete application can be settled and reported as incomplete, without relabeling it success or forcing manual artifact cleanup. Later reconciliation does not rewrite that settled history.
 
@@ -170,19 +170,19 @@ native no-write record instead uses the separate native linked-retry path.
 Neither path deletes history, skips an older unknown attempt, accepts a copied
 proof, or retries from status alone. An absent/inaccessible journal, timeout or
 unverified owner remains unknown; no manual artifact cleanup is required to
-make it look successful. HEAD uses the existing retry option, not a new form.
+make it look successful. Lode uses the existing retry option, not a new form.
 
 ## 4. Verify the combined state and finish once
 
-A Run has **one ResultPacket**. Independent worker passes do not prove the combined state. HEAD checks missing/duplicated work, effects and dependencies, runs appropriate verification, and records the whole outcome, exact member evidence and remaining unknowns. Semantic assessment belongs to HEAD, not to a hash, Compiler, wave status or native helper.
+A Run has **one ResultPacket**. Independent worker passes do not prove the combined state. Lode checks missing/duplicated work, effects and dependencies, runs appropriate verification, and records the whole outcome, exact member evidence and remaining unknowns. Semantic assessment belongs to Lode, not to a hash, Compiler, wave status or native helper.
 
-`prepare-result` binds that report to the current evidence basis. The effect dispositions `complete` and `settled-incomplete` describe file-effect settlement, not semantic success. Core does not select a gate from HEAD's report wording or check-status labels. For either disposition, result preparation/publication can retain an unobservable read-only dependency as explicit unknown evidence, preserving its original provenance and `allDependenciesObservable: false` rather than asserting full observability.
+`prepare-result` binds that report to the current evidence basis. The effect dispositions `complete` and `settled-incomplete` describe file-effect settlement, not semantic success. Core does not select a gate from Lode's report wording or check-status labels. For either disposition, result preparation/publication can retain an unobservable read-only dependency as explicit unknown evidence, preserving its original provenance and `allDependenciesObservable: false` rather than asserting full observability.
 
 This reporting path does not relax launch or apply checks. Actual effect paths must remain stable and observable, owner quiescence and current authority must be verified, and a path used for both reading and an effect follows the effect rules. A later basis change calls for reassessment and a new verification, not permanent rejection. Run verification outside the short mutation lock.
 
-`publish-result` accepts the exact frozen verification and exact Run. Interrupted finish resumes that result, never finishes a different current Run. Historical publication receipts remain readable after source or Session drift. Publication enters the existing **Fresh HEAD → explicit ReviewDecision → explicit P2 checkpoint integration** flow. It does not approve itself, promote Product Canon or write checkpoint direction. Fresh HEAD is a review projection built from verified artifacts, not a promise of an independent model or conversation.
+`publish-result` accepts the exact frozen verification and exact Run. Interrupted finish resumes that result, never finishes a different current Run. Historical publication receipts remain readable after source or Session drift. Publication enters the existing **Fresh Lode → explicit ReviewDecision → explicit P2 checkpoint integration** flow. It does not approve itself, promote Product Canon or write checkpoint direction. Fresh Lode is a review projection built from verified artifacts, not a promise of an independent model or conversation.
 
-Keep the existing single-result route when one provider draft satisfies the whole contract: `worker-apply` applies that Run result, not a fragment accumulator. Run-bound fresh `0.7` patch proposals use the integration/HEAD-verification route instead; the single-draft bridge cannot treat a proposed patch as a completed implementation. Ordinary Session worker results remain evidence for HEAD and do not acquire Run review requirements.
+Keep the existing single-result route when one provider draft satisfies the whole contract: `worker-apply` applies that Run result, not a fragment accumulator. Run-bound fresh `0.7` patch proposals use the integration/Lode-verification route instead; the single-draft bridge cannot treat a proposed patch as a completed implementation. Ordinary Session worker results remain evidence for Lode and do not acquire Run review requirements.
 
 ## 5. Resume without changing authority
 
@@ -196,7 +196,7 @@ Integration preparation reuses existing P3 before consulting retired Host cache.
 
 Session results explicitly require `planDelta: ""` and `impactRadius: []`; these are fixed values, not examples. Describe local effects in `outcome`/`evidence` and file proposals in `patchProposal`. The Codex exec, fresh-proposal and native-prefix child schemas bind those values to the verified scope (empty-string enum and `maxItems: 0`). Run deltas and impacts remain unchanged. Core verifies the original response without deleting fields, retrying the model, or requiring a Run/wave. The array bound follows the stock [Structured Outputs contract](https://developers.openai.com/api/docs/guides/structured-outputs); local wire tests do not establish actual model acceptance. Newly prepared Session inputs have new digests; existing attempts/failed receipts are never rewritten or replayed.
 
-When selected-only preparation encounters existing CLI global instructions, it reports `unavailable_for_selected_scope` with a non-persisted explanation rather than presenting the whole backend as broken. No worker authorization is supplied by that result. Direct HEAD work and ordinary Host delegation remain available within their existing scope; their capabilities are not proven by this projection. The audited stock recipe cannot selectively remove those global instructions while retaining the same authentication home. Do not copy authentication, change global settings, switch to `host-global`, or retry automatically. HEAD may include exact global instructions only when their transmission is already covered by user authorization, or after obtaining that specific authorization. This is not a recurring approval requirement for ordinary work.
+When selected-only preparation encounters existing CLI global instructions, it reports `unavailable_for_selected_scope` with a non-persisted explanation rather than presenting the whole backend as broken. No worker authorization is supplied by that result. Direct Lode work and ordinary Host delegation remain available within their existing scope; their capabilities are not proven by this projection. The audited stock recipe cannot selectively remove those global instructions while retaining the same authentication home. Do not copy authentication, change global settings, switch to `host-global`, or retry automatically. Lode may include exact global instructions only when their transmission is already covered by user authorization, or after obtaining that specific authorization. This is not a recurring approval requirement for ordinary work.
 
 - Retained input `0.4` captures selected member context; `0.5` adds selected-workspace binding; `0.6` adds exact write preimages. Distinct `0.7` read-only proposal input adds a `proposalBasis`, not worker write authority. Older inputs do not silently acquire newer semantics. No input version alone proves effective sandboxing.
 - The native image-effect path supports Windows local NTFS, existing parent directories, regular-file creation/edit/deletion and supported mode changes. Modes `0444`/`0666` represent the Windows read-only attribute, not POSIX ACL semantics. Read-only byte edits, new parent creation and unsupported filesystems/platforms are disclosed before application. Empty files and absent files are distinct. A rename-shaped change is separate effects, not an atomic rename.

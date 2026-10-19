@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { formatForVerifiedOwner, familyFormatForOriginal } from "./project-storage-format.mjs";
 import { verifyTemporalProvenanceGraph } from "./temporal-provenance.mjs";
 
 export const ARCADEDB_INCREMENTAL_SYNC_VERSION = "0.1.0";
@@ -125,13 +126,13 @@ function batchRecords(kind, operation, records) {
   return clone(records);
 }
 
-function buildBatches({ projectId, baseGraphSnapshotId, targetGraphSnapshotId, kind, operation, records, batchSize, firstIndex }) {
+function buildBatches({ projectId, baseGraphSnapshotId, targetGraphSnapshotId, kind, operation, records, batchSize, firstIndex, format }) {
   const batches = [];
   for (let offset = 0; offset < records.length; offset += batchSize) {
     const payload = {
       schemaVersion: 1,
       kind: "ArcadeDbIncrementalSyncBatch",
-      protocol: { name: "head-agent-core-arcadedb-incremental-sync", version: ARCADEDB_INCREMENTAL_SYNC_VERSION },
+      protocol: { name: format.protocol("head-agent-core-arcadedb-incremental-sync"), version: ARCADEDB_INCREMENTAL_SYNC_VERSION },
       projectId,
       baseGraphSnapshotId,
       targetGraphSnapshotId,
@@ -151,11 +152,15 @@ function buildBatches({ projectId, baseGraphSnapshotId, targetGraphSnapshotId, k
   return batches;
 }
 
-export function buildArcadeDbIncrementalSyncManifest({ baseGraph = null, targetGraph, batchSize = null } = {}) {
+export function buildArcadeDbIncrementalSyncManifest({ baseGraph = null, targetGraph, batchSize = null, storage = null } = {}) {
+  const format = formatForVerifiedOwner(storage);
   verifyTemporalProvenanceGraph(targetGraph);
+  if (targetGraph.protocol.name !== format.protocol("head-agent-core-temporal-provenance")) {
+    fail("Incremental sync target has a different storage family.", "ARCADEDB_INCREMENTAL_SYNC_PROJECT_MISMATCH");
+  }
   if (baseGraph != null) {
     verifyTemporalProvenanceGraph(baseGraph);
-    if (baseGraph.projectId !== targetGraph.projectId) {
+    if (baseGraph.projectId !== targetGraph.projectId || baseGraph.protocol.name !== targetGraph.protocol.name) {
       fail("Incremental sync base and target projects differ.", "ARCADEDB_INCREMENTAL_SYNC_PROJECT_MISMATCH");
     }
   }
@@ -186,12 +191,13 @@ export function buildArcadeDbIncrementalSyncManifest({ baseGraph = null, targetG
       records,
       batchSize: size,
       firstIndex: batches.length,
+      format,
     }));
   }
   const payload = {
     schemaVersion: 1,
     kind: "ArcadeDbIncrementalSyncManifest",
-    protocol: { name: "head-agent-core-arcadedb-incremental-sync", version: ARCADEDB_INCREMENTAL_SYNC_VERSION },
+    protocol: { name: format.protocol("head-agent-core-arcadedb-incremental-sync"), version: ARCADEDB_INCREMENTAL_SYNC_VERSION },
     projectId: targetGraph.projectId,
     baseGraphSnapshotId: baseGraph?.graphSnapshotId || null,
     baseGraphSnapshotHash: baseGraph?.graphSnapshotHash || null,
@@ -222,8 +228,9 @@ function validSummary(value) {
 }
 
 export function verifyArcadeDbIncrementalSyncBatch(document) {
+  const format = familyFormatForOriginal("head-agent-core-arcadedb-incremental-sync", document);
   if (!document || document.kind !== "ArcadeDbIncrementalSyncBatch" || document.schemaVersion !== 1
-    || document.protocol?.name !== "head-agent-core-arcadedb-incremental-sync"
+    || !format
     || document.protocol?.version !== ARCADEDB_INCREMENTAL_SYNC_VERSION
     || typeof document.projectId !== "string" || !document.projectId
     || (document.baseGraphSnapshotId != null && !/^graph-snapshot-[a-f0-9]{24}$/.test(document.baseGraphSnapshotId))
@@ -266,8 +273,9 @@ export function verifyArcadeDbIncrementalSyncBatch(document) {
 }
 
 export function verifyArcadeDbIncrementalSyncManifest(document, { baseGraph = null, targetGraph = null } = {}) {
+  const format = familyFormatForOriginal("head-agent-core-arcadedb-incremental-sync", document);
   if (!document || document.kind !== "ArcadeDbIncrementalSyncManifest" || document.schemaVersion !== 1
-    || document.protocol?.name !== "head-agent-core-arcadedb-incremental-sync"
+    || !format
     || document.protocol?.version !== ARCADEDB_INCREMENTAL_SYNC_VERSION
     || typeof document.projectId !== "string" || !document.projectId
     || (document.baseGraphSnapshotId != null && !/^graph-snapshot-[a-f0-9]{24}$/.test(document.baseGraphSnapshotId))
@@ -288,7 +296,7 @@ export function verifyArcadeDbIncrementalSyncManifest(document, { baseGraph = nu
   }
   document.batches.forEach((batch, index) => {
     verifyArcadeDbIncrementalSyncBatch(batch);
-    if (batch.projectId !== document.projectId || batch.baseGraphSnapshotId !== document.baseGraphSnapshotId
+    if (batch.protocol.name !== document.protocol.name || batch.projectId !== document.projectId || batch.baseGraphSnapshotId !== document.baseGraphSnapshotId
       || batch.targetGraphSnapshotId !== document.targetGraphSnapshotId || batch.batchIndex !== index
       || batch.records.length > document.batchSize) {
       fail("ArcadeDB incremental sync batch does not match its manifest.", "INVALID_ARCADEDB_INCREMENTAL_SYNC_MANIFEST");
@@ -304,7 +312,7 @@ export function verifyArcadeDbIncrementalSyncManifest(document, { baseGraph = nu
     fail("ArcadeDB incremental sync manifest digest verification failed.", "ARCADEDB_INCREMENTAL_SYNC_MANIFEST_DIGEST_MISMATCH");
   }
   if (targetGraph) {
-    const expected = buildArcadeDbIncrementalSyncManifest({ baseGraph, targetGraph, batchSize: document.batchSize });
+    const expected = buildArcadeDbIncrementalSyncManifest({ baseGraph, targetGraph, batchSize: document.batchSize, storage: format });
     if (incrementalSyncCanonicalJson(document) !== incrementalSyncCanonicalJson(expected)) {
       fail("ArcadeDB incremental sync manifest differs from the verified graph delta.", "ARCADEDB_INCREMENTAL_SYNC_MANIFEST_MISMATCH");
     }
@@ -320,10 +328,11 @@ function expectedRecordsForBatch(batch, targetGraph) {
 }
 
 function buildCheckpoint({ manifest, batch, verifiedRecords }) {
+  const format = familyFormatForOriginal("head-agent-core-arcadedb-incremental-sync", manifest);
   const payload = {
     schemaVersion: 1,
     kind: "ArcadeDbIncrementalSyncCheckpoint",
-    protocol: { name: "head-agent-core-arcadedb-incremental-sync", version: ARCADEDB_INCREMENTAL_SYNC_VERSION },
+    protocol: { name: format.protocol("head-agent-core-arcadedb-incremental-sync"), version: ARCADEDB_INCREMENTAL_SYNC_VERSION },
     projectId: manifest.projectId,
     syncId: manifest.syncId,
     syncHash: manifest.syncHash,
@@ -347,8 +356,9 @@ function buildCheckpoint({ manifest, batch, verifiedRecords }) {
 }
 
 export function verifyArcadeDbIncrementalSyncCheckpoint(document, { manifest = null, batch = null, expectedRecords = null } = {}) {
+  const format = familyFormatForOriginal("head-agent-core-arcadedb-incremental-sync", document);
   if (!document || document.kind !== "ArcadeDbIncrementalSyncCheckpoint" || document.schemaVersion !== 1
-    || document.protocol?.name !== "head-agent-core-arcadedb-incremental-sync"
+    || !format
     || document.protocol?.version !== ARCADEDB_INCREMENTAL_SYNC_VERSION
     || typeof document.projectId !== "string" || !document.projectId
     || !/^arcadedb-sync-[a-f0-9]{24}$/.test(document.syncId || "") || !/^[a-f0-9]{64}$/.test(document.syncHash || "")
@@ -372,11 +382,11 @@ export function verifyArcadeDbIncrementalSyncCheckpoint(document, { manifest = n
   if (document.checkpointId !== identity.id || document.checkpointHash !== identity.hash) {
     fail("ArcadeDB incremental sync checkpoint digest verification failed.", "ARCADEDB_INCREMENTAL_SYNC_CHECKPOINT_DIGEST_MISMATCH");
   }
-  if (manifest && (document.projectId !== manifest.projectId || document.syncId !== manifest.syncId
+  if (manifest && (document.protocol.name !== manifest.protocol?.name || document.projectId !== manifest.projectId || document.syncId !== manifest.syncId
     || document.syncHash !== manifest.syncHash || document.targetGraphSnapshotId !== manifest.targetGraphSnapshotId)) {
     fail("ArcadeDB incremental sync checkpoint does not match its manifest.", "ARCADEDB_INCREMENTAL_SYNC_CHECKPOINT_MISMATCH");
   }
-  if (batch && (document.batchId !== batch.batchId || document.batchHash !== batch.batchHash
+  if (batch && (document.protocol.name !== batch.protocol?.name || document.batchId !== batch.batchId || document.batchHash !== batch.batchHash
     || document.batchIndex !== batch.batchIndex || document.recordKind !== batch.recordKind
     || document.operation !== batch.operation || document.recordCount !== batch.records.length)) {
     fail("ArcadeDB incremental sync checkpoint does not match its batch.", "ARCADEDB_INCREMENTAL_SYNC_CHECKPOINT_MISMATCH");
@@ -501,6 +511,7 @@ export function executeArcadeDbIncrementalSync({ transport, manifest, baseGraph 
 
 export function buildArcadeDbIncrementalSyncReceipt({ manifest, syncState, pointerBefore = null, pointerAfter, snapshotVerified, topologyVerified, localMirrorVerified } = {}) {
   const verifiedManifest = verifyArcadeDbIncrementalSyncManifest(manifest);
+  const format = familyFormatForOriginal("head-agent-core-arcadedb-incremental-sync", verifiedManifest);
   if (!syncState || !Array.isArray(syncState.checkpoints) || !pointerAfter
     || snapshotVerified !== true || topologyVerified !== true || localMirrorVerified !== true) {
     fail("ArcadeDB incremental sync receipt requires complete verification evidence.", "INVALID_ARCADEDB_INCREMENTAL_SYNC_RECEIPT");
@@ -508,7 +519,7 @@ export function buildArcadeDbIncrementalSyncReceipt({ manifest, syncState, point
   const payload = {
     schemaVersion: 1,
     kind: "ArcadeDbIncrementalSyncReceipt",
-    protocol: { name: "head-agent-core-arcadedb-incremental-sync", version: ARCADEDB_INCREMENTAL_SYNC_VERSION },
+    protocol: { name: format.protocol("head-agent-core-arcadedb-incremental-sync"), version: ARCADEDB_INCREMENTAL_SYNC_VERSION },
     projectId: verifiedManifest.projectId,
     syncId: verifiedManifest.syncId,
     syncHash: verifiedManifest.syncHash,
@@ -539,8 +550,9 @@ export function buildArcadeDbIncrementalSyncReceipt({ manifest, syncState, point
 }
 
 export function verifyArcadeDbIncrementalSyncReceipt(document) {
+  const format = familyFormatForOriginal("head-agent-core-arcadedb-incremental-sync", document);
   if (!document || document.kind !== "ArcadeDbIncrementalSyncReceipt" || document.schemaVersion !== 1
-    || document.protocol?.name !== "head-agent-core-arcadedb-incremental-sync"
+    || !format
     || document.protocol?.version !== ARCADEDB_INCREMENTAL_SYNC_VERSION
     || typeof document.projectId !== "string" || !document.projectId
     || !/^arcadedb-sync-[a-f0-9]{24}$/.test(document.syncId || "") || !/^[a-f0-9]{64}$/.test(document.syncHash || "")

@@ -1,3 +1,4 @@
+import { formatForVerifiedOwner } from "./project-storage-format.mjs";
 import {
   createObservationTypeDescriptor,
   observationCanonicalJson,
@@ -60,7 +61,7 @@ function exactInput(input) {
   if (unexpected.length) fail(`Delivery observation input has unsupported fields: ${unexpected.sort().join(", ")}.`, "INVALID_DELIVERY_OBSERVATION_INPUT");
 }
 
-export function deliveryObservationDescriptor() {
+export function deliveryObservationDescriptor(storage = null) {
   return createObservationTypeDescriptor({
     typeKey: DELIVERY_OBSERVATION_TYPE_KEY,
     typeVersion: "1",
@@ -84,7 +85,7 @@ export function deliveryObservationDescriptor() {
       ],
       additionalFields: false,
     },
-  });
+  }, storage);
 }
 
 function normalizeRevisionReference(root, value, revisionDigest) {
@@ -134,12 +135,12 @@ export async function recordDeliveryObservation({ root = ".", ...input } = {}) {
   const rollbackTargetObservationId = observationId(input.rollbackTargetObservationId, "Delivery rollback target observation id");
   if (outcome === "rolled-back" && !rollbackTargetObservationId) fail("Rolled-back delivery observations require an exact rollback target.", "INVALID_DELIVERY_OBSERVATION_INPUT");
   if (outcome !== "rolled-back" && rollbackTargetObservationId) fail("Only rolled-back delivery observations may name a rollback target.", "INVALID_DELIVERY_OBSERVATION_INPUT");
-  const adapterKey = stableKey(input.adapterKey || "head.delivery-host-input", "Delivery adapter key", 192);
+  const adapterKey = stableKey(input.adapterKey || formatForVerifiedOwner(inspected.storage).value("head.delivery-host-input"), "Delivery adapter key", 192);
   const adapterVersion = stableKey(input.adapterVersion || DELIVERY_OBSERVATION_VERSION, "Delivery adapter version", 64);
   const sourceScopeDigest = digestValue(input.sourceScopeDigest, "Delivery source scope digest");
   const sourceEventKeyDigest = digestValue(input.sourceEventKeyDigest, "Delivery source event key digest");
   const sourceEvidenceDigest = digestValue(input.sourceEvidenceDigest, "Delivery source evidence digest");
-  const artifacts = loadObservationArtifacts({ projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId });
+  const artifacts = loadObservationArtifacts({ projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId, storage: inspected.storage });
   const replay = existingReplay(artifacts, adapterKey, adapterVersion, sourceScopeDigest, sourceEventKeyDigest);
   const observedAt = input.observedAt == null
     ? replay?.temporalScope.observedAt || new Date().toISOString()
@@ -157,7 +158,7 @@ export async function recordDeliveryObservation({ root = ".", ...input } = {}) {
     ...(rollbackTargetObservationId ? { rollback_target_observation_id: rollbackTargetObservationId } : {}),
     ...revisionReference,
   };
-  const descriptor = deliveryObservationDescriptor();
+  const descriptor = deliveryObservationDescriptor(inspected.storage);
   const recorded = await recordDeliveryCollectedObservation({
     root: inspected.project.projectRoot,
     descriptor,
@@ -362,8 +363,8 @@ export function inspectDeliveryState({ root = ".", environmentKey = "", targetKe
   const normalizedTarget = targetKey ? stableKey(targetKey, "Delivery target filter", 128) : "";
   const boundedHistoryLimit = Number(historyLimit);
   if (!Number.isInteger(boundedHistoryLimit) || boundedHistoryLimit < 1 || boundedHistoryLimit > 4096) fail("Delivery history limit must be between 1 and 4096.", "INVALID_DELIVERY_STATUS_INPUT");
-  const descriptor = deliveryObservationDescriptor();
-  const artifacts = loadObservationArtifacts({ projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId });
+  const descriptor = deliveryObservationDescriptor(inspected.storage);
+  const artifacts = loadObservationArtifacts({ projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId, storage: inspected.storage });
   const records = artifacts.observations.filter((record) => record.descriptorId === descriptor.descriptorId
     && (!normalizedEnvironment || record.payload.environment_key === normalizedEnvironment)
     && (!normalizedTarget || record.payload.target_key === normalizedTarget));
@@ -439,7 +440,7 @@ export function inspectDeliveryState({ root = ".", environmentKey = "", targetKe
   }));
   const payload = {
     kind: "DeliveryStateProjection",
-    protocol: { name: "head-agent-core-delivery-observation", version: DELIVERY_OBSERVATION_VERSION },
+    protocol: { name: formatForVerifiedOwner(inspected.storage).protocol("head-agent-core-delivery-observation"), version: DELIVERY_OBSERVATION_VERSION },
     projectId: inspected.project.projectId,
     sessionId: inspected.state.sessionId,
     status: records.length ? "active" : "not_started",

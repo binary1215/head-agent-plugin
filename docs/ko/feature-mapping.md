@@ -7,7 +7,7 @@
 
 ## 검토 전 증거 정리
 
-HEAD는 후보마다 사용자에게 묻지 않고 제안을 조사하고 묶어 제시할 수 있습니다.
+Lode는 후보마다 사용자에게 묻지 않고 제안을 조사하고 묶어 제시할 수 있습니다.
 검토되지 않은 대기 배치가 오래되면 기존 제안 API에 `expectedCandidateSetId`와
 최신 의미 제안을 전달합니다. CLI는 `--expected-candidate-set`, MCP는
 `expected_candidate_set_id`를 사용합니다. 공유 변경 잠금 안에서 이전 원본과
@@ -27,7 +27,7 @@ File or Symbol -[:IMPLEMENTS]-> Feature or Capability
 Feature or Capability -[:VERIFIED_BY]-> Test
 ```
 
-provider HEAD는 현재 프로젝트 증거를 읽은 뒤 매핑을 제안할 수 있습니다. Core는 불변 `FeatureMappingCandidateSet`을 만들기 전에 제안 스키마, 정확한 현재 엔드포인트 ID와 리비전, 관계 방향, source 및 product snapshot 바인딩, 범위가 제한된 신뢰도, 설명, 콘텐츠 주소 기반 Evidence를 검증합니다. Candidate 및 Evidence 레코드의 지시 권위와 승격 권위는 false입니다. 의미 제안이 없으면 Core는 명시적 Unknown을 기록하고 candidate를 만들지 않습니다.
+provider Lode는 현재 프로젝트 증거를 읽은 뒤 매핑을 제안할 수 있습니다. Core는 불변 `FeatureMappingCandidateSet`을 만들기 전에 제안 스키마, 정확한 현재 엔드포인트 ID와 리비전, 관계 방향, source 및 product snapshot 바인딩, 범위가 제한된 신뢰도, 설명, 콘텐츠 주소 기반 Evidence를 검증합니다. Candidate 및 Evidence 레코드의 지시 권위와 승격 권위는 false입니다. 의미 제안이 없으면 Core는 명시적 Unknown을 기록하고 candidate를 만들지 않습니다.
 
 사용자가 명시적으로 작성한 매핑 `ReviewDecision`은 모든 candidate를 수락하거나, 이름이 지정된 선택 항목을 수락하거나, 배치를 거부할 수 있습니다. 수락은 candidate를 변경하지 않습니다. 대신 candidate에는 `PROMOTED_FROM`으로, decision에는 `PRODUCES`로 연결된 별도의 `ReviewedRelationship` receipt를 생성한 다음, 검토된 정규 `IMPLEMENTS` 또는 `VERIFIED_BY` edge를 구체화합니다. 거부는 `REJECTED_BY`를 기록하며 정규 매핑 edge를 생성하지 않습니다.
 
@@ -40,7 +40,7 @@ source나 Product evidence가 변경된 후에도 그 정확한 candidate set을
 거절은 불변 제안과 당시 바인딩을 보존하고, 파생 graph에는 검증된 현재 Product
 identity를 사용합니다. World가 검증 가능한 stale 상태라면 같은 명시적 거절 작업
 안에서 계보를 보존하며 갱신합니다. World가 없으면 명시적 재구축이 필요하며,
-손상된 World는 무결성 오류이지 덮어쓸 권한이 아닙니다. 거절 후 HEAD는
+손상된 World는 무결성 오류이지 덮어쓸 권한이 아닙니다. 거절 후 Lode는
 소스를 되돌리거나 상태 파일을 수동 삭제하지 않고 현재 증거로 대체 제안을 만들 수
 있습니다. Drift나 새 제안 시작 요청만으로 사용자 거절을 생성하지 않으며, 기존에
 검토된 관계 기록도 보존합니다.
@@ -79,11 +79,11 @@ freshness 신호가 candidate set과 그대로 일치할 때에만 복구합니�
 ## 명령
 
 ```text
-node scripts/head.mjs feature-mapping-start <project> --input <semantic-mapping-proposal.json>
-node scripts/head.mjs feature-mapping-status <project>
-node scripts/head.mjs feature-mapping-candidates <project> --candidate-set <feature-mapping-candidates-id>
-node scripts/head.mjs feature-mapping-review <project> --input <mapping-review.json>
-node scripts/head.mjs feature-mapping-review-read <project> --review <feature-mapping-review-decision-id>
+node scripts/lode.mjs feature-mapping-start <project> --input <semantic-mapping-proposal.json>
+node scripts/lode.mjs feature-mapping-status <project>
+node scripts/lode.mjs feature-mapping-candidates <project> --candidate-set <feature-mapping-candidates-id>
+node scripts/lode.mjs feature-mapping-review <project> --input <mapping-review.json>
+node scripts/lode.mjs feature-mapping-review-read <project> --review <feature-mapping-review-decision-id>
 ```
 
 의미 제안 입력 예시는 다음과 같습니다.
@@ -116,16 +116,16 @@ node scripts/head.mjs feature-mapping-review-read <project> --review <feature-ma
 }
 ```
 
-`accept-all`은 `acceptedCandidateIds`를 무시하고, `reject`는 아무것도 수락하지 않습니다. CLI 검토와 타입이 지정된 MCP `head_feature_mapping_review`는 동일한 Core 변경을 호출하며, MCP는 추가로 `confirm_user_review: true`를 요구합니다. MCP는 `head_feature_mapping_propose`와 읽기 전용 `head_feature_mapping_status`도 노출합니다. `include_unreviewed_candidates`를 명시적으로 활성화하지 않는 한 일반 temporal traversal은 검토되지 않은 candidate 표면을 제외합니다.
+`accept-all`은 `acceptedCandidateIds`를 무시하고, `reject`는 아무것도 수락하지 않습니다. CLI 검토와 타입이 지정된 MCP `lode_feature_mapping_review`는 동일한 Core 변경을 호출하며, MCP는 추가로 `confirm_user_review: true`를 요구합니다. MCP는 `lode_feature_mapping_propose`와 읽기 전용 `lode_feature_mapping_status`도 노출합니다. `include_unreviewed_candidates`를 명시적으로 활성화하지 않는 한 일반 temporal traversal은 검토되지 않은 candidate 표면을 제외합니다.
 
 ## 저장 및 프로젝션
 
 로컬 적합성 경로는 다음을 저장합니다.
 
 ```text
-.head/feature-mappings/current.json
-.head/feature-mappings/candidate-sets/feature-mapping-candidates-*.json
-.head/feature-mappings/review-decisions/feature-mapping-review-decision-*.json
+.lode/feature-mappings/current.json
+.lode/feature-mappings/candidate-sets/feature-mapping-candidates-*.json
+.lode/feature-mappings/review-decisions/feature-mapping-review-decision-*.json
 ```
 
 Candidate set과 ReviewDecision은 불변이며 digest로 검증되는 artifact입니다. `current.json`은 digest로 검증되는 workflow pointer일 뿐입니다. temporal graph와 World Model은 계속 재구축 가능한 프로젝션이며, Git과 GraphDB는 선택 사항이고 매핑 권위에 관여하지 않습니다.
@@ -134,6 +134,6 @@ Candidate set과 ReviewDecision은 불변이며 digest로 검증되는 artifact�
 
 ## 의미 제안 경계
 
-Core는 이름, 경로, token overlap 또는 저장소 특화 어휘에서 제품 의미를 추론하지 않습니다. provider HEAD가 의미를 읽고 범위가 제한된 관계만 제안하며, Core는 현재 증거 검증, 결정론적 정규화, 불변 저장, drift 검사, 검토 게이트를 소유합니다. 잘못되거나 stale인 제안은 fail closed됩니다. 어휘 fallback은 없습니다.
+Core는 이름, 경로, token overlap 또는 저장소 특화 어휘에서 제품 의미를 추론하지 않습니다. provider Lode가 의미를 읽고 범위가 제한된 관계만 제안하며, Core는 현재 증거 검증, 결정론적 정규화, 불변 저장, drift 검사, 검토 게이트를 소유합니다. 잘못되거나 stale인 제안은 fail closed됩니다. 어휘 fallback은 없습니다.
 
 provider-neutral live proposal orchestration, change-impact candidate, 대량 사용자 편집/revision batch, 자동 mapping refresh, 일반적인 relationship-promotion 정책은 향후 과제로 남아 있습니다.

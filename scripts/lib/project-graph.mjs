@@ -1,4 +1,6 @@
 import fs from "node:fs";
+import { formatForVerifiedOwner, relativeProjectArtifact } from "./project-storage-format.mjs";
+import { publicToolName } from "./lode-artifact-composition.mjs";
 import { artifactAuthorityBoundary } from "./authority-plane-contract.mjs";
 import {
   canonicalGraphJson, collectProjectGraphInventory, projectGraphDigest,
@@ -23,16 +25,16 @@ const fail = (code, message = code) => { const error = new Error(message); error
 const reason = (error) => error.code || "PROJECT_GRAPH_LAYER_UNAVAILABLE";
 const clone = (value) => structuredClone(value);
 function boundedCache(cache, key, value, limit = 16) { if (cache.size >= limit) cache.delete(cache.keys().next().value); cache.set(key, value); return value; }
-const layerFor = (relative) => sessionWorkPath(relative) ? "sessionWork" : relative.startsWith(".head/observations/source-bundles/") ? "source-bundles"
-  : relative.startsWith(".head/observations/") ? "observations"
-    : relative.startsWith(".head/onboarding/") ? "onboarding"
-      : relative.startsWith(".head/product-policy/") ? "policy"
-        : relative.startsWith(".head/change-sets/") ? "changes"
-          : relative.startsWith(".head/release-observations/") ? "releases"
-            : relative.startsWith(".head/conformance/") ? "conformance"
-              : relative.startsWith(".head/lineage/") ? "lineage"
-                : relative.startsWith(".head/sessions/") ? "sessions"
-                  : relative.startsWith(".head/project-direction/") ? "direction" : "product";
+const layerFor = (relative, storage) => sessionWorkPath(relative) ? "sessionWork" : relative.startsWith(relativeProjectArtifact(storage, "observations/source-bundles/")) ? "source-bundles"
+  : relative.startsWith(relativeProjectArtifact(storage, "observations/")) ? "observations"
+    : relative.startsWith(relativeProjectArtifact(storage, "onboarding/")) ? "onboarding"
+      : relative.startsWith(relativeProjectArtifact(storage, "product-policy/")) ? "policy"
+        : relative.startsWith(relativeProjectArtifact(storage, "change-sets/")) ? "changes"
+          : relative.startsWith(relativeProjectArtifact(storage, "release-observations/")) ? "releases"
+            : relative.startsWith(relativeProjectArtifact(storage, "conformance/")) ? "conformance"
+              : relative.startsWith(relativeProjectArtifact(storage, "lineage/")) ? "lineage"
+                : relative.startsWith(relativeProjectArtifact(storage, "sessions/")) ? "sessions"
+                  : relative.startsWith(relativeProjectArtifact(storage, "project-direction/")) ? "direction" : "product";
 
 function recordIdentity(document) {
   if (document.kind === "Evidence" && document.subtype === "SessionWorkEvidence") return document.evidenceId || null;
@@ -44,7 +46,7 @@ function recordIdentity(document) {
     ConformanceFindingCandidate: "findingId", ConformanceDispositionReceipt: "receiptId", ConformanceResolutionCandidate: "resolutionId",
     ChangeSet: "changeSetId", ChangeImpactCandidateSet: "candidateSetId", VcsEvidence: "vcsEvidenceId",
     BranchStateObservation: "branchStateObservationId", DeploymentResultObservation: "deploymentResultObservationId", ReleaseObservation: "releaseObservationId",
-    HeadSession: "sessionRecordId", HeadSessionStateReference: "sessionId", RunStateReference: "runId",
+    HeadSession: "sessionRecordId", LodeSession: "sessionRecordId", HeadSessionStateReference: "sessionId", LodeSessionStateReference: "sessionId", RunStateReference: "runId",
     ProjectDirection: "directionId", SessionRunCheckpoint: "checkpointId",
   }[document.kind];
   if (field && document[field]) return document[field];
@@ -100,7 +102,7 @@ async function verifiedLayer(inventory, layer, entries, model) {
   if (layer === "sessionWork") return projectSessionWorkLayer(inventory, { nodeFromRecord, relation, authority, id });
   if (layerCache.has(key)) return { ...clone(layerCache.get(key)), reused: true };
   const nodes = [], edges = [], skipped = [], sources = [];
-  const projectId = inventory.project.projectId, root = inventory.projectRoot;
+  const projectId = inventory.project.projectId, root = inventory.projectRoot, storage = inventory.storage;
   const add = (document, relative, views = ["work"], extra = {}) => {
     const entry = entries.find((item) => item.path === relative);
     const node = nodeFromRecord(document, { layer, path: relative, digest: entry?.sha256 || projectGraphDigest(document) }, views, extra);
@@ -115,7 +117,7 @@ async function verifiedLayer(inventory, layer, entries, model) {
   });
   if (layer === "product") {
     if (model) {
-      const origin = { layer, path: ".head/context/product-model.json", digest: entries[0]?.sha256 || model.productModelHash };
+      const origin = { layer, path: relativeProjectArtifact(storage, "context/product-model.json"), digest: entries[0]?.sha256 || model.productModelHash };
       nodes.push(nodeFromRecord({ ...model, kind: "ProductModelRevision" }, origin, ["product", "work"], { reviewState: "canon-source", revisionId: model.productModelId }));
       for (const [field, kind] of Object.entries({ featureGroups: "FeatureGroup", capabilities: "Capability", features: "Feature", requirements: "Requirement", constraints: "Constraint", decisions: "Decision", policies: "Policy" })) {
         for (const entity of model[field] || []) {
@@ -129,7 +131,7 @@ async function verifiedLayer(inventory, layer, entries, model) {
     }
   } else if (layer === "observations") {
     const { loadObservationArtifacts } = await import("./observation-store.mjs");
-    const verified = loadObservationArtifacts({ projectRoot: root, projectId });
+    const verified = loadObservationArtifacts({ projectRoot: root, projectId, storage });
     for (const document of [...verified.descriptors, ...verified.observations, ...verified.derivedObservations, ...verified.receipts]) {
       const record = records.find((item) => recordIdentity(item.document) === recordIdentity(document));
       const node = add(document, record.path, ["work", "product"], { reviewState: "observed-evidence", payload: safeObservationPayload(document) });
@@ -143,7 +145,7 @@ async function verifiedLayer(inventory, layer, entries, model) {
     for (const record of records) {
       if (record.document.failure) {
         const key = record.path.split("/").at(-1).slice(0, -5);
-        const retained = readSourceFailure(root, projectId, key);
+        const retained = readSourceFailure(root, projectId, key, storage);
         const failure = retained.failure;
         const nodeId = `source-failure-${key}`;
         const origin = { layer, path: record.path, digest: record.digest };
@@ -152,7 +154,7 @@ async function verifiedLayer(inventory, layer, entries, model) {
           sourceReference: { path: record.path, digest: record.digest }, ...authority });
         for (const source of failure.sources || []) sources.push({ ...source, nodeId, origin });
       } else {
-        verifySourceObservation(root, projectId, record.document, { requireCurrent: false });
+        verifySourceObservation(root, projectId, record.document, { requireCurrent: false, storage });
         const { evidence, observation } = record.document;
         const node = add(observation, record.path, ["work", "product"], { reviewState: "observed-evidence", payload: safeObservationPayload(observation) });
         for (const source of evidence.sources) sources.push({ path: source.path, digest: source.digest, nodeId: node.nodeId, origin: node.origin });
@@ -170,7 +172,7 @@ async function verifiedLayer(inventory, layer, entries, model) {
     }
   } else if (layer === "onboarding") {
     const { loadOnboardingGraphProjection } = await import("./onboarding-projection.mjs");
-    const projected = loadOnboardingGraphProjection({ projectRoot: root, projectId, currentProductModelId: model.productModelId });
+    const projected = loadOnboardingGraphProjection({ projectRoot: root, projectId, currentProductModelId: model.productModelId, storage });
     for (const document of [...projected.candidateSets, ...projected.reviewDecisions, ...projected.productModelRevisions]) {
       const record = records.find((item) => recordIdentity(item.document) === recordIdentity(document));
       const node = add(document, record.path, ["work", "product"], { revisionId: document.productModelId || document.candidateSetId,
@@ -225,8 +227,8 @@ async function verifiedLayer(inventory, layer, entries, model) {
     }
   } else if (layer === "releases" || layer === "changes") {
     const projection = layer === "releases" ? await import("./release-observation-projection.mjs") : await import("./change-set-projection.mjs");
-    const projected = layer === "releases" ? projection.loadReleaseObservationProjection({ projectRoot: root, projectId })
-      : projection.loadChangeSetProjection({ projectRoot: root, projectId });
+    const projected = layer === "releases" ? projection.loadReleaseObservationProjection({ projectRoot: root, projectId, storage })
+      : projection.loadChangeSetProjection({ projectRoot: root, projectId, storage });
     for (const documents of Object.values(projected)) if (Array.isArray(documents)) for (const document of documents) {
       const record = records.find((item) => recordIdentity(item.document) === recordIdentity(document));
       if (!record || !document.kind) continue;
@@ -255,7 +257,7 @@ async function verifiedLayer(inventory, layer, entries, model) {
     const { readProjectDirection, readProjectDirectionRevision } = await import("./project-direction.mjs");
     let current = null;
     try { current = readProjectDirection({ root }); }
-    catch (error) { skipped.push({ path: ".head/project-direction/current.json", reasonCode: reason(error) }); }
+    catch (error) { skipped.push({ path: relativeProjectArtifact(storage, "project-direction/current.json"), reasonCode: reason(error) }); }
     for (const record of records.filter((entry) => entry.path.includes("/revisions/"))) {
       const document = readProjectDirectionRevision({ root, directionId: record.document.directionId });
       if (projectGraphDigest(document) !== projectGraphDigest(record.document)) fail("PROJECT_GRAPH_READ_DRIFT");
@@ -267,15 +269,15 @@ async function verifiedLayer(inventory, layer, entries, model) {
   } else if (layer === "sessions") {
     const { verifySessionRecord } = await import("./onboarding-contract.mjs");
     const { readRecoveryCheckpoint } = await import("./compaction-recovery.mjs");
-    const defaultState = records.find((entry) => entry.path === ".head/sessions/current.json")?.document;
+    const defaultState = records.find((entry) => entry.path === relativeProjectArtifact(storage, "sessions/current.json"))?.document;
     for (const record of records) {
       const document = record.document;
       if (record.path.includes("/records/")) {
-        verifySessionRecord(document, { projectId });
+        verifySessionRecord(document, { projectId, storage });
         const node = add(document, record.path, ["work"], { freshness: "historical-session-anchor", reviewState: "session-identity-reference" });
         edges.push(relation("IDENTIFIES_SESSION", node.nodeId, document.sessionId, node.origin));
       } else if (record.path.includes("/ledger/")) {
-        const checkpoint = readRecoveryCheckpoint({ root, checkpointId: document.checkpointId, historical: true }).checkpoint;
+        const checkpoint = readRecoveryCheckpoint({ root, storage, checkpointId: document.checkpointId, historical: true }).checkpoint;
         if (projectGraphDigest(checkpoint) !== projectGraphDigest(document)) fail("PROJECT_GRAPH_READ_DRIFT");
         const node = add(checkpoint, record.path, ["work"], { freshness: "historical-checkpoint-reference", reviewState: "recovery-record-reference", revisionId: checkpoint.checkpointId });
         edges.push(relation("RECORDED_FOR_SESSION", node.nodeId, checkpoint.sessionId, node.origin));
@@ -283,10 +285,10 @@ async function verifiedLayer(inventory, layer, entries, model) {
           if (checkpoint[field]) edges.push(relation(type, node.nodeId, checkpoint[field], node.origin));
         }
       } else if (record.path.endsWith("/current.json")) {
-        const expectedId = record.path === ".head/sessions/current.json" ? document.sessionId : record.path.split("/")[3];
+        const expectedId = record.path === relativeProjectArtifact(storage, "sessions/current.json") ? document.sessionId : record.path.split("/")[3];
         if (document.schemaVersion !== 1 || !/^session-[a-fA-F0-9-]{36}$/.test(document.sessionId || "") || expectedId !== document.sessionId
           || document.projectId && document.projectId !== projectId) fail("HEAD_SESSION_IDENTITY_MISMATCH");
-        const node = add({ ...document, kind: "HeadSessionStateReference" }, record.path, ["work"], { freshness: "current-session-record-bytes", reviewState: "session-progress-reference",
+        const node = add({ ...document, kind: formatForVerifiedOwner(storage).kind("HeadSessionStateReference") }, record.path, ["work"], { freshness: "current-session-record-bytes", reviewState: "session-progress-reference",
           activeRunId: document.activeRunId || null, mode: document.mode, latestCheckpoint: document.latestCheckpoint || null,
           revisionId: record.digest, integrity: "identity-and-original-bytes-verified" });
         for (const [field, type] of [["currentWholePlanId", "REFERS_TO_PLAN"], ["activeRunId", "ACTIVE_RUN"], ["lastResultPacketId", "LAST_RESULT"], ["latestCheckpoint", "CHECKPOINT_REFERENCE"]]) {
@@ -527,13 +529,13 @@ export async function queryProjectGraph(options = {}) {
   try { inventory = collectProjectGraphInventory(options.root || "."); }
   catch (error) { return fallbackProjection(normalized, reason(error)); }
   if (!inventory.project) return fallbackProjection(normalized, "PROJECT_GRAPH_NOT_INITIALIZED");
-  const root = inventory.projectRoot, projectId = inventory.project.projectId;
+  const root = inventory.projectRoot, projectId = inventory.project.projectId, storage = inventory.storage;
   const grouped = new Map(), nodes = [], edges = [], sources = [], unavailable = [...inventory.unavailable], layers = [];
-  for (const entry of inventory.entries.filter((item) => item.path !== ".head/world-model/current.json")) {
-    const layer = layerFor(entry.path); if (!grouped.has(layer)) grouped.set(layer, []); grouped.get(layer).push(entry);
+  for (const entry of inventory.entries.filter((item) => item.path !== relativeProjectArtifact(storage, "world-model/current.json"))) {
+    const layer = layerFor(entry.path, storage); if (!grouped.has(layer)) grouped.set(layer, []); grouped.get(layer).push(entry);
   }
   let model = null;
-  try { const { readProductModelCanon } = await import("./product-model.mjs"); model = readProductModelCanon({ projectRoot: root }).model; }
+  try { const { readProductModelCanon } = await import("./product-model.mjs"); model = readProductModelCanon({ projectRoot: root, storage }).model; }
   catch (error) { unavailable.push({ layer: "product", reasonCode: reason(error) }); }
   for (const [layer, entries] of grouped) {
     try {
@@ -584,7 +586,7 @@ export async function queryProjectGraph(options = {}) {
       }
       if (!temporalAnchors.length && !normalized.query) return { status: "not-used", fallbackUsed: false,
         reasonCode: "COMBINED_LOCAL_ONLY", scope: "combined-local-navigation", acceleratesCombinedTraversal: false };
-      const projected = queryGraphProjection({ projectRoot: root, graph, adapter: options.graphProjectionAdapter || null,
+      const projected = queryGraphProjection({ projectRoot: root, storage, graph, adapter: options.graphProjectionAdapter || null,
         query: { query: temporalAnchors.length ? null : normalized.query || null, anchorIds: temporalAnchors.length ? temporalAnchors : null,
           expectedGraphSnapshotId: temporalAnchors.length ? graph.graphSnapshotId : null, freshness: ["current", "historical", "stale"],
           authorityClasses: ["canon-projected", "reviewed", "derived", "heuristic", "runtime-observed"], includeUnreviewedCandidates: normalized.includeCandidates,
@@ -658,10 +660,10 @@ export async function queryProjectGraph(options = {}) {
   const withWorkContent = { ...traversed, nodes: presentSessionWorkContent(traversed.nodes, normalized) };
   const presentation = normalized.details ? withWorkContent : compactTraversal(withWorkContent);
   const partialContent = presentation.nodes.some(node => node.contentPartial);
-  const payload = { kind: "ProjectGraphDiscoveryProjection", protocol: { name: "head-agent-core-project-graph", version: PROJECT_GRAPH_PROTOCOL_VERSION },
+  const payload = { kind: "ProjectGraphDiscoveryProjection", protocol: { name: formatForVerifiedOwner(storage).protocol("head-agent-core-project-graph"), version: PROJECT_GRAPH_PROTOCOL_VERSION },
     authorityBoundary: artifactAuthorityBoundary("ProjectGraphDiscoveryProjection"),
     status: traversed.nodes.length ? "available" : "source-fallback", basis, query: normalized, ...presentation,
-    detailExpansion: { supported: true, tool: "head_project_graph", arguments: { details: true },
+    detailExpansion: { supported: true, tool: publicToolName("head_project_graph"), arguments: { details: true },
       instruction: "Use selected node IDs as anchor_ids; increase depth for relationships. Full records remain at sourceReference.path." },
     summary: { nodeCount: traversed.nodes.length, edgeCount: traversed.edges.length, reviewStates: count("reviewState"), freshnessStates: count("freshness"),
       policyReferences: traversed.nodes.filter((node) => node.policyKey).map((node) => { const { proposedPolicy, ...state } = navigationState(node); return { nodeId: node.nodeId, ...state, ...(normalized.details ? { proposedPolicy } : {}) }; }),

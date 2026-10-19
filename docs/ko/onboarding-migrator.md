@@ -2,7 +2,7 @@
 
 [English](../onboarding-migrator.md)
 
-이 문서는 소스 저장소 유지보수 도구를 설명합니다. Migrator는 설치된 HEAD Agent
+이 문서는 소스 저장소 유지보수 도구를 설명합니다. Migrator는 설치된 Lode Agent
 Core 플러그인, MCP 서버, marketplace payload, native overlay 또는 일반 resume 경로에
 포함되지 않습니다.
 
@@ -47,7 +47,7 @@ commit boundary와 원본 byte 무결성을 검증합니다. Status, World, Cont
 current Core 동작으로 계속되며, 과거 promotion을 복구하거나 opaque candidate의 재검토를
 요청하지 않습니다.
 
-제품 의미를 변경해야 할 때 provider HEAD는 `head_onboarding_semantic_refresh` 또는 CLI
+제품 의미를 변경해야 할 때 provider Lode는 `lode_onboarding_semantic_refresh` 또는 CLI
 `onboarding-semantic-refresh`로 fresh `0.4.0` candidate를 제안합니다. Core는 정확한 current
 evidence를 검증하고, 이후의 명시적 사용자 ReviewDecision만 Canon을 변경할 수 있습니다.
 P3 continuity receipt와 P4 `HISTORICALLY_FOLLOWS` 관계는 typed ancestry나 권한을 만들지 않고

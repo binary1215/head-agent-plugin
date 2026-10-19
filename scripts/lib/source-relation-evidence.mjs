@@ -1,3 +1,4 @@
+import { formatForVerifiedOwner, familyFormatForOriginal } from "./project-storage-format.mjs";
 import crypto from "node:crypto";
 
 export const SOURCE_RELATION_EVIDENCE_VERSION = "1.0.0";
@@ -74,7 +75,7 @@ function normalizeManifest(files) {
   return normalized;
 }
 
-export function buildSourceRelationEvidenceSet({ projectId, files, analyzer, relations } = {}) {
+export function buildSourceRelationEvidenceSet({ projectId, files, analyzer, relations } = {}, storage = null) {
   if (typeof projectId !== "string" || !projectId || projectId.length > 256) fail("Source relation evidence Project is invalid.", "INVALID_SOURCE_RELATION_EVIDENCE");
   const normalizedFiles = normalizeManifest(files);
   assertFields(analyzer, ["name", "version", "method"], "analyzer");
@@ -106,7 +107,7 @@ export function buildSourceRelationEvidenceSet({ projectId, files, analyzer, rel
   const payload = {
     schemaVersion: 1,
     kind: "SourceRelationEvidenceSet",
-    protocol: { name: "head-agent-core-source-relation-evidence", version: SOURCE_RELATION_EVIDENCE_VERSION },
+    protocol: { name: formatForVerifiedOwner(storage).protocol("head-agent-core-source-relation-evidence"), version: SOURCE_RELATION_EVIDENCE_VERSION },
     projectId,
     analyzer: { name: analyzer.name, version: analyzer.version, method: "ast" },
     files: normalizedFiles,
@@ -120,29 +121,31 @@ export function buildSourceRelationEvidenceSet({ projectId, files, analyzer, rel
   return { ...payload, evidenceSetId: `source-relation-evidence-${evidenceSetHash.slice(0, 24)}`, evidenceSetHash };
 }
 
-export function verifySourceRelationEvidenceSet(document, { projectId = null, files = null } = {}) {
+export function verifySourceRelationEvidenceSet(document, { projectId = null, files = null, storage } = {}) {
   assertFields(document, [
     "schemaVersion", "kind", "protocol", "projectId", "analyzer", "files", "relations", "authority",
     "instructionAuthority", "promotionAuthority", "recoveryAuthority", "evidenceSetId", "evidenceSetHash",
   ], "Source relation evidence set");
+  const format = familyFormatForOriginal("head-agent-core-source-relation-evidence", document, storage);
+  if (!format) fail("Source relation evidence identity or canonical form is invalid.", "SOURCE_RELATION_EVIDENCE_DIGEST_MISMATCH");
   const rebuilt = buildSourceRelationEvidenceSet({
     projectId: document.projectId,
     files: document.files,
     analyzer: document.analyzer,
     relations: document.relations.map(({ type, from, to, evidence, language }) => ({ type, from, to, evidence, language })),
-  });
+  }, format);
   if (canonicalJson(rebuilt) !== canonicalJson(document)) fail("Source relation evidence identity or canonical form is invalid.", "SOURCE_RELATION_EVIDENCE_DIGEST_MISMATCH");
   if (projectId != null && document.projectId !== projectId) fail("Source relation evidence belongs to another Project.", "SOURCE_RELATION_EVIDENCE_PROJECT_MISMATCH");
   if (files != null && canonicalJson(document.files) !== canonicalJson(normalizeManifest(files))) fail("Source relation evidence file manifest is stale.", "SOURCE_RELATION_EVIDENCE_SOURCE_MISMATCH");
   return document;
 }
 
-export async function collectSourceRelationEvidence({ projectId, projectRoot, files, adapter = null } = {}) {
+export async function collectSourceRelationEvidence({ projectId, projectRoot, files, adapter = null, storage } = {}) {
   if (!adapter) return { evidence: null, diagnostics: { status: "not-configured", fallback: "heuristic-source-analysis-retained" } };
   if (typeof adapter.collect !== "function") fail("SourceRelationEvidenceAdapter must implement collect().", "INVALID_SOURCE_RELATION_EVIDENCE_ADAPTER");
   const manifest = normalizeManifest(files);
-  const document = await adapter.collect({ projectId, projectRoot, files: manifest });
-  const evidence = verifySourceRelationEvidenceSet(document, { projectId, files: manifest });
+  const document = await adapter.collect({ projectId, projectRoot, files: manifest, storage });
+  const evidence = verifySourceRelationEvidenceSet(document, { projectId, files: manifest, storage });
   return {
     evidence,
     diagnostics: {
@@ -163,7 +166,7 @@ export class InMemorySourceRelationEvidenceAdapter {
     this.adapterKind = adapterKind;
   }
 
-  collect({ projectId, files }) {
-    return buildSourceRelationEvidenceSet({ projectId, files, analyzer: this.analyzer, relations: this.relations });
+  collect({ projectId, files, storage }) {
+    return buildSourceRelationEvidenceSet({ projectId, files, analyzer: this.analyzer, relations: this.relations }, storage);
   }
 }

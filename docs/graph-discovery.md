@@ -2,7 +2,7 @@
 
 ## Ordinary use
 
-Tell HEAD the task once. HEAD restores the relevant logical Session and current
+Tell Lode the task once. Lode restores the relevant logical Session and current
 common direction, then queries nearby project relations before seeking new
 information. Reuse sufficient same-basis results. Missing or failed graph layers
 lead to original files and records. No full World refresh, Product approval,
@@ -17,7 +17,7 @@ explain provenance and sequence; they do not by themselves establish cause.
 
 ## Query and fallback
 
-The default typed MCP entry is `head_project_graph`. HEAD supplies `project_root`
+The default typed MCP entry is `lode_project_graph`. Lode supplies `project_root`
 and `query` from the task, with optional `anchor_ids`, `paths`, `depth`,
 `max_nodes`, `max_edges`, `view` (`all`, `work`, `product`),
 `world_model_id`, `previous_result`, `include_candidates` and `session_id`.
@@ -35,7 +35,7 @@ expand either view. A short result never proves task sufficiency.
 ### Saved work reasons and remaining work
 
 Already retained `SessionWorkEvidence` is discoverable through the existing
-`head_project_graph` and `graph-query` paths. Questions can match actual judgment
+`lode_project_graph` and `graph-query` paths. Questions can match actual judgment
 assessment, reason and alternatives, observed work, pending work and uncertainty,
 even when the matching term is absent from the summary. Exact paths, anchors and
 Session or evidence neighbors return the same typed work node and its actual
@@ -105,7 +105,7 @@ preserves available pending work and unknowns across nodes instead of allowing
 one long reason to consume every node's share. `details` requests the richer
 existing presentation; neither presentation establishes semantic sufficiency.
 
-`originalExpansion` supplies the existing `head_session_work_read` call with the
+`originalExpansion` supplies the existing `lode_session_work_read` call with the
 verified owner's `session_id`, exact `evidence_ids`, `max_records` of one and the
 actual enriched record-array size as `max_characters`. A successful same-basis
 expansion returns that one original with no budget omission. Compare its owner,
@@ -137,20 +137,20 @@ model adherence or a performance improvement.
 Natural-language questions match bounded display/domain values, excluding
 authority flags and revision/provenance boilerplate. Rare matching terms help
 order results before the transport bound. This is deterministic lexical
-navigation, not semantic inference: HEAD judges relevance and missing context.
+navigation, not semantic inference: Lode judges relevance and missing context.
 Punctuation, identifier parts and Korean particle aliases aid lookup without
-replacing the original term. Exact paths/anchors remain available; HEAD supplies
+replacing the original term. Exact paths/anchors remain available; Lode supplies
 them when useful, rather than asking the user to write a query or scoring form.
 
 ```text
-head-agent graph-query <project> --query "<task>"
-head-agent graph-index <project>
-head-agent session-list <project>
-head-agent session-create <project> --purpose "<independent work>"
-head-agent graph-query <project> --session <logical-session> --query "<task>"
+lode-agent graph-query <project> --query "<task>"
+lode-agent graph-index <project>
+lode-agent session-list <project>
+lode-agent session-create <project> --purpose "<independent work>"
+lode-agent graph-query <project> --session <logical-session> --query "<task>"
 ```
 
-`head_project_graph_index` / `graph-index` explicitly updates the replaceable
+`lode_project_graph_index` / `graph-index` explicitly updates the replaceable
 existing-observation index. Core initialize/resume and source/observation
 persistence also update it where useful. Unchanged input is reused. Queries do
 not create per-read receipts, candidates, approvals or checkpoints.
@@ -181,7 +181,7 @@ irrelevant. Ambiguous identity/origin, a matched anchor omitted by maxNodes, or 
 unsupported query keeps the old conservative proof or original-backed fallback.
 No source path is dropped when another required or uncertain role needs it.
 
-Follow the returned node's `detail` through `head_project_graph` with its
+Follow the returned node's `detail` through `lode_project_graph` with its
 `anchor_ids`, `details` and `depth`; no extra selector or native binding is needed.
 The normalized defaults remain maxEdges120 for detail and maxEdges12 for compact
 output. Explicit maxEdges0 is a separate query key, not a prerequisite for this
@@ -254,14 +254,14 @@ same-basis fallback reuse. Neither path claims combined traversal acceleration.
 
 General `CONTAINS`, `HAS_REVISION` and `DECLARES` paths connect records and
 versions; expanding them is not code-impact analysis. For a symbol's import/call
-neighbors use existing `head_world_query` or:
+neighbors use existing `lode_world_query` or:
 
 ```text
-head-agent world-query <project> --query "<symbol>" --depth 3 --limit 20
+lode-agent world-query <project> --query "<symbol>" --depth 3 --limit 20
 ```
 
 This bounded `IMPORTS`/`CALLS` lookup uses the World capability when available.
-HEAD accesses the optional MCP tool through its existing discover/invoke route;
+Lode accesses the optional MCP tool through its existing discover/invoke route;
 no new user setup is required. If World is absent or its relevant source is stale,
 read the affected current imports/calls directly. Retained links may guide that
 inspection but do not prove current impact. Do not make whole-World refresh,
@@ -269,18 +269,18 @@ new Run, Product review or database activation an investigation gate.
 
 ## Maintain evidence after integrated changes
 
-At the end of a meaningful code-change or feature-addition segment, HEAD checks
+At the end of a meaningful code-change or feature-addition segment, Lode checks
 the integrated result for needed graph maintenance. Include added, changed,
 deleted or renamed code and affected references/imports/calls, not only edited
-files. Workers return their changes, original evidence and unknowns; HEAD
+files. Workers return their changes, original evidence and unknowns; Lode
 reconciles the combined checkout and owns its update and verification. Workers
 do not each perform an uncoordinated global refresh.
 
 | Existing surface | What it does | What it does not do |
 | --- | --- | --- |
-| `head_project_graph_index` / `graph-index` | Refreshes the replaceable inventory of existing verified records and observations; reuses identical input | Does not extract new repository code relations or infer a feature |
+| `lode_project_graph_index` / `graph-index` | Refreshes the replaceable inventory of existing verified records and observations; reuses identical input | Does not extract new repository code relations or infer a feature |
 | `world-refresh` | Refreshes an already active World, including its supported code relations and revision evidence | Does not activate missing Product/World capability or grant approval |
-| `head_world_model`, `head_incremental_refresh_status`, `head_world_query` / `world-query` | Reads freshness/refresh evidence or bounded affected relations | Does not trigger a World refresh |
+| `lode_world_model`, `lode_incremental_refresh_status`, `lode_world_query` / `world-query` | Reads freshness/refresh evidence or bounded affected relations | Does not trigger a World refresh |
 
 Core initialization/resume and supported source/observation persistence already
 update the observation inventory. Reuse their sufficiently current results;
@@ -294,7 +294,7 @@ scope, analyzer support/confidence, unresolved imports/calls and other unknowns.
 A rename may be observed as remove/add; a name match alone cannot establish
 semantic identity or verified rename lineage.
 
-HEAD connects a feature's purpose/requirements to its implementation and actual
+Lode connects a feature's purpose/requirements to its implementation and actual
 verification through existing source documents, user direction, code references
 and applicable observation/result/candidate records. Keep original paths,
 digests/revisions and approval state. A test's presence is not a PASS: execution
@@ -311,9 +311,9 @@ for every edit. Existing active/unknown execution contracts still apply; refresh
 the graph does not rewrite their digest-bound inputs or authorize another effect.
 
 ```text
-head-agent graph-index <project>
-head-agent world-refresh <project>
-head-agent world-query <project> --query "<affected symbol>" --depth 3 --limit 20
+lode-agent graph-index <project>
+lode-agent world-refresh <project>
+lode-agent world-query <project> --query "<affected symbol>" --depth 3 --limit 20
 ```
 
 Use only the relevant path. No World/DB activation, full reindex, Run/Capsule,
@@ -333,10 +333,10 @@ refresh failure leaves a disclosed gap with usable original-source fallback.
 ## Route independent progress
 
 One canonical Project holds common user direction. The original Session record
-`.head/sessions/current.json` remains the default. Additional logical Sessions
-use `.head/sessions/by-id/<session-id>/current.json`. Request-local `session_id`
+`.lode/sessions/current.json` remains the default. Additional logical Sessions
+use `.lode/sessions/by-id/<session-id>/current.json`. Request-local `session_id`
 (MCP) or `--session` (CLI) selects a Session without switching/overwriting the
-default. `head_session_list` lists logical Sessions; `head_session_create`
+default. `lode_session_list` lists logical Sessions; `lode_session_create`
 accepts optional `new_session_id` and `purpose`. An existing ID is not rebound
 to another purpose. These identities are independent of provider sessions.
 
@@ -346,16 +346,16 @@ Existing records remain in place; routing does not require re-onboarding.
 
 ## Current common direction
 
-`head_project_direction_read` / `project-direction-read` returns the current
+`lode_project_direction_read` / `project-direction-read` returns the current
 `ProjectDirection` or no record. Its `input` holds `goal`, `constraints`,
 `decisions` and `cancelledActions`. It is P2 current user direction and grants
 no execution authorization. Publish actual current user direction with
-`head_project_direction_update` using the read `expected_direction_id` (null
+`lode_project_direction_update` using the read `expected_direction_id` (null
 for first publication) and `direction` object. CLI uses
 `project-direction-update --input <direction.json> --expected-direction <id>`.
-HEAD supplies the typed input from the conversation; users do not fill a form.
+Lode supplies the typed input from the conversation; users do not fill a form.
 
-The pointer `.head/project-direction/current.json` references immutable revisions.
+The pointer `.lode/project-direction/current.json` references immutable revisions.
 Exact-basis comparison reconciles competing updates; timestamp and last write do
 not resolve semantic conflicts. Identical updates reuse existing direction.
 
@@ -387,4 +387,16 @@ affected original sources.
 
 See [authority planes](authority-plane-contract.md),
 [Session recovery](session-recovery.md) and
-[runtime composition](../skills/head-agent-core/references/runtime-composition.md).
+[runtime composition](../skills/lode-agent-core/references/runtime-composition.md).
+
+## Path bases and existing Projects
+
+Project-internal references use validated Project-root-relative `/` paths. Generated
+Markdown `relativePath` starts at the published root; each href starts at its
+containing document. A `../` document link does not permit `..` in a durable selector.
+
+Runtime `project_root`, stored `projectRoot`, installation `pluginRoot` and root-derived
+identities remain bound to the verified absolute root and actual Session owner. New
+Projects use `.lode/`; existing `.head/` records and exact selectors stay unchanged.
+These are existing path contracts, not workspace relocation or automatic repair.
+

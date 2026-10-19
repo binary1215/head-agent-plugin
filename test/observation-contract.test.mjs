@@ -6,7 +6,8 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { initializeProject } from "../scripts/lib/head-core.mjs";
+import { initializeProject, inspectProject } from "../scripts/lib/head-core.mjs";
+import { formatForVerifiedOwner } from "../scripts/lib/project-storage-format.mjs";
 import { compileContext } from "../scripts/lib/context-compiler.mjs";
 import {
   JsonEventFileObservationAdapter,
@@ -34,7 +35,9 @@ function fixture() {
   fs.mkdirSync(testParent, { recursive: true });
   const root = fs.mkdtempSync(path.join(testParent, "head-agent-observation-"));
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
-  return root;
+  const storage = inspectProject(root).storage;
+  const layout = formatForVerifiedOwner(storage);
+  return { root, storage, layout };
 }
 
 function descriptor(typeKey, fields, forms = ["event", "snapshot", "aggregate"]) {
@@ -85,8 +88,8 @@ function event({ eventKey = "build-42", subjectType = "example.ci.target", paylo
   };
 }
 
-function projectArtifactText(root) {
-  const pending = [path.join(root, ".head")];
+function projectArtifactText(root, layout) {
+  const pending = [path.join(root, layout.directory)];
   const content = [];
   while (pending.length) {
     const current = pending.pop();
@@ -112,10 +115,10 @@ function input({ suffix, subjectType, payload, form = "event", coverageValue = c
 }
 
 test("uses one evidence-only contract across unrelated typed product observations", async (t) => {
-  const root = fixture();
+  const { root, storage, layout } = fixture();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const canonFile = path.join(root, ".head", "context", "product-model.json");
-  const sessionFile = path.join(root, ".head", "sessions", "current.json");
+  const canonFile = path.join(root, layout.directory, "context", "product-model.json");
+  const sessionFile = path.join(root, layout.directory, "sessions", "current.json");
   const canonBefore = fs.readFileSync(canonFile, "utf8");
   const sessionBefore = fs.readFileSync(sessionFile, "utf8");
 
@@ -133,8 +136,8 @@ test("uses one evidence-only contract across unrelated typed product observation
   }
   assert.equal(fs.readFileSync(canonFile, "utf8"), canonBefore);
   assert.equal(fs.readFileSync(sessionFile, "utf8"), sessionBefore);
-  const project = JSON.parse(fs.readFileSync(path.join(root, ".head", "project.json"), "utf8"));
-  const projection = loadObservationProjection({ projectRoot: root, projectId: project.projectId });
+  const project = JSON.parse(fs.readFileSync(path.join(root, layout.directory, "project.json"), "utf8"));
+  const projection = loadObservationProjection({ projectRoot: root, projectId: project.projectId, storage });
   assert.equal(projection.observationIds.length, 3);
   assert.deepEqual(projection.graphPolicy.automaticRelations, ["CONFORMS_TO", "DERIVED_FROM", "EVIDENCED_BY"]);
   assert.equal(projection.graphPolicy.automaticSemanticRelations, false);
@@ -147,7 +150,7 @@ test("uses one evidence-only contract across unrelated typed product observation
 });
 
 test("collects product-shaped CI events through a process-local Host registry without persisting Host secrets", async (t) => {
-  const root = fixture();
+  const { root, storage, layout } = fixture();
   const hostRoot = fs.mkdtempSync(path.join(testParent, "head-agent-observation-host-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   t.after(() => fs.rmSync(hostRoot, { recursive: true, force: true }));
@@ -156,8 +159,8 @@ test("collects product-shaped CI events through a process-local Host registry wi
   const rawCredentialReference = "HEAD_TEST_CI_TOKEN";
   fs.writeFileSync(eventFile, JSON.stringify(event({ eventKey: rawEventKey })));
   const type = descriptor("example.ci.build-result", [{ key: "succeeded", type: "boolean", required: true }], ["event"]);
-  const canonFile = path.join(root, ".head", "context", "product-model.json");
-  const sessionFile = path.join(root, ".head", "sessions", "current.json");
+  const canonFile = path.join(root, layout.directory, "context", "product-model.json");
+  const sessionFile = path.join(root, layout.directory, "sessions", "current.json");
   const canonBefore = fs.readFileSync(canonFile, "utf8");
   const sessionBefore = fs.readFileSync(sessionFile, "utf8");
 
@@ -178,7 +181,7 @@ test("collects product-shaped CI events through a process-local Host registry wi
   assert.equal(collected.authority.productCanonMutated, false);
   assert.equal(fs.readFileSync(canonFile, "utf8"), canonBefore);
   assert.equal(fs.readFileSync(sessionFile, "utf8"), sessionBefore);
-  const persisted = projectArtifactText(root);
+  const persisted = projectArtifactText(root, layout);
   assert.equal(persisted.includes(eventFile), false);
   assert.equal(persisted.includes(rawEventKey), false);
   assert.equal(persisted.includes(rawCredentialReference), false);
@@ -191,7 +194,7 @@ test("collects product-shaped CI events through a process-local Host registry wi
 });
 
 test("bounds Host source projection without imposing an arbitrary registration gate", async (t) => {
-  const root = fixture();
+  const { root, storage, layout } = fixture();
   const hostRoot = fs.mkdtempSync(path.join(testParent, "head-agent-observation-host-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   t.after(() => fs.rmSync(hostRoot, { recursive: true, force: true }));
@@ -253,7 +256,7 @@ test("bounds Host source projection without imposing an arbitrary registration g
 });
 
 test("exposes the JSON event-file reference adapter through the advanced Host CLI only", async (t) => {
-  const root = fixture();
+  const { root, storage, layout } = fixture();
   const hostRoot = fs.mkdtempSync(path.join(testParent, "head-agent-observation-host-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   t.after(() => fs.rmSync(hostRoot, { recursive: true, force: true }));
@@ -296,8 +299,8 @@ test("preflights the local project before a Host adapter can perform external co
 });
 
 test("lets CLI and MCP collect a Host-injected source by opaque ID without user-authored provenance", async (t) => {
-  const root = fixture();
-  const otherRoot = fixture();
+  const { root, storage, layout } = fixture();
+  const { root: otherRoot } = fixture();
   const hostRoot = fs.mkdtempSync(path.join(testParent, "head-agent-observation-host-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   t.after(() => fs.rmSync(otherRoot, { recursive: true, force: true }));
@@ -321,7 +324,7 @@ test("lets CLI and MCP collect a Host-injected source by opaque ID without user-
   assert.equal(cliSources.registry.sources[0].sourceId, registered.sourceId);
   const cliCollected = await runCommand(["observation-source-collect", root, "--source", registered.sourceId], { observationRegistry: registry });
   assert.equal(cliCollected.observation.typeKey, "example.configured.health");
-  const artifactsBeforePrepare = projectArtifactText(root);
+  const artifactsBeforePrepare = projectArtifactText(root, layout);
   const prepared = prepareObservationEvidence({ root, registry, typeKey: "example.configured.health", sourceLimit: 10 });
   assert.equal(prepared.existing.returned, 1);
   assert.equal(prepared.configuredSources.matchingSourceCount, 1);
@@ -330,7 +333,7 @@ test("lets CLI and MCP collect a Host-injected source by opaque ID without user-
   assert.equal(prepared.persisted, false);
   assert.match(prepared.preparationId, /^observation-preparation-[a-f0-9]{24}$/);
   assert.equal(prepareObservationEvidence({ root, registry, typeKey: "example.configured.health", sourceLimit: 10 }).preparationId, prepared.preparationId);
-  assert.equal(projectArtifactText(root), artifactsBeforePrepare);
+  assert.equal(projectArtifactText(root, layout), artifactsBeforePrepare);
 
   const mcpSources = await dispatchMcp({ jsonrpc: "2.0", id: 20, method: "tools/call", params: { name: "head_observation_sources", arguments: { project_root: root } } }, { observationRegistry: registry });
   assert.equal(mcpSources.result.structuredContent.registry.sources[0].sourceId, registered.sourceId);
@@ -349,11 +352,11 @@ test("lets CLI and MCP collect a Host-injected source by opaque ID without user-
   assert.equal(prepareTool.inputSchema.required.includes("type_key"), true);
   const sourcesTool = mcpTools.find((tool) => tool.name === "head_observation_sources");
   assert.deepEqual(["cursor", "projection_id"].every((key) => Object.hasOwn(sourcesTool.inputSchema.properties, key)), true);
-  assert.equal(projectArtifactText(root), artifactsBeforePrepare);
+  assert.equal(projectArtifactText(root, layout), artifactsBeforePrepare);
 });
 
 test("fails closed for divergent replay, false completeness, and schema or adapter authority drift", async (t) => {
-  const root = fixture();
+  const { root, storage, layout } = fixture();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const build = descriptor("head.build.result", [{ key: "succeeded", type: "boolean", required: true }]);
   await ingestStructuredObservation({ root, binding: binding(), descriptor: build, input: input({ suffix: "same", subjectType: "head.build.target", payload: { succeeded: true } }) });
@@ -364,7 +367,7 @@ test("fails closed for divergent replay, false completeness, and schema or adapt
 });
 
 test("scopes at-most-once replay to the exact adapter and source binding", async (t) => {
-  const root = fixture();
+  const { root, storage, layout } = fixture();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const type = descriptor("example.source.event", [{ key: "value", type: "integer", required: true }]);
   const observed = input({ suffix: "shared-upstream-id", subjectType: "example.source.subject", payload: { value: 1 } });
@@ -378,7 +381,7 @@ test("scopes at-most-once replay to the exact adapter and source binding", async
 });
 
 test("records deterministic derivation without promoting causal or product meaning", async (t) => {
-  const root = fixture();
+  const { root, storage, layout } = fixture();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const sourceDescriptor = descriptor("example.runtime.error-count", [{ key: "count", type: "nonnegative-integer", required: true }], ["aggregate"]);
   const first = await ingestStructuredObservation({ root, binding: binding(), descriptor: sourceDescriptor, input: input({ suffix: "before", subjectType: "example.runtime.service", payload: { count: 2 }, form: "aggregate" }) });
@@ -393,14 +396,14 @@ test("records deterministic derivation without promoting causal or product meani
     payload: { delta: 3 },
   } });
   assert.equal(derived.derivedObservation.epistemicClass, "derived-projection");
-  const project = JSON.parse(fs.readFileSync(path.join(root, ".head", "project.json"), "utf8"));
-  const projection = loadObservationProjection({ projectRoot: root, projectId: project.projectId });
+  const project = JSON.parse(fs.readFileSync(path.join(root, layout.directory, "project.json"), "utf8"));
+  const projection = loadObservationProjection({ projectRoot: root, projectId: project.projectId, storage });
   assert.equal(projection.edges.filter((edge) => edge.type === "DERIVED_FROM").length, 2);
   assert.equal(projection.edges.some((edge) => edge.type === "IMPACTS"), false);
 });
 
 test("exposes the same bounded contract through CLI and MCP while requiring Host confirmation", async (t) => {
-  const root = fixture();
+  const { root, storage, layout } = fixture();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const type = descriptor("head.test.summary", [{ key: "passed", type: "nonnegative-integer", required: true }]);
   const observed = input({ suffix: "cli", subjectType: "head.test.suite", payload: { passed: 4 } });
@@ -441,7 +444,7 @@ test("exposes the same bounded contract through CLI and MCP while requiring Host
 });
 
 test("keeps unrelated ProductSignal flow independent from unused Observation storage", async (t) => {
-  const root = fixture();
+  const { root, storage, layout } = fixture();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const recorded = await ingestStructuredObservation({
     root,
@@ -449,7 +452,7 @@ test("keeps unrelated ProductSignal flow independent from unused Observation sto
     descriptor: descriptor("example.optional.event", [{ key: "value", type: "integer", required: true }]),
     input: input({ suffix: "optional", subjectType: "example.optional.subject", payload: { value: 1 } }),
   });
-  fs.unlinkSync(path.join(root, ".head", "observations", "receipts", `${recorded.receipt.receiptId}.json`));
+  fs.unlinkSync(path.join(root, layout.directory, "observations", "receipts", `${recorded.receipt.receiptId}.json`));
   const signal = await recordProductSignal({ root, statement: "A separate user-authored product fact.", source: "user" });
   assert.equal(signal.signal.kind, "ProductSignal");
   const isolatedWorld = readWorldModel({ root }).snapshot;
@@ -468,7 +471,7 @@ test("keeps unrelated ProductSignal flow independent from unused Observation sto
 });
 
 test("bounds Observation status and cursor query without semantic selection", async (t) => {
-  const root = fixture();
+  const { root, storage, layout } = fixture();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const type = descriptor("example.query.event", [{ key: "value", type: "integer", required: true }]);
   for (let index = 0; index < 3; index += 1) await ingestStructuredObservation({
@@ -493,7 +496,7 @@ test("bounds Observation status and cursor query without semantic selection", as
 });
 
 test("admits Observation evidence only by exact HEAD need and keeps semantic interpretation in a hypothesis", async (t) => {
-  const root = fixture();
+  const { root, storage, layout } = fixture();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, "src"), { recursive: true });
   fs.writeFileSync(path.join(root, "src", "service.mjs"), "export const service = true;\n");
@@ -537,8 +540,8 @@ test("admits Observation evidence only by exact HEAD need and keeps semantic int
   await assert.rejects(() => recordProductHypothesis({ root, statement: "Unsupported", observationIds: ["observation-000000000000000000000000"] }), (error) => error.code === "UNKNOWN_OBSERVATION");
 });
 
-function observationAuthorityDigests(root) {
-  return Object.fromEntries([".head/context/product-model.json", ".head/sessions/current.json"].map((relative) => [relative, sha(fs.readFileSync(path.join(root, ...relative.split("/"))))]));
+function observationAuthorityDigests(root, layout) {
+  return Object.fromEntries([`${layout.directory}/context/product-model.json`, `${layout.directory}/sessions/current.json`].map((relative) => [relative, sha(fs.readFileSync(path.join(root, ...relative.split("/"))))]));
 }
 
 function observationJsonFiles(root, relative) {
@@ -549,13 +552,13 @@ function observationJsonFiles(root, relative) {
 }
 
 test("publishes one Observation and one receipt when divergent writers collide at the create-only boundary", async (t) => {
-  const root = fixture();
+  const { root, storage, layout } = fixture();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const before = observationAuthorityDigests(root);
+  const before = observationAuthorityDigests(root, layout);
   const type = descriptor("example.concurrent.build-result", [{ key: "succeeded", type: "boolean", required: true }], ["event"]);
   const firstInput = input({ suffix: "same-concurrent-event", subjectType: "example.concurrent.target", payload: { succeeded: true } });
   const secondInput = { ...structuredClone(firstInput), sourceEvidenceDigest: sha("different-concurrent-evidence"), payload: { succeeded: false } };
-  const recordDirectory = path.join(root, ".head", "observations", "records", "by-source-key");
+  const recordDirectory = path.join(root, layout.directory, "observations", "records", "by-source-key");
   const originalLink = fs.linkSync;
   let injected = false;
   let secondResult = null;
@@ -579,22 +582,22 @@ test("publishes one Observation and one receipt when divergent writers collide a
   assert.equal(secondError, null);
   assert.equal(secondResult.status, "recorded");
   assert.equal(firstError?.code, "DIVERGENT_OBSERVATION_REPLAY");
-  const records = observationJsonFiles(root, ".head/observations/records/by-source-key");
-  const receipts = observationJsonFiles(root, ".head/observations/receipts");
+  const records = observationJsonFiles(root, `${layout.directory}/observations/records/by-source-key`);
+  const receipts = observationJsonFiles(root, `${layout.directory}/observations/receipts`);
   assert.equal(records.length, 1);
   assert.equal(receipts.length, 1);
   assert.equal(receipts[0].observationId, records[0].observationId);
   assert.equal(queryObservations({ root }).inventorySummary.counts.observations, 1);
   assert.equal((await ingestStructuredObservation({ root, binding: binding(), descriptor: type, input: secondInput })).status, "existing");
   await assert.rejects(() => ingestStructuredObservation({ root, binding: binding(), descriptor: type, input: firstInput }), (error) => error.code === "DIVERGENT_OBSERVATION_REPLAY");
-  assert.deepEqual(observationAuthorityDigests(root), before);
+  assert.deepEqual(observationAuthorityDigests(root, layout), before);
   assert.equal(fs.readdirSync(recordDirectory).some((name) => name.endsWith(".tmp")), false);
 });
 
 test("keeps divergent Observation replay process-safe across independent Node writers", async (t) => {
-  const root = fixture();
+  const { root, storage, layout } = fixture();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const before = observationAuthorityDigests(root);
+  const before = observationAuthorityDigests(root, layout);
   const type = descriptor("example.process.build-result", [{ key: "succeeded", type: "boolean", required: true }], ["event"]);
   const firstInput = input({ suffix: "same-process-event", subjectType: "example.process.target", payload: { succeeded: true } });
   const secondInput = { ...structuredClone(firstInput), sourceEvidenceDigest: sha("different-process-evidence"), payload: { succeeded: false } };
@@ -646,11 +649,11 @@ test("keeps divergent Observation replay process-safe across independent Node wr
   assert.equal(outcomes.filter((item) => item.result.status === "recorded").length, 1);
   assert.equal(outcomes.filter((item) => item.result.code === "DIVERGENT_OBSERVATION_REPLAY").length, 1);
   assert.equal(outcomes.every((item) => item.signal === null && item.stderr === ""), true);
-  const records = observationJsonFiles(root, ".head/observations/records/by-source-key");
-  const receipts = observationJsonFiles(root, ".head/observations/receipts");
+  const records = observationJsonFiles(root, `${layout.directory}/observations/records/by-source-key`);
+  const receipts = observationJsonFiles(root, `${layout.directory}/observations/receipts`);
   assert.equal(records.length, 1);
   assert.equal(receipts.length, 1);
   assert.equal(receipts[0].observationId, records[0].observationId);
   assert.equal(queryObservations({ root }).inventorySummary.counts.observations, 1);
-  assert.deepEqual(observationAuthorityDigests(root), before);
+  assert.deepEqual(observationAuthorityDigests(root, layout), before);
 });

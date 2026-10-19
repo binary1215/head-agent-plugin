@@ -9,7 +9,7 @@ Git history, validation fixture 또는 model output에서 권한을 추론하지
 
 ## 권한과 lifecycle
 
-`.head/context/product-model.json`은 `FeatureGroup`, `Capability`, `Feature`,
+`.lode/context/product-model.json`은 `FeatureGroup`, `Capability`, `Feature`,
 `Requirement`, `Constraint`, `Decision` 및 선택적 schema-v2 `Policy`를 위한 변경 가능한
 프로젝트 Canon입니다. 새 프로젝트 초기화는 명시적으로 빈 schema-v1 document를 생성합니다.
 기존 schema-v1 byte, protocol, hash, read 및 replay 동작은 정확히 유지되며, schema v2는
@@ -17,10 +17,10 @@ Git history, validation fixture 또는 model output에서 권한을 추론하지
 진입합니다. 이 파일 없이 초기화된 이전 프로젝트는 authorized process가 파일을 생성할 때까지
 같은 빈 semantic model로 해석되므로 migration이 제품 의미를 만들어내지 않습니다.
 
-빈 Product Model은 “HEAD에 아직 승인된 product concept가 없다”는 뜻입니다. 기존 source
+빈 Product Model은 “Lode에 아직 승인된 product concept가 없다”는 뜻입니다. 기존 source
 file, test, README heading, issue 또는 directory name은 Evidence로 남으며 자동으로
 Feature가 되지 않습니다. 활성 온보딩 flow는 bounded current repository evidence에 근거한
-provider HEAD semantic proposal 또는 structured new-project brief에서 변경 불가능한 candidate를
+provider Lode semantic proposal 또는 structured new-project brief에서 변경 불가능한 candidate를
 정규화할 수 있지만, 이 Canon으로 승격하려면
 명시적인 batch ReviewDecision이 필요합니다. Directory structure는 authoritative
 FeatureGroup taxonomy로 절대 변환되지 않습니다.
@@ -99,13 +99,13 @@ semantic reference는 group membership에서 추론되지 않습니다.
 
 ## Policy 제안과 검토
 
-대화에서 HEAD는 `head_product_policy_propose`를 사용해 정확한 현재 Product Model을 기준으로
+대화에서 Lode는 `lode_product_policy_propose`를 사용해 정확한 현재 Product Model을 기준으로
 create, revise 또는 retire 불변 candidate 하나를 기록할 수 있습니다. Proposal은 bounded local
 source evidence와 정확한 semantic reference를 인용할 수 있지만 선택적 evidence 또는 reference가
 없다는 사실은 gate가 아니라 disclosure입니다. Canon을 변경하거나 일반 작업을 막지 않습니다.
-HEAD는 의미, 정확한 적용 대상, reference, evidence 상태 및
+Lode는 의미, 정확한 적용 대상, reference, evidence 상태 및
 영향을 작은 decision card 하나로 제시하며, 현재 사용자의 명확한 결정 뒤에만
-`head_product_policy_review`를 호출할 수 있습니다. `head_product_policy_status`는 읽기 전용
+`lode_product_policy_review`를 호출할 수 있습니다. `lode_product_policy_status`는 읽기 전용
 inspection surface입니다.
 
 Acceptance만 보호된 전이입니다. 현재 Session, Product Model base, active Run conflict, candidate
@@ -120,7 +120,7 @@ Review 이후 source evidence가 바뀌어도 승인된 Policy를 조용히 개�
 Status와 lineage trace는 하나의 공통 bounded P4 currentness projection을 보여 줍니다. 각 source는
 `unchanged`, `changed`, `missing`, `not-assessed` 중 하나이며 external evidence는
 `not-assessed`로 남습니다. Byte freshness는 semantic reassessment가 아니고 자동으로 두 번째
-review를 요구하거나 일반 작업을 막지 않습니다. 현재 task에 필요하면 HEAD가 이 disclosure를
+review를 요구하거나 일반 작업을 막지 않습니다. 현재 task에 필요하면 Lode가 이 disclosure를
 새 proposal의 evidence로 사용할 수 있습니다.
 
 ## Temporal projection
@@ -155,7 +155,7 @@ identity를 바꾸지 않습니다. semantic change가 발생하면 explicit re-
 `world-index` 후에는 같은 bounded temporal query contract로 product concept를 탐색할 수 있습니다.
 
 ```powershell
-node scripts/head.mjs world-temporal <project> --query "Message delivery" --kind Feature,FeatureRevision,Capability --relations REALIZES,HAS_REVISION,CURRENT_REVISION --depth 2 --limit 100 --edge-limit 200
+node scripts/lode.mjs world-temporal <project> --query "Message delivery" --kind Feature,FeatureRevision,Capability --relations REALIZES,HAS_REVISION,CURRENT_REVISION --depth 2 --limit 100 --edge-limit 200
 ```
 
 Context Compiler는 current verified World Model에서만 task-relevant bounded Product Context를
@@ -181,7 +181,7 @@ Temporal graph는 concept가 Canon에 도달한 과정을 설명하는 데 필�
 candidate, Evidence, Unknown, ReviewDecision 및 ProductModelRevision receipt도 project합니다.
 이 receipt는 Product Model entity가 되지 않습니다. Candidate node는 별도의
 `ProductConceptReference` node를 가리키며, review를 거친 결과
-`.head/context/product-model.json` content만 `canon-projected` Product entity 및 revision을
+`.lode/context/product-model.json` content만 `canon-projected` Product entity 및 revision을
 생성합니다.
 
 ## 문서 변경 적용

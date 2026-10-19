@@ -1,7 +1,8 @@
+import { familyFormatForOriginal } from "./project-storage-format.mjs";
 import { inspectObservationSources, ObservationAdapterRegistry } from "./observation-adapter.mjs";
 import { OBSERVATION_PROTOCOL_VERSION, observationDigest } from "./observation-contract.mjs";
 import { queryObservations } from "./observation-projection.mjs";
-import { SCHEMA_VERSION } from "./head-core.mjs";
+import { SCHEMA_VERSION } from "./lode-core.mjs";
 
 const fail = (message, code = "OBSERVATION_PREPARATION_ERROR") => { const error = new Error(message); error.code = code; throw error; };
 
@@ -34,6 +35,7 @@ export function prepareObservationEvidence({
     recordKind: "all",
     limit: existingLimit,
   });
+  const storage = familyFormatForOriginal("head-agent-core-observation-query", existing);
   const configured = inspectObservationSources({
     root,
     registry,
@@ -43,7 +45,7 @@ export function prepareObservationEvidence({
     limit: sourceLimit,
     projectionId: sourceProjectionId,
     cursor: sourceCursor,
-  });
+  }, storage);
   const sourceCount = configured.registry.matchingSourceCount ?? 0;
   const nextAction = existing.returned > 0
     ? "head-assess-existing-observations"
@@ -53,7 +55,7 @@ export function prepareObservationEvidence({
   const payload = {
     schemaVersion: SCHEMA_VERSION,
     kind: "ObservationPreparationProjection",
-    protocol: { name: "head-agent-core-observation-preparation", version: OBSERVATION_PROTOCOL_VERSION },
+    protocol: { name: storage.protocol("head-agent-core-observation-preparation"), version: OBSERVATION_PROTOCOL_VERSION },
     projectId: existing.projectId,
     sessionId: existing.sessionId,
     exactNeed: {
@@ -68,7 +70,7 @@ export function prepareObservationEvidence({
     configuredSources: configured.registry,
     workflow: {
       nextAction,
-      semanticSelectionOwner: "provider-head",
+      semanticSelectionOwner: storage.value("provider-head"),
       semanticSufficiencyAssessed: false,
       sourceAutomaticallySelected: false,
       sourceAutomaticallyCollected: false,

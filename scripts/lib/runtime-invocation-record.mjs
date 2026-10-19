@@ -1,3 +1,9 @@
+import { formatForVerifiedOwner, familyFormatForOriginal } from "./project-storage-format.mjs";
+const sessionIdOf = record => {
+  const format = familyFormatForOriginal({ sessionIdentity: true }, record);
+  return format ? record?.[format.sessionIdField] : undefined;
+};
+const originalFormat = record => familyFormatForOriginal({ kind: record?.kind }, record);
 import { writeRuntimeInvocationArtifactExclusive } from "./runtime-invocation-storage.mjs";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -41,9 +47,11 @@ function validateAuthorizationId(authorizationId) {
   return authorizationId;
 }
 
-export function runtimeInvocationRecordDirectory(projectRoot, authorizationId) {
+export { validateAuthorizationId as validateRuntimeInvocationRecordIdentity };
+
+export function runtimeInvocationRecordDirectory(projectRoot, authorizationId, storage = undefined) {
   validateAuthorizationId(authorizationId);
-  return path.join(projectRoot, ".head", "runtime", "invocations", authorizationId);
+  return path.join(projectRoot, formatForVerifiedOwner(storage).directory, "runtime", "invocations", authorizationId);
 }
 
 export { writeRuntimeInvocationArtifactExclusive } from "./runtime-invocation-storage.mjs";
@@ -59,7 +67,7 @@ function verifyRecordLineage({ authorization, receipt, draft, events }) {
   const eventSequences = verifiedEvents.map((event) => event.sequence);
   if (verifiedReceipt.authorizationId !== verifiedAuthorization.authorizationId
     || verifiedReceipt.projectId !== verifiedAuthorization.projectId
-    || verifiedReceipt.headSessionId !== verifiedAuthorization.headSessionId
+    || sessionIdOf(verifiedReceipt) !== sessionIdOf(verifiedAuthorization)
     || verifiedReceipt.runtime !== verifiedAuthorization.runtime
     || verifiedReceipt.scopeKind !== verifiedAuthorization.scope.kind
     || verifiedReceipt.runId !== verifiedAuthorization.scope.runId
@@ -84,8 +92,8 @@ function verifyRecordLineage({ authorization, receipt, draft, events }) {
   return { authorization: verifiedAuthorization, receipt: verifiedReceipt, draft: verifiedDraft, events: verifiedEvents };
 }
 
-function verifyRecordDirectory(projectRoot, authorizationId) {
-  const directory = runtimeInvocationRecordDirectory(projectRoot, authorizationId);
+function verifyRecordDirectory(projectRoot, authorizationId, storage) {
+  const directory = runtimeInvocationRecordDirectory(projectRoot, authorizationId, storage);
   if (!fs.existsSync(directory)) fail("Runtime invocation result is not recorded.", "RUNTIME_INVOCATION_RESULT_NOT_FOUND");
   const stat = fs.lstatSync(directory);
   const resolvedDirectory = fs.realpathSync(directory);
@@ -95,10 +103,10 @@ function verifyRecordDirectory(projectRoot, authorizationId) {
   return resolvedDirectory;
 }
 
-export function persistRuntimeInvocationRecord({ projectRoot, authorization, events, receipt, draft }) {
+export function persistRuntimeInvocationRecord({ projectRoot, authorization, events, receipt, draft, storage }) {
   const preparedRoot = fs.realpathSync(path.resolve(projectRoot));
   const verified = verifyRecordLineage({ authorization, receipt, draft, events });
-  const directory = runtimeInvocationRecordDirectory(preparedRoot, verified.authorization.authorizationId);
+  const directory = runtimeInvocationRecordDirectory(preparedRoot, verified.authorization.authorizationId, storage ?? originalFormat(verified.authorization));
   if (fs.existsSync(directory)) fail("Runtime invocation record already exists.", "RUNTIME_INVOCATION_RECORD_EXISTS");
   const base = path.dirname(directory);
   fs.mkdirSync(base, { recursive: true });
@@ -130,10 +138,10 @@ export function persistRuntimeInvocationRecord({ projectRoot, authorization, eve
   };
 }
 
-export function readRuntimeInvocationRecord({ root = ".", authorizationId } = {}) {
+export function readRuntimeInvocationRecord({ root = ".", authorizationId, storage } = {}) {
   validateAuthorizationId(authorizationId);
   const projectRoot = fs.realpathSync(path.resolve(root));
-  const directory = verifyRecordDirectory(projectRoot, authorizationId);
+  const directory = verifyRecordDirectory(projectRoot, authorizationId, storage);
   const authorization = readRuntimeInvocationAuthorization({ root: projectRoot, authorizationId }).authorization;
   const receipt = JSON.parse(fs.readFileSync(path.join(directory, "receipt.json"), "utf8"));
   const draft = JSON.parse(fs.readFileSync(path.join(directory, "draft.json"), "utf8"));
@@ -146,6 +154,7 @@ export function readRuntimeInvocationRecord({ root = ".", authorizationId } = {}
     status: "verified",
     projectRoot,
     directory,
+    storage,
     authorizationId,
     ...verified,
   };

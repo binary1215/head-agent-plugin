@@ -65,22 +65,22 @@ inboundEdits: document-change-candidates-only
 로컬 어댑터는 다음 위치에 저장합니다.
 
 ```text
-.head/document-projection/markdown/current.json
-.head/document-projection/markdown/snapshots/document-projection-<digest>.json
-.head/generated/knowledge/index.md
-.head/generated/knowledge/nodes/*.md
-.head/generated/knowledge/relations/*.md
+.lode/document-projection/markdown/current.json
+.lode/document-projection/markdown/snapshots/document-projection-<digest>.json
+.lode/generated/knowledge/index.md
+.lode/generated/knowledge/nodes/*.md
+.lode/generated/knowledge/relations/*.md
 ```
 
-스냅샷과 포인터는 검증 아티팩트입니다. `.head/generated/knowledge/`는 교체 가능한 사용자 작업 뷰입니다. 포인터는 불변 프로젝션과 게시된 모든 문서가 성공적으로 검증된 후에만 전진합니다.
+스냅샷과 포인터는 검증 아티팩트입니다. `.lode/generated/knowledge/`는 교체 가능한 사용자 작업 뷰입니다. 포인터는 불변 프로젝션과 게시된 모든 문서가 성공적으로 검증된 후에만 전진합니다.
 
 ## 명시적 생성 및 정책 기반 생성
 
 Markdown 생성은 계속 명시적으로 사용할 수 있습니다.
 
 ```text
-node scripts/head.mjs world-docs-build <project>
-node scripts/head.mjs world-docs-status <project>
+node scripts/lode.mjs world-docs-build <project>
+node scripts/lode.mjs world-docs-status <project>
 ```
 
 `world-docs-build`에는 다이제스트 검증된 현재 World Model이 필요합니다. `world-docs-status`는 World Model 최신성, GraphSnapshot 바인딩, 불변 프로젝션 검증 및 게시 뷰 드리프트를 각각 보고합니다. 주요 상태는 다음과 같습니다.
@@ -101,11 +101,11 @@ node scripts/head.mjs world-docs-status <project>
 게시된 Markdown이 불변 기준과 다르면 재생성은 `DOCUMENT_PROJECTION_UNREVIEWED_DRIFT`로 실패합니다. 사용자는 차이를 명시적으로 캡처할 수 있습니다.
 
 ```text
-node scripts/head.mjs world-docs-capture <project>
-node scripts/head.mjs world-docs-candidates <project> --candidate-set <document-change-candidate-set-id>
+node scripts/lode.mjs world-docs-capture <project>
+node scripts/lode.mjs world-docs-candidates <project> --candidate-set <document-change-candidate-set-id>
 ```
 
-캡처는 `.head/document-changes/candidate-sets/` 아래에 불변이며 콘텐츠로부터 파생된 `DocumentChangeCandidateSet`을 생성합니다. 추가, 수정 또는 제거된 각 경로는 정확한 기준/제안 콘텐츠와 다이제스트, 소스 프로젝션, GraphSnapshot 및 거짓 지시/승격 플래그를 기록합니다. 캡처 자체는 Product Canon, 그래프, 소스 코드 또는 실행 아티팩트를 변경하지 않습니다. 별도의 범위 지정 ReviewDecision은 세트를 거부하거나 완전하고 명시적인 Product Model과 함께 있을 때만 수락할 수 있습니다. [`document-change-review.md`](document-change-review.md)를 참조하십시오. 형식화된 MCP는 `head_markdown_projection_build`를 통해 결정론적 Markdown 프로젝션을 명시적으로 빌드할 수 있으며, 읽기 전용 MCP 도구는 프로젝션, 후보, 검토 및 적용 상태를 검사합니다. 그래도 MCP는 인바운드 편집을 캡처하거나, 문서 변경 후보를 검토하거나, 문서 의사결정을 적용할 수 없습니다.
+캡처는 `.lode/document-changes/candidate-sets/` 아래에 불변이며 콘텐츠로부터 파생된 `DocumentChangeCandidateSet`을 생성합니다. 추가, 수정 또는 제거된 각 경로는 정확한 기준/제안 콘텐츠와 다이제스트, 소스 프로젝션, GraphSnapshot 및 거짓 지시/승격 플래그를 기록합니다. 캡처 자체는 Product Canon, 그래프, 소스 코드 또는 실행 아티팩트를 변경하지 않습니다. 별도의 범위 지정 ReviewDecision은 세트를 거부하거나 완전하고 명시적인 Product Model과 함께 있을 때만 수락할 수 있습니다. [`document-change-review.md`](document-change-review.md)를 참조하십시오. 형식화된 MCP는 `lode_markdown_projection_build`를 통해 결정론적 Markdown 프로젝션을 명시적으로 빌드할 수 있으며, 읽기 전용 MCP 도구는 프로젝션, 후보, 검토 및 적용 상태를 검사합니다. 그래도 MCP는 인바운드 편집을 캡처하거나, 문서 변경 후보를 검토하거나, 문서 의사결정을 적용할 수 없습니다.
 
 ## 적합성 및 유보된 작업
 
@@ -119,3 +119,15 @@ node scripts/head.mjs world-docs-candidates <project> --candidate-set <document-
 - 생성 페이지를 Context Compiler 입력으로 취급.
 
 향후 어댑터는 이 렌더러의 의미적 ID를 보존하거나 별도로 버전이 지정된 형식/렌더러 계약을 선언해야 합니다. 공급자 페이지 ID, 보관소 루트, 타임스탬프 및 전송 진단은 코어 프로젝션 ID에 들어갈 수 없습니다.
+
+## 경로 기준과 기존 Project
+
+Project 내부 참조는 검증된 Project root를 기준으로 한 `/` 상대경로입니다. 생성
+Markdown의 `relativePath`는 게시 root 기준이고, href는 해당 문서 위치 기준입니다.
+문서의 `../` 링크가 원본 selector의 `..`를 허용하는 것은 아닙니다.
+
+런타임 `project_root`, 저장된 `projectRoot`, 설치의 `pluginRoot`와 root 기반 식별자는
+검증된 절대 root와 실제 Session 소유자에 계속 결합됩니다. 새 Project는 `.lode/`를
+사용하고 기존 `.head/` 원문과 exact selector는 그대로 유지합니다. 이는 기존 경로
+계약의 설명이며, workspace 이동 지원이나 자동 repair 기능이 아닙니다.
+

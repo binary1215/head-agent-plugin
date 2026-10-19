@@ -7,7 +7,7 @@ competing processes and interrupted writes at authority and consumption boundari
 
 The annotated Context test supplies a known graph anchor. It measures preservation
 of supplied evidence and exclusion of unrelated carriers. It does not measure
-whether provider HEAD discovers that anchor, reads the source body, or correctly
+whether provider Lode discovers that anchor, reads the source body, or correctly
 implements the task. Newcomer and conversational verifiers drive public CLI/MCP
 operations with fixtures; they do not establish natural-language task success.
 
@@ -34,7 +34,7 @@ provider. It does not print task text, source bodies, or Observation payloads.
 ## Live task evaluation
 
 Use held-out tasks with hidden expected evidence and acceptance criteria. Compare
-ordinary agent use and HEAD with the same provider/model, repository revision,
+ordinary agent use and Lode with the same provider/model, repository revision,
 task, permissions, and external dependencies. Do not supply expected anchors.
 Evaluate task interpretation, evidence discovery, file reading, implementation,
 and verification, including a controlled compaction or provider replacement case.

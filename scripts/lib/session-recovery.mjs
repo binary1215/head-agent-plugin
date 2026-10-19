@@ -4,11 +4,13 @@ import path from "node:path";
 import { readProjectDirectionView, sameProjectDirectionView } from "./project-direction-view.mjs";
 import { assertRunSession } from "./session-routing.mjs";
 import { inspectRunStorageTransition } from "./run-lineage.mjs";
-import { inspectProject, isProjectRecoveryReadable, SCHEMA_VERSION } from "./head-core.mjs";
+import { inspectProject, isProjectRecoveryReadable, SCHEMA_VERSION } from "./lode-core.mjs";
 import { readContextCapsule } from "./context-compiler.mjs";
-import { buildFreshHeadReview, readLineageArtifact } from "./execution-lineage.mjs";
+import { buildFreshLodeReview, readLineageArtifact } from "./execution-lineage.mjs";
 import { COMPACTION_RECOVERY_VERSION, createRecoveryCheckpoint, readRecoveryCheckpoint } from "./compaction-recovery.mjs";
 import { artifactAuthorityBoundary, verifyArtifactAuthorityBoundary } from "./authority-plane-contract.mjs";
+
+import { formatForVerifiedOwner, familyFormatForOriginal } from "./project-storage-format.mjs";
 
 export const SESSION_RECOVERY_VERSION = "0.2.0";
 // Frozen historical integration originals do not share the projection version.
@@ -70,15 +72,15 @@ function readJson(file, label) {
   catch (error) { fail(`${label} is invalid JSON: ${error.message}`, "INVALID_SESSION_RECOVERY_ARTIFACT"); }
 }
 
-function runFile(root, runId) {
+function runFile(root, runId, storage) {
   if (typeof runId !== "string" || !/^run-[0-9]+-[a-f0-9]{6}$/.test(runId)) {
     fail("Run id is invalid.", "INVALID_SESSION_RUN_ID");
   }
-  return path.join(root, ".head", "sessions", "runs", runId, "run.json");
+  return path.join(root, formatForVerifiedOwner(storage).directory, "sessions", "runs", runId, "run.json");
 }
 
-function readRun(root, runId) {
-  const file = runFile(root, runId);
+function readRun(root, runId, storage) {
+  const file = runFile(root, runId, storage);
   if (!fs.existsSync(file)) fail(`Run canon not found: ${runId}`, "SESSION_RUN_NOT_FOUND");
   const run = readJson(file, "Run canon");
   const inspected = inspectProject(root);
@@ -94,8 +96,8 @@ function verifiedArtifact(root, artifactId, kind) {
   return artifact;
 }
 
-function verifiedActiveRun(root, pointer) {
-  const run = readRun(root, pointer.activeRunId);
+function verifiedActiveRun(root, pointer, storage) {
+  const run = readRun(root, pointer.activeRunId, storage);
   if (run.status !== "active" || run.executionContractId !== pointer.activeExecutionContractId
     || run.wholePlanId !== pointer.currentWholePlanId) {
     fail("Active Run canon does not match the Session pointer.", "SESSION_RESTORE_ACTIVE_RUN_CONFLICT");
@@ -127,12 +129,12 @@ function optionalResultEvidence(root, resultPacketId) {
   }
 }
 
-function verifiedPendingReview(root, pointer) {
+function verifiedPendingReview(root, pointer, storage) {
   const pending = pointer.pendingReview;
   if (!pending || typeof pending !== "object" || !pending.runId || !pending.wholePlanId || !pending.resultPacketId) {
     fail("Pending review Session pointer is incomplete.", "SESSION_RESTORE_PENDING_REVIEW_CONFLICT");
   }
-  const run = readRun(root, pending.runId);
+  const run = readRun(root, pending.runId, storage);
   if (run.status !== "awaiting_review" || run.wholePlanId !== pending.wholePlanId || run.resultPacketId !== pending.resultPacketId) {
     fail("Pending review does not match Run canon.", "SESSION_RESTORE_PENDING_REVIEW_CONFLICT");
   }
@@ -140,7 +142,7 @@ function verifiedPendingReview(root, pointer) {
   const evidence = optionalResultEvidence(root, pending.resultPacketId);
   let freshHeadReviewContextId = null;
   if (evidence.status === "verified") {
-    freshHeadReviewContextId = buildFreshHeadReview({
+    freshHeadReviewContextId = buildFreshLodeReview({
       root,
       wholePlanId: pending.wholePlanId,
       resultPacketId: pending.resultPacketId,
@@ -166,10 +168,10 @@ function verifyLastReview(root, pointer) {
   };
 }
 
-function verifyReviewedRunIntegration(root, checkpoint) {
+function verifyReviewedRunIntegration(root, checkpoint, storage) {
   const integration = checkpoint.reviewedRunIntegration;
   if (integration == null) return null;
-  const run = readRun(root, integration.runId);
+  const run = readRun(root, integration.runId, storage);
   const review = verifiedArtifact(root, integration.reviewDecisionId, "ReviewDecision");
   const plan = verifiedArtifact(root, integration.wholePlanId, "WholePlanSnapshot");
   const contract = verifiedArtifact(root, integration.executionContractId, "ExecutionContract");
@@ -252,18 +254,18 @@ export function restoreSessionFromArtifacts({ root = ".", checkpointId = null } 
   verifyPointerShape(currentPointer);
   const storageTransition = inspectRunStorageTransition({ root: inspected.project.projectRoot, inspected });
   const currentRunId = currentPointer.activeRunId || currentPointer.pendingReview?.runId || inspected.state.lastReviewedRunId;
-  const currentRunBasis = currentRunId ? digest(fs.readFileSync(runFile(inspected.project.projectRoot, currentRunId))) : null;
+  const currentRunBasis = currentRunId ? digest(fs.readFileSync(runFile(inspected.project.projectRoot, currentRunId, inspected.storage))) : null;
   const executionIncomplete = new Set(["incomplete", "conflict"]).has(storageTransition.status);
   if (currentPointer.currentWholePlanId) verifiedArtifact(inspected.project.projectRoot, currentPointer.currentWholePlanId, "WholePlanSnapshot");
   const activeRun = currentPointer.activeRunId && !executionIncomplete
-    ? verifiedActiveRun(inspected.project.projectRoot, currentPointer)
+    ? verifiedActiveRun(inspected.project.projectRoot, currentPointer, inspected.storage)
     : null;
   const pendingReview = currentPointer.pendingReview && !executionIncomplete
-    ? verifiedPendingReview(inspected.project.projectRoot, currentPointer)
+    ? verifiedPendingReview(inspected.project.projectRoot, currentPointer, inspected.storage)
     : null;
   const lastReviewDecision = verifyLastReview(inspected.project.projectRoot, currentPointer);
   let reviewedRunIntegration;
-  try { reviewedRunIntegration = verifyReviewedRunIntegration(inspected.project.projectRoot, checkpoint); }
+  try { reviewedRunIntegration = verifyReviewedRunIntegration(inspected.project.projectRoot, checkpoint, inspected.storage); }
   catch (error) {
     if (!new Set(["SESSION_RUN_NOT_FOUND", "CAPSULE_NOT_FOUND", "LINEAGE_ARTIFACT_NOT_FOUND"]).has(error.code)) throw error;
     reviewedRunIntegration = { ...checkpoint.reviewedRunIntegration, status: "historical-reference-unavailable", reasonCode: error.code };
@@ -279,13 +281,13 @@ export function restoreSessionFromArtifacts({ root = ".", checkpointId = null } 
   if (!isProjectRecoveryReadable(after) || canonicalJson(after.project) !== canonicalJson(inspected.project)
     || canonicalJson(after.state) !== canonicalJson(inspected.state)
     || !sameProjectDirectionView(directionAfter, directionView)
-    || (currentRunId ? digest(fs.readFileSync(runFile(inspected.project.projectRoot, currentRunId))) : null) !== currentRunBasis) {
+    || (currentRunId ? digest(fs.readFileSync(runFile(inspected.project.projectRoot, currentRunId, inspected.storage))) : null) !== currentRunBasis) {
     fail("Session or common direction changed during restore; reread only this observation.", "SESSION_RESTORE_OBSERVATION_CHANGED");
   }
   const payload = {
     schemaVersion: SCHEMA_VERSION,
     kind: "SessionRestoreProjection",
-    protocol: { name: "head-agent-core-artifact-session-restore", version: SESSION_RECOVERY_VERSION },
+    protocol: { name: formatForVerifiedOwner(inspected.storage).protocol("head-agent-core-artifact-session-restore"), version: SESSION_RECOVERY_VERSION },
     projectId: inspected.project.projectId,
     sessionId: inspected.state.sessionId,
     ...directionView,
@@ -309,11 +311,11 @@ export function restoreSessionFromArtifacts({ root = ".", checkpointId = null } 
     reviewedRunIntegration,
     integrationEvidence,
     consumerInstruction: {
-      mode: "fresh-logical-head-from-verified-artifacts",
+      mode: formatForVerifiedOwner(inspected.storage).value("fresh-logical-head-from-verified-artifacts"),
       purpose: checkpoint.purpose,
       historicalCheckpointContext: { currentPosition: checkpoint.currentPosition, nextExpectedResult: checkpoint.nextExpectedResult },
       currentExecution: { status: executionIncomplete ? storageTransition.status : "verified", sessionPointer: currentPointer, activeRun, pendingReview, lastReviewDecision, storageTransition },
-      nextActionOwner: "current-head-assessment-not-historical-checkpoint-replay",
+      nextActionOwner: formatForVerifiedOwner(inspected.storage).value("current-head-assessment-not-historical-checkpoint-replay"),
       historicalApprovalGrantsCurrentEffect: false,
       ...(currentProjectDirection ? { currentProjectDirection,
         commonDirectionPrecedence: "current-common-constraints-and-cancellations-apply-before-historical-session-intent" } : {}),
@@ -338,19 +340,19 @@ export function restoreSessionFromArtifacts({ root = ".", checkpointId = null } 
   return { status: "session_restored_from_artifacts", projection: projectionIdentity(payload), checkpoint };
 }
 
-function integrationDirectory(root) {
-  return path.join(root, ".head", "sessions", "integrations");
+function integrationDirectory(root, storage) {
+  return path.join(root, formatForVerifiedOwner(storage).directory, "sessions", "integrations");
 }
 
-function integrationRequestFile(root, reviewDecisionId) {
-  return path.join(integrationDirectory(root), "requests", `${reviewDecisionId}.json`);
+function integrationRequestFile(root, reviewDecisionId, storage) {
+  return path.join(integrationDirectory(root, storage), "requests", `${reviewDecisionId}.json`);
 }
 
-function integrationFile(root, reviewDecisionId) {
+function integrationFile(root, reviewDecisionId, storage) {
   if (typeof reviewDecisionId !== "string" || !/^review-decision-[a-f0-9]{24}$/.test(reviewDecisionId)) {
     fail("Run result integration ReviewDecision id is invalid.", "INVALID_RUN_RESULT_INTEGRATION_ID");
   }
-  return path.join(integrationDirectory(root), `${reviewDecisionId}.json`);
+  return path.join(integrationDirectory(root, storage), `${reviewDecisionId}.json`);
 }
 
 function integrationInput({ runId, reviewDecisionId, purpose, approvedDecisions, currentPosition, nextExpectedResult, openReviewIds }) {
@@ -365,8 +367,8 @@ function integrationInput({ runId, reviewDecisionId, purpose, approvedDecisions,
   };
 }
 
-function verifyIntegrationRequest(root, request, expectedInput = null, expectedInputHash = null) {
-  if (request?.kind !== "RunResultIntegrationRequest" || request.protocol?.name !== "head-agent-core-run-result-integration"
+function verifyIntegrationRequest(root, request, expectedInput = null, expectedInputHash = null, storage) {
+  if (request?.kind !== "RunResultIntegrationRequest" || !familyFormatForOriginal("head-agent-core-run-result-integration", request, storage)
     || request.protocol?.version !== HISTORICAL_INTEGRATION_VERSION) {
     fail("Run result integration request is invalid.", "INVALID_RUN_RESULT_INTEGRATION_REQUEST");
   }
@@ -399,8 +401,8 @@ function verifyIntegrationRequest(root, request, expectedInput = null, expectedI
   return request;
 }
 
-function verifyIntegrationReceipt(root, receipt, expectedReviewDecisionId = null) {
-  if (receipt?.kind !== "RunResultIntegrationReceipt" || receipt.protocol?.name !== "head-agent-core-run-result-integration"
+function verifyIntegrationReceipt(root, receipt, expectedReviewDecisionId = null, storage) {
+  if (receipt?.kind !== "RunResultIntegrationReceipt" || !familyFormatForOriginal("head-agent-core-run-result-integration", receipt, storage)
     || receipt.protocol?.version !== HISTORICAL_INTEGRATION_VERSION || receipt.reviewDecisionId !== (expectedReviewDecisionId || receipt.reviewDecisionId)) {
     fail("Run result integration receipt is invalid.", "INVALID_RUN_RESULT_INTEGRATION_RECEIPT");
   }
@@ -415,7 +417,7 @@ function verifyIntegrationReceipt(root, receipt, expectedReviewDecisionId = null
     fail("Run result integration receipt digest verification failed.", "RUN_RESULT_INTEGRATION_RECEIPT_DIGEST_MISMATCH");
   }
   const checkpoint = readRecoveryCheckpoint({ root, checkpointId: receipt.checkpointId }).checkpoint;
-  const request = verifyIntegrationRequest(root, readJson(integrationRequestFile(root, receipt.reviewDecisionId), "Run result integration request"));
+  const request = verifyIntegrationRequest(root, readJson(integrationRequestFile(root, receipt.reviewDecisionId, storage), "Run result integration request"), null, null, storage);
   const expectedInputHash = digest(canonicalJson({
     runId: receipt.runId,
     reviewDecisionId: receipt.reviewDecisionId,
@@ -437,10 +439,10 @@ function verifyIntegrationReceipt(root, receipt, expectedReviewDecisionId = null
   return { receipt, checkpoint };
 }
 
-function pendingHistoricalIntegration(root, reviewDecisionId) {
-  const file = integrationRequestFile(root, reviewDecisionId);
+function pendingHistoricalIntegration(root, reviewDecisionId, storage) {
+  const file = integrationRequestFile(root, reviewDecisionId, storage);
   if (!fs.existsSync(file)) return null;
-  const request = verifyIntegrationRequest(root, readJson(file, "Historical integration request"));
+  const request = verifyIntegrationRequest(root, readJson(file, "Historical integration request"), null, null, storage);
   if (request.reviewDecisionId !== reviewDecisionId) fail("Historical request does not match its original path.", "RUN_RESULT_INTEGRATION_REQUEST_CONFLICT");
   return {
     status: "legacy_integration_pending", file, request,
@@ -455,9 +457,9 @@ function pendingHistoricalIntegration(root, reviewDecisionId) {
 
 export function readRunResultIntegration({ root = ".", reviewDecisionId } = {}) {
   const inspected = readyProject(root, "a Run result integration is read");
-  const file = integrationFile(inspected.project.projectRoot, reviewDecisionId);
-  if (fs.existsSync(file)) return { status: "verified", file, ...verifyIntegrationReceipt(inspected.project.projectRoot, readJson(file, "Run result integration receipt"), reviewDecisionId) };
-  const ledger = path.join(inspected.project.projectRoot, ".head", "sessions", "ledger");
+  const file = integrationFile(inspected.project.projectRoot, reviewDecisionId, inspected.storage);
+  if (fs.existsSync(file)) return { status: "verified", file, ...verifyIntegrationReceipt(inspected.project.projectRoot, readJson(file, "Run result integration receipt"), reviewDecisionId, inspected.storage) };
+  const ledger = path.join(inspected.project.projectRoot, formatForVerifiedOwner(inspected.storage).directory, "sessions", "ledger");
   const matches = [];
   for (const entry of fs.existsSync(ledger) ? fs.readdirSync(ledger, { withFileTypes: true }) : []) {
     if (!entry.isFile() || !/^checkpoint-[a-f0-9]{24}\.json$/.test(entry.name)) continue;
@@ -471,21 +473,21 @@ export function readRunResultIntegration({ root = ".", reviewDecisionId } = {}) 
   }
   if (matches.length > 1) fail("ReviewDecision is linked to multiple recovery checkpoints.", "RUN_RESULT_INTEGRATION_MULTIPLE_CHECKPOINTS");
   if (!matches[0]) {
-    const pending = pendingHistoricalIntegration(inspected.project.projectRoot, reviewDecisionId);
+    const pending = pendingHistoricalIntegration(inspected.project.projectRoot, reviewDecisionId, inspected.storage);
     if (pending) return pending;
     fail(`Run result integration not found: ${reviewDecisionId}`, "RUN_RESULT_INTEGRATION_NOT_FOUND");
   }
   const checkpoint = matches[0];
-  return { status: "verified", file: path.join(ledger, `${checkpoint.checkpointId}.json`), checkpoint, integration: verifyReviewedRunIntegration(inspected.project.projectRoot, checkpoint) };
+  return { status: "verified", file: path.join(ledger, `${checkpoint.checkpointId}.json`), checkpoint, integration: verifyReviewedRunIntegration(inspected.project.projectRoot, checkpoint, inspected.storage) };
 }
 
 export function integrateReviewedRunCheckpoint({ root = ".", runId, reviewDecisionId, purpose, approvedDecisions = [], currentPosition, nextExpectedResult, openReviewIds = [] } = {}) {
   const inspected = readyProject(root, "a reviewed Run result is integrated");
   const input = integrationInput({ runId, reviewDecisionId, purpose, approvedDecisions, currentPosition, nextExpectedResult, openReviewIds });
   const integrationInputHash = digest(canonicalJson(input));
-  const requestFile = integrationRequestFile(inspected.project.projectRoot, input.reviewDecisionId);
+  const requestFile = integrationRequestFile(inspected.project.projectRoot, input.reviewDecisionId, inspected.storage);
   if (fs.existsSync(requestFile)) {
-    verifyIntegrationRequest(inspected.project.projectRoot, readJson(requestFile, "Historical integration request"), input, integrationInputHash);
+    verifyIntegrationRequest(inspected.project.projectRoot, readJson(requestFile, "Historical integration request"), input, integrationInputHash, inspected.storage);
     const original = readRunResultIntegration({ root: inspected.project.projectRoot, reviewDecisionId: input.reviewDecisionId });
     if (original.status === "legacy_integration_pending") {
       const error = new Error(`Historical integration remains pending at ${original.file}. ${original.nextAction}`);

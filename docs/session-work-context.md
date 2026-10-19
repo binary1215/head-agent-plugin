@@ -3,7 +3,7 @@
 [한국어](ko/session-work-context.md)
 
 Ordinary investigation and direct edits need neither a Run nor a save ritual.
-HEAD preserves useful context at a meaningful handoff or context-loss boundary,
+Lode preserves useful context at a meaningful handoff or context-loss boundary,
 then the same logical Session's entry reconstructs selected original records.
 This is not transcript recovery or a guarantee that unsaved conversation survives.
 
@@ -15,7 +15,7 @@ Session purpose and latest checkpoint, not a shared Project update or P3 memory.
 For example, a Session can retain “investigate locally, no network” in its purpose
 and explicit decisions, then replace an earlier rewrite proposal with “rewrite
 cancelled; explain only” in its current checkpoint. A sibling Session is unchanged.
-HEAD authors and interprets this text; Core does not extract approval from words.
+Lode authors and interprets this text; Core does not extract approval from words.
 Historical decisions and next steps never grant current execution permission.
 
 Reuse existing checkpoint, result, review and source originals first. Only
@@ -27,22 +27,22 @@ second direction store, history document, global memory database or daemon.
 
 ## A light preservation path
 
-- When checkpoint synchronization is already useful, HEAD includes optional
-  `work_evidence` in the existing `head_checkpoint_sync` request. P2 and P3
+- When checkpoint synchronization is already useful, Lode includes optional
+  `work_evidence` in the existing `lode_checkpoint_sync` request. P2 and P3
   have separate outcomes. A stale/deferred checkpoint does not promote its
   retained work evidence; an optional evidence-storage failure does not block
   an otherwise valid explicit P2 publication.
-- Without a useful checkpoint boundary, one optional `head_session_work_record`
-  preserves selected Run-free context. HEAD supplies sparse input from the
+- Without a useful checkpoint boundary, one optional `lode_session_work_record`
+  preserves selected Run-free context. Lode supplies sparse input from the
   conversation. The user need not author JSON, choose an ID, approve saving,
   create a Run or compile a Capsule.
-- `head_conversation_enter` reads selected Session originals and existing P2
+- `lode_conversation_enter` reads selected Session originals and existing P2
   direction, together with current common constraints/cancellations. It writes
   nothing. Missing or damaged optional evidence affects only that layer.
-- `head_session_work_read` expands known exact originals or an explicitly anchored
+- `lode_session_work_read` expands known exact originals or an explicitly anchored
   ID inspection page. Use it when needed, not as a compulsory tool chain.
 
-Already saved work also appears in existing `head_project_graph` discovery.
+Already saved work also appears in existing `lode_project_graph` discovery.
 Questions, paths, anchors and neighbors can return actual reasons, alternatives,
 observed work, pending work and uncertainty across their verified owner Sessions.
 Graph discovery is Project-scoped and needs no native binding or Session switch;
@@ -86,7 +86,7 @@ inventory (`originals: null`) is not treated as no history.
 
 ### Session, declared work root and authored topics
 
-At meaningful completion, handoff or changed conditions, HEAD can retain actual
+At meaningful completion, handoff or changed conditions, Lode can retain actual
 consumer results, reasons/alternatives and unfinished work through the same two
 writers. Optional `workTopics: string[]` supplies authored navigation labels;
 it requires neither Product onboarding nor a user taxonomy. Topics alone are not
@@ -121,8 +121,8 @@ verification/unknowns; it does not clear either. Native automatic end, ancestry
 and live activity are not implemented by this organization. Local fixture and
 instruction checks are not proof of actual Host delivery or model compliance.
 
-The self-contained [head-conversation Skill](../skills/head-conversation/SKILL.md)
-helps explain HEAD work, choices, progress and results in the user's language.
+The self-contained [lode-conversation Skill](../skills/lode-conversation/SKILL.md)
+helps explain Lode work, choices, progress and results in the user's language.
 It participates in normal implicit Skill discovery, but is not a prerequisite
 for Core execution, recovery or authority protections. Local package validation
 checks its bundled bytes, not installation or actual Host selection.
@@ -146,7 +146,7 @@ fail without substituting another Session. Reads do not repair or switch pointer
 A missing direction pointer is not an empty direction if an original revision or
 recognized interrupted-publication stage remains. Entry labels that common layer
 unavailable while retaining independently verified checkpoint and work evidence.
-HEAD continues independent work without a save, repair or approval ritual. Current
+Lode continues independent work without a save, repair or approval ritual. Current
 direction-dependent effects and checkpoint CAS remain strict; historical decisions
 and next steps cannot replace the missing current constraints or cancellations.
 The existing continuation check runs before consuming its one-shot token.
@@ -162,7 +162,7 @@ its MCP peer even after caller selection loss. Existing readiness checks still
 apply; the route neither chooses default nor repairs the Host binding.
 
 Short work creates no additional record. Identical selected input reuses its
-original bytes; a genuinely separate repeated observation can carry a HEAD-owned
+original bytes; a genuinely separate repeated observation can carry a Lode-owned
 occurrence distinction. Deduplication does not prove that an effect happened.
 Different judgments are retained separately, not overwritten by the last writer.
 Retry repairs persistence only, never repeats code, provider or external effects.
@@ -176,7 +176,7 @@ The same two optional evidence inputs accept `workLink: {root, predecessor}`
 and `executionObservation: {state, target?}`. Each selector is exactly
 `{evidenceId, evidenceDigest}` from a saved original in the same Project and
 selected logical Session. States are `running`, `paused`, `ended` and `unknown`.
-HEAD supplies these internally, only when useful at the existing preservation
+Lode supplies these internally, only when useful at the existing preservation
 boundary. No separate start/end/save call, user ID form or approval is required.
 An observation alone may be meaningful; a link alone is not selected work content.
 
@@ -356,7 +356,7 @@ an imported goal or approval. Changed/missing sources are disclosed, and a
 path/digest alone is not recovered content. One corrupt original is excluded
 without blocking valid records, P2 recovery or independent work. A detected P2
 or common-direction change during entry discards that mixed context and asks
-HEAD to reread only the dependent observation. Sequential reads are not an
+Lode to reread only the dependent observation. Sequential reads are not an
 atomic snapshot and cannot detect every ABA change.
 
 ## Host support without identity guesses
@@ -470,7 +470,7 @@ available after optional binding loss.
 
 ### Which operations retain a selection?
 
-Only the existing successful `head_project_initialize_or_resume` selection is
+Only the existing successful `lode_project_initialize_or_resume` selection is
 retained. Initial setup keeps the verified default; explicit resume can share or
 separate existing Sessions. Repeating an unchanged choice writes nothing. There
 is no extra select/bind tool, user ID form, save ritual or permission decision.
@@ -533,3 +533,15 @@ Official contracts: [Codex Hooks](https://learn.chatgpt.com/docs/hooks) and
 Source/command fixtures prove these local contracts, not installed Hook trust,
 actual provider invocation or model understanding. Installing a package does not
 prove its Hook ran; real activation and account/model tests are separate.
+
+## Path bases and existing Projects
+
+Project-internal references use validated Project-root-relative `/` paths. Generated
+Markdown `relativePath` starts at the published root; each href starts at its
+containing document. A `../` document link does not permit `..` in a durable selector.
+
+Runtime `project_root`, stored `projectRoot`, installation `pluginRoot` and root-derived
+identities remain bound to the verified absolute root and actual Session owner. New
+Projects use `.lode/`; existing `.head/` records and exact selectors stay unchanged.
+These are existing path contracts, not workspace relocation or automatic repair.
+

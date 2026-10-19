@@ -1,6 +1,8 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { resolveProjectStorage, formatForVerifiedOwner } from "./project-storage-format.mjs";
+import { resolveOperation } from "./lode-operation-contract.mjs";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { withProjectMutation } from "./project-mutation-lock.mjs";
 import { atomicCreateArtifact } from "./artifact-storage.mjs";
@@ -41,6 +43,7 @@ export function sessionCallRequiresBinding(name, surface = "mcp") {
     const peer = cliProjectCalls.get(name);
     return peer ? sessionCallRequiresBinding(peer) : true;
   }
+  name = resolveOperation(name)?.semanticName ?? name;
   return /^(head_checkpoint_|head_run_|head_runtime_invocation_|head_bounded_worker_|head_worker_integration|head_compact_)/u.test(name || "")
     || selectedSessionCalls.has(name);
 }
@@ -71,12 +74,12 @@ export function createSessionCallContext() {
       if (expectedRevision != null && before.revision !== expectedRevision) fail("Host Session binding changed.", "HEAD_SESSION_BINDING_CONFLICT");
       let selected = sessionId;
       if (sessionId == null || sessionId === "") {
-        const file = defaultSessionStatePath(base), state = read(file);
+        const file = defaultSessionStatePath(base, resolveProjectStorage(base)), state = read(file);
         if (!state || !validId(state.sessionId)) fail("Default Session has an invalid canonical identity.", "INVALID_SESSION_CANON", file);
         selected = state.sessionId;
       }
       const resolved = resolveSessionRoute(base, selected);
-      const value = Object.freeze({ status: resolved.stateFile === defaultSessionStatePath(base) ? "default" : "bound", sessionId: selected, revision: before.revision + 1 });
+      const value = Object.freeze({ status: resolved.stateFile === defaultSessionStatePath(base, resolved.storage) ? "default" : "bound", sessionId: selected, revision: before.revision + 1 });
       bindings.set(base, value);
       return value;
     },
@@ -100,7 +103,8 @@ export function withSessionCallContext({ root, sessionId, context = null }, oper
 export function sessionSelectionUnresolved(root, { includeProjectFacts = false, reasonCode = "HEAD_SESSION_SELECTION_LOST" } = {}) {
   // Do not inspect a default Session and redact it. These are the only original
   // records needed for the unavailable-selection response, including mixed reads.
-  const projectFile = safeSessionPath(root, ".head", "project.json");
+  const storage = resolveProjectStorage(root);
+  const projectFile = safeSessionPath(root, formatForVerifiedOwner(storage).directory, "project.json");
   if (!fs.existsSync(projectFile)) fail("HEAD Agent Core is not initialized.", "NOT_INITIALIZED");
   const project = read(projectFile);
   if (project.schemaVersion !== 1 || project.projectRoot !== canonicalRoot(root)
@@ -130,13 +134,14 @@ export function sessionSelectionUnresolved(root, { includeProjectFacts = false, 
   };
 }
 
-export function sessionStatePath(root) {
+export function sessionStatePath(root, storage) {
   const route = selectedRoute(root);
-  const defaultFile = defaultSessionStatePath(root);
+  storage ??= route?.storage;
+  const defaultFile = defaultSessionStatePath(root, storage);
   if (!route) return defaultFile;
   const file = safeSessionPath(root, path.relative(canonicalRoot(root), route.stateFile));
   const state = read(file);
-  const project = read(safeSessionPath(root, ".head", "project.json"));
+  const project = read(safeSessionPath(root, formatForVerifiedOwner(storage).directory, "project.json"));
   if (state.sessionId !== route.sessionId || project.projectId !== route.projectId
     || state.projectId && state.projectId !== route.projectId) fail("Selected logical Session identity changed during the request.", "HEAD_SESSION_IDENTITY_MISMATCH");
   return file;
@@ -145,18 +150,22 @@ export function sessionStatePath(root) {
 // Immutable, content-addressed checkpoints/runs remain shared and identity-bound.
 // Mutable epoch pointers and operational progress belong to the selected Session.
 export function sessionDataPath(root, ...parts) {
-  const state = sessionStatePath(root);
-  return state === defaultSessionStatePath(root)
-    ? safeSessionPath(root, ".head", "sessions", ...parts)
-    : safeSessionPath(root, ".head", "sessions", "by-id", selectedId(root), ...parts);
+  const route = selectedRoute(root);
+  const storage = route?.storage;
+  const state = sessionStatePath(root, storage);
+  return state === defaultSessionStatePath(root, storage)
+    ? safeSessionPath(root, formatForVerifiedOwner(storage).directory, "sessions", ...parts)
+    : safeSessionPath(root, formatForVerifiedOwner(storage).directory, "sessions", "by-id", selectedId(root), ...parts);
 }
 
 function resolveSessionRoute(base, sessionId) {
+  const storage = resolveProjectStorage(base);
+  const directory = formatForVerifiedOwner(storage).directory;
   if (!validId(sessionId)) fail("Expected a logical HEAD Session id.", "INVALID_HEAD_SESSION_ID");
-  const project = read(safeSessionPath(base, ".head", "project.json"));
+  const project = read(safeSessionPath(base, directory, "project.json"));
   if (project.schemaVersion !== 1 || project.projectRoot !== base || !project.projectId) fail("Project identity differs.", "PROJECT_IDENTITY_MISMATCH");
-  const defaultFile = defaultSessionStatePath(base);
-  const namedFile = safeSessionPath(base, ".head", "sessions", "by-id", sessionId, "current.json");
+  const defaultFile = defaultSessionStatePath(base, storage);
+  const namedFile = safeSessionPath(base, directory, "sessions", "by-id", sessionId, "current.json");
   const named = fs.existsSync(namedFile);
   let defaultState = null;
   if (named) {
@@ -170,7 +179,7 @@ function resolveSessionRoute(base, sessionId) {
   if (!fs.existsSync(file)) fail("Logical HEAD Session does not exist.", "HEAD_SESSION_NOT_FOUND");
   const state = read(file);
   if (!state || state.sessionId !== sessionId || (named ? state.projectId !== project.projectId : state.projectId && state.projectId !== project.projectId)) fail("Session identity does not match this Project.", "HEAD_SESSION_IDENTITY_MISMATCH", file);
-  return { sessionId, stateFile: file, projectId: project.projectId };
+  return { sessionId, stateFile: file, projectId: project.projectId, storage };
 }
 
 export function withSessionRoute(root, sessionId, operation) {
@@ -182,15 +191,17 @@ export function withSessionRoute(root, sessionId, operation) {
   return routes.run(active, operation);
 }
 
-export function createHeadSession({ root = ".", sessionId = `session-${crypto.randomUUID()}`, purpose = "" } = {}) {
+export function createLodeSession({ root = ".", sessionId = `session-${crypto.randomUUID()}`, purpose = "" } = {}) {
   if (!validId(sessionId) || typeof purpose !== "string") fail("Invalid logical Session input.", "INVALID_HEAD_SESSION_INPUT");
   const base = canonicalRoot(root);
+  const storage = resolveProjectStorage(base);
+  const directory = formatForVerifiedOwner(storage).directory;
   return withProjectMutation({ root: base, scope: "head-session-create" }, () => {
-    const project = read(safeSessionPath(base, ".head", "project.json"));
+    const project = read(safeSessionPath(base, directory, "project.json"));
     if (project.projectRoot !== base) fail("Project root identity differs.", "PROJECT_IDENTITY_MISMATCH");
-    const defaultState = read(defaultSessionStatePath(base));
-    const file = defaultState.sessionId === sessionId ? defaultSessionStatePath(base)
-      : safeSessionPath(base, ".head", "sessions", "by-id", sessionId, "current.json");
+    const defaultState = read(defaultSessionStatePath(base, storage));
+    const file = defaultState.sessionId === sessionId ? defaultSessionStatePath(base, storage)
+      : safeSessionPath(base, directory, "sessions", "by-id", sessionId, "current.json");
     if (fs.existsSync(file)) {
       const state = read(file);
       if (state.sessionId !== sessionId || state.projectId && state.projectId !== project.projectId || purpose && state.purpose !== purpose) fail("Session create retry differs from its existing identity or purpose.", "HEAD_SESSION_CREATE_CONFLICT");
@@ -208,18 +219,23 @@ export function createHeadSession({ root = ".", sessionId = `session-${crypto.ra
   });
 }
 
-export function listHeadSessions({ root = "." } = {}) {
+export function listLodeSessions({ root = "." } = {}) {
   const base = canonicalRoot(root);
-  const project = read(safeSessionPath(base, ".head", "project.json"));
+  const storage = resolveProjectStorage(base);
+  const managementDirectory = formatForVerifiedOwner(storage).directory;
+  const project = read(safeSessionPath(base, managementDirectory, "project.json"));
   if (project.projectRoot !== base) fail("Project root identity differs.", "PROJECT_IDENTITY_MISMATCH");
-  const defaultState = read(defaultSessionStatePath(base));
+  const defaultState = read(defaultSessionStatePath(base, storage));
   const sessions = [{ sessionId: defaultState.sessionId, purpose: defaultState.purpose || "", default: true, state: defaultState }];
-  const directory = safeSessionPath(base, ".head", "sessions", "by-id");
+  const directory = safeSessionPath(base, managementDirectory, "sessions", "by-id");
   if (fs.existsSync(directory)) for (const id of fs.readdirSync(directory).sort()) {
     if (!validId(id)) fail("Unexpected entry in logical Sessions.", "INVALID_HEAD_SESSION_ID");
-    const state = read(safeSessionPath(base, ".head", "sessions", "by-id", id, "current.json"));
+    const state = read(safeSessionPath(base, managementDirectory, "sessions", "by-id", id, "current.json"));
     if (state.sessionId !== id || state.projectId !== project.projectId) fail("Session belongs to another Project.", "HEAD_SESSION_IDENTITY_MISMATCH");
     sessions.push({ sessionId: id, purpose: state.purpose || "", default: false, state });
   }
   return { projectId: project.projectId, defaultSessionId: defaultState.sessionId, sessions };
 }
+
+// Exact historical exports only; execution has one implementation.
+export { createLodeSession as createHeadSession, listLodeSessions as listHeadSessions };

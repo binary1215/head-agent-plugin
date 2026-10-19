@@ -1,7 +1,7 @@
 # Standalone legacy onboarding migrator
 
 This document describes a source-repository maintenance tool. The migrator is
-not part of the installed HEAD Agent Core plugin, its MCP server, marketplace
+not part of the installed Lode Agent Core plugin, its MCP server, marketplace
 payloads, native overlays, or normal resume path.
 
 ## Supported first slice
@@ -55,8 +55,8 @@ legacy parser. Status, World, Context, and Session recovery remain current-Core
 operations. They never recover a historical promotion or ask the user to review
 an opaque candidate again.
 
-If product meaning must change, a provider HEAD proposes fresh `0.4.0`
-candidates through `head_onboarding_semantic_refresh` or the equivalent CLI
+If product meaning must change, a provider Lode proposes fresh `0.4.0`
+candidates through `lode_onboarding_semantic_refresh` or the equivalent CLI
 `onboarding-semantic-refresh`. Core verifies exact current evidence, and only a
 later explicit user ReviewDecision may change Canon. A P3 continuity receipt
 and P4 `HISTORICALLY_FOLLOWS` relation connect history to the fresh candidate

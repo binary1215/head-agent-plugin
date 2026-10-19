@@ -1,5 +1,5 @@
 import path from "node:path";
-import { inspectProject } from "./head-core.mjs";
+import { inspectProject } from "./lode-core.mjs";
 import { artifactAuthorityBoundary } from "./authority-plane-contract.mjs";
 import { readChangeSet } from "./change-set.mjs";
 import { readObservation } from "./observation-store.mjs";
@@ -33,7 +33,7 @@ function bindingIdentity({ projectId, sourceKey, triggerKinds, mode, providerAss
   return { sourceId: `conformance-trigger-source-${hash.slice(0, 24)}`, bindingHash: hash };
 }
 
-function verifyTriggerArtifact(projectRoot, projectId, trigger) {
+function verifyTriggerArtifact(projectRoot, projectId, trigger, storage) {
   const kind = key(trigger?.kind, "Conformance trigger kind", 32);
   if (!CONFORMANCE_TRIGGER_KINDS.includes(kind)) fail("Conformance trigger kind is unsupported.", "INVALID_CONFORMANCE_TRIGGER");
   const artifactId = key(trigger?.artifactId, "Conformance trigger artifactId", 128);
@@ -48,7 +48,7 @@ function verifyTriggerArtifact(projectRoot, projectId, trigger) {
     const artifact = readIncrementalRefreshReceipt({ root: projectRoot, refreshReceiptId: artifactId }).receipt;
     artifactHash = artifact.refreshReceiptHash;
   } else {
-    const projection = loadReleaseObservationProjection({ projectRoot, projectId });
+    const projection = loadReleaseObservationProjection({ projectRoot, projectId, storage });
     const artifact = projection.releases.find((item) => item.releaseObservationId === artifactId);
     if (!artifact) fail("Conformance release trigger artifact is missing.", "CONFORMANCE_TRIGGER_ARTIFACT_NOT_FOUND");
     artifactHash = artifact.releaseObservationHash;
@@ -70,7 +70,7 @@ export class ConformanceTriggerRegistry {
     if (typeof providerAssessmentEnabled !== "boolean" || providerAssessmentEnabled && mode !== "monitor") fail("Automatic provider assessment is available only in explicit monitor mode.", "INVALID_CONFORMANCE_TRIGGER_BINDING");
     const identity = bindingIdentity({ projectId: inspected.project.projectId, sourceKey: normalizedSourceKey, triggerKinds: normalizedKinds, mode, providerAssessmentEnabled });
     if (this.sources.has(identity.sourceId)) return this.describeSource(this.sources.get(identity.sourceId));
-    const source = { ...identity, projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId, sourceKey: normalizedSourceKey, triggerKinds: normalizedKinds, mode, providerAssessmentEnabled, queue: [], pendingBatch: null, uncertainAssessment: false };
+    const source = { ...identity, projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId, storage: inspected.storage, sourceKey: normalizedSourceKey, triggerKinds: normalizedKinds, mode, providerAssessmentEnabled, queue: [], pendingBatch: null, uncertainAssessment: false };
     this.sources.set(identity.sourceId, source);
     return this.describeSource(source);
   }
@@ -107,12 +107,13 @@ export class ConformanceTriggerRegistry {
     const source = this.sources.get(sourceId);
     if (!source) fail("Conformance trigger source is not configured.", "CONFORMANCE_TRIGGER_SOURCE_NOT_FOUND");
     if (source.projectId !== inspected.project.projectId || path.resolve(source.projectRoot) !== inspected.project.projectRoot) fail("Conformance trigger source belongs to another Project.", "CONFORMANCE_TRIGGER_PROJECT_MISMATCH");
+    source.storage = inspected.storage;
     return source;
   }
 
   enqueue({ root, sourceId, trigger } = {}) {
     const source = this.source(root, sourceId);
-    const verified = verifyTriggerArtifact(source.projectRoot, source.projectId, trigger);
+    const verified = verifyTriggerArtifact(source.projectRoot, source.projectId, trigger, source.storage);
     if (!source.triggerKinds.includes(verified.kind)) fail("Conformance trigger kind is outside this Host binding.", "CONFORMANCE_TRIGGER_KIND_NOT_BOUND");
     const exactId = `${verified.kind}:${verified.artifactId}:${verified.artifactHash}`;
     if (source.queue.some((item) => item.exactId === exactId)

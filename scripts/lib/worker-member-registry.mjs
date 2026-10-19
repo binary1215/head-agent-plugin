@@ -1,3 +1,9 @@
+import { formatForVerifiedOwner, familyFormatForOriginal } from "./project-storage-format.mjs";
+const sessionIdOf = record => {
+  const format = familyFormatForOriginal({ sessionIdentity: true }, record);
+  return format ? record?.[format.sessionIdField] : undefined;
+};
+const originalFormat = record => familyFormatForOriginal({ kind: record?.kind }, record);
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -8,13 +14,13 @@ const hash = (v) => crypto.createHash("sha256").update(JSON.stringify(canonical(
 const fail = (message) => { throw Object.assign(new Error(message), { code: "WORKER_MEMBER_AUTHORIZATION_CONFLICT" }); };
 
 export function workerMemberKey(authorization) {
-  return hash({ projectId: authorization.projectId, headSessionId: authorization.headSessionId,
+  return hash({ projectId: authorization.projectId, [(originalFormat(authorization) || formatForVerifiedOwner()).sessionIdField]: sessionIdOf(authorization),
     runId: authorization.scope.runId, taskKey: authorization.workerInput.taskKey });
 }
 
 export function workerMemberFile(root, authorization, previous = null) {
   if (previous !== null && !/^execution-authorization-[a-f0-9]{24}$/.test(previous)) fail("Invalid prior worker attempt.");
-  return path.join(root, ".head", "runtime", "worker-members", `${workerMemberKey(authorization)}${previous ? `--${previous}` : ""}.json`);
+  return path.join(root, (originalFormat(authorization) || formatForVerifiedOwner()).directory, "runtime", "worker-members", `${workerMemberKey(authorization)}${previous ? `--${previous}` : ""}.json`);
 }
 
 export function readWorkerMemberChain(root, authorization) {

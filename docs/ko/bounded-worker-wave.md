@@ -2,12 +2,12 @@
 
 # 공급자 중립적 제한 worker 실행 wave
 
-`BoundedWorkerWave`는 HEAD Core를 worker launcher, 공급자 세션 레지스트리 또는 Herdr
+`BoundedWorkerWave`는 Lode Core를 worker launcher, 공급자 세션 레지스트리 또는 Herdr
 adapter로 만들지 않으면서 하나의 간결한 실행 wave 보기를 추가합니다. 이미 생성되고
 검증된 `BoundedWorkerDispatch` 레코드를 정확히 하나의 활성 Run 계보 아래 묶습니다.
 
 독립 dispatch의 지속 복구·효과 추적이 필요하면 새로운 유용한 작업과 기존
-작업에 wave를 사용합니다. HEAD 직접 작업과 일반 Host 위임도 계속 제공합니다.
+작업에 wave를 사용합니다. Lode 직접 작업과 일반 Host 위임도 계속 제공합니다.
 파일 수정, worker 수나 일반 실패만으로 wave를 강제하지 않으며 과거 기록·상태·
 대기는 일반 진단으로 남습니다.
 
@@ -43,8 +43,8 @@ existing BoundedWorkerDispatch[]
   -> explicit BoundedWorkerWaveSeal
   -> WorkerWaveStatusProjection(sealed | completed | failed)
   -> optional BoundedWorkerWaveWaitOutcome
-  -> HEAD gathers individual evidence while the Run is valid
-  -> one combined Run ResultPacket -> Fresh HEAD -> ReviewDecision -> P2 integration
+  -> Lode gathers individual evidence while the Run is valid
+  -> one combined Run ResultPacket -> Fresh Lode -> ReviewDecision -> P2 integration
 ```
 
 읽기 전용 status 투영은 seal을 생성하지 않습니다. seal하려면 모든 구성원의 lease
@@ -55,7 +55,7 @@ existing BoundedWorkerDispatch[]
 `completed`가 되지 않습니다.
 
 Status와 wait는 집계 조회 가능 여부, 전체 시작 증거 유무, 시작됐지만 lease 해제
-증거가 없는 멤버를 비지속 HEAD 안내로 제공합니다. 프로세스 정리 완료의 증명은
+증거가 없는 멤버를 비지속 Lode 안내로 제공합니다. 프로세스 정리 완료의 증명은
 아닙니다. seal 전에도 개별 job을 읽을 수 있으며 wait 중단이나 wave 포기는 멤버를
 취소하지 않습니다. 성공한 결과를 보존하고 소유한 미종료 멤버를 별도로 확인·취소합니다.
 CLI/MCP 카드가 이를 보여주며 사용자에게 새 양식을 요구하지 않습니다.
@@ -67,11 +67,11 @@ reason code는 고정되어 있고 선택적인 UTF-8 summary는 정규화되어
 retry는 실패합니다. 둘은 같은 create-only terminal slot을 두고 경쟁하므로, 동시에
 seal/abandon을 시도해도 두 개의 최종 진실을 만들 수 없습니다.
 
-wave 완료는 ResultPacket을 적용하거나, Fresh HEAD review를 만들거나,
+wave 완료는 ResultPacket을 적용하거나, Fresh Lode review를 만들거나,
 `ReviewDecision`을 생성하거나, checkpoint를 통합하지 않습니다. HF-009는 독립 worker
 dispatch와 실행 소유권으로 유지됩니다. HF-010은 각 fragment가 아니라 Run의
 단일 전체 결과를 명시적으로 검토하여 통합하는 경로입니다.
-컨텍스트 선택, 부분 실행, 단일 worker 적용과 HEAD의 통합 finish 구분은
+컨텍스트 선택, 부분 실행, 단일 worker 적용과 Lode의 통합 finish 구분은
 [worker 컨텍스트와 통합](worker-context-integration.md)을 참고합니다.
 
 ## CLI와 typed MCP
@@ -87,7 +87,7 @@ head managed worker-wave-abandon <project> --input <abandonment.json>
 ```
 
 Typed MCP는 동일한 Core 함수와 ID를 사용합니다. 관리형 변경 schema를
-발견하고 `head_tools_call`에 `execution_mode: "managed"`를 지정하거나 기존
+발견하고 `lode_tools_call`에 `execution_mode: "managed"`를 지정하거나 기존
 별도 관리형 stdio 서버를 사용합니다. CLI `managed`도 유용한 새로운 복구
 작업을 지원합니다. 라우팅은 authorization을 만들지 않고 정확한 계보, lease와
 시작 증거 검사를 보존합니다. 일반 MCP에는 read/status/results/wait와 정확한

@@ -5,7 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { initializeProject } from "../scripts/lib/head-core.mjs";
+import { initializeProject, inspectProject } from "../scripts/lib/head-core.mjs";
+import { formatForVerifiedOwner } from "../scripts/lib/project-storage-format.mjs";
 import { startOnboarding, reviewOnboarding } from "../scripts/lib/onboarding.mjs";
 import { normalizeProductModelDocument, productModelDocument, readProductModelCanon } from "../scripts/lib/product-model.mjs";
 import { inspectProductPolicyStatus, productPolicyCanonicalJson, proposeProductPolicy, readProductPolicyCandidate, reviewProductPolicy, verifyProductPolicyCandidate } from "../scripts/lib/product-policy.mjs";
@@ -24,6 +25,8 @@ async function fixture(t) {
   fs.mkdirSync(path.join(root, "src"));
   fs.writeFileSync(path.join(root, "src", "service.mjs"), "export function serve() { return true; }\n");
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const storage = inspectProject(root).storage;
+  const layout = formatForVerifiedOwner(storage);
   const started = await startOnboarding({ root, mode: "new", brief: {
     schemaVersion: 1,
     name: "Generic service",
@@ -34,7 +37,7 @@ async function fixture(t) {
     requirements: [{ key: "review-evidence", statement: "Material policy changes require an explicit evidence-linked review." }],
   } });
   await reviewOnboarding({ root, candidateSetId: started.candidateSet.candidateSetId, disposition: "accept-all", rationale: "Approve the exact generic product concepts." });
-  return root;
+  return { root, storage, layout };
 }
 
 test("schema 1 Product Model bytes and identity remain exact", () => {
@@ -47,7 +50,7 @@ test("schema 1 Product Model bytes and identity remain exact", () => {
 });
 
 test("explicit Policy applications preserve review and revision genealogy without group inheritance", async (t) => {
-  const root = await fixture(t);
+  const { root, layout } = await fixture(t);
   const proposed = await proposeProductPolicy({
     root,
     operation: "create",
@@ -123,7 +126,7 @@ test("explicit Policy applications preserve review and revision genealogy withou
 });
 
 test("Policy semantic references are optional, exact, and never inferred", async (t) => {
-  const root = await fixture(t);
+  const { root, layout } = await fixture(t);
   await assert.rejects(() => proposeProductPolicy({
     root,
     operation: "create",
@@ -138,10 +141,10 @@ test("Policy semantic references are optional, exact, and never inferred", async
 });
 
 test("Policy artifact identity, declared transition scope, evidence freshness, and Session fence fail closed", async (t) => {
-  const root = await fixture(t);
+  const { root, layout } = await fixture(t);
   const first = await proposeProductPolicy({ root, operation: "create", key: "first", name: "First", statement: "First exact policy." });
   const second = await proposeProductPolicy({ root, operation: "create", key: "second", name: "Second", statement: "Second exact policy." });
-  const firstFile = path.join(root, ".head", "product-policy", "candidates", `${first.candidate.candidateId}.json`);
+  const firstFile = path.join(root, layout.directory, "product-policy", "candidates", `${first.candidate.candidateId}.json`);
   const firstBytes = fs.readFileSync(firstFile, "utf8");
   fs.writeFileSync(firstFile, `${JSON.stringify(second.candidate, null, 2)}\n`);
   assert.throws(() => readProductPolicyCandidate({ root, candidateId: first.candidate.candidateId }), { code: "PRODUCT_POLICY_ARTIFACT_IDENTITY_MISMATCH" });
@@ -212,7 +215,7 @@ test("Policy artifact identity, declared transition scope, evidence freshness, a
 });
 
 test("mixed Policy evidence keeps exact anchor mapping while exact replay repairs only P4 projection", async (t) => {
-  const root = await fixture(t);
+  const { root, layout } = await fixture(t);
   const rationale = "Approve the exact mixed-evidence candidate.";
   const proposed = await proposeProductPolicy({
     root,
@@ -258,13 +261,13 @@ test("mixed Policy evidence keeps exact anchor mapping while exact replay repair
   assert.equal(mcpTrace.error, undefined, JSON.stringify(mcpTrace.error));
   assert.equal(mcpTrace.result.structuredContent.policyEvidenceCurrentness[0].candidateId, proposed.candidate.candidateId);
 
-  const canonFile = path.join(root, ".head", "context", "product-model.json");
-  const reviewDirectory = path.join(root, ".head", "product-policy", "review-decisions");
+  const canonFile = path.join(root, layout.directory, "context", "product-model.json");
+  const reviewDirectory = path.join(root, layout.directory, "product-policy", "review-decisions");
   const reviewFile = path.join(reviewDirectory, `${accepted.review.reviewDecisionId}.json`);
   const canonBytes = fs.readFileSync(canonFile, "utf8");
   const reviewBytes = fs.readFileSync(reviewFile, "utf8");
   const reviewNames = fs.readdirSync(reviewDirectory).sort();
-  fs.unlinkSync(path.join(root, ".head", "world-model", "current.json"));
+  fs.unlinkSync(path.join(root, layout.directory, "world-model", "current.json"));
 
   const replay = await reviewProductPolicy({ root, candidateId: proposed.candidate.candidateId, disposition: "accept", rationale });
   assert.equal(replay.status, "accepted", JSON.stringify(replay.projectionError));
@@ -279,7 +282,7 @@ test("mixed Policy evidence keeps exact anchor mapping while exact replay repair
 });
 
 test("Policy candidates are nonblocking while stale acceptance and divergent decisions fail closed", async (t) => {
-  const root = await fixture(t);
+  const { root, layout } = await fixture(t);
   const first = await proposeProductPolicy({ root, operation: "create", key: "first", name: "First", statement: "First explicit policy." });
   const second = await proposeProductPolicy({ root, operation: "create", key: "second", name: "Second", statement: "Second explicit policy." });
   assert.equal(inspectProductPolicyStatus({ root, candidateId: second.candidate.candidateId }).ordinaryWorkBlocked, false);
@@ -291,7 +294,7 @@ test("Policy candidates are nonblocking while stale acceptance and divergent dec
 });
 
 test("content-addressed Policy history supports repeated semantics, multiple successors, and cycles", async (t) => {
-  const root = await fixture(t);
+  const { root, layout } = await fixture(t);
   const created = await proposeProductPolicy({ root, operation: "create", key: "cyclic", name: "Cyclic", statement: "A" });
   await reviewProductPolicy({ root, candidateId: created.candidate.candidateId, disposition: "accept", rationale: "Approve A." });
   const revisedB = await proposeProductPolicy({ root, operation: "revise", key: "cyclic", statement: "B" });
@@ -306,7 +309,7 @@ test("content-addressed Policy history supports repeated semantics, multiple suc
 });
 
 test("unrelated Policy changes preserve current entity approval lineage and unreviewed candidates stay opt-in", async (t) => {
-  const root = await fixture(t);
+  const { root, layout } = await fixture(t);
   const first = await proposeProductPolicy({ root, operation: "create", key: "first", name: "First", statement: "First exact policy." });
   const firstReview = await reviewProductPolicy({ root, candidateId: first.candidate.candidateId, disposition: "accept", rationale: "Approve the first policy." });
   const second = await proposeProductPolicy({ root, operation: "create", key: "second", name: "Second", statement: "Second exact policy." });
@@ -346,7 +349,7 @@ test("unrelated Policy changes preserve current entity approval lineage and unre
 });
 
 test("CLI and typed MCP expose the same conversational Policy workflow", async (t) => {
-  const root = await fixture(t);
+  const { root, layout } = await fixture(t);
   assert.ok(tools.some((tool) => tool.name === "head_product_policy_propose"));
   const mcp = await dispatch({ jsonrpc: "2.0", id: "policy", method: "tools/call", params: { name: "head_product_policy_propose", arguments: {
     project_root: root,

@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { familyFormatForOriginal, formatForVerifiedOwner } from "./project-storage-format.mjs";
 import { verifyTemporalProvenanceGraph } from "./temporal-provenance.mjs";
 
 export const DOCUMENT_PROJECTION_ADAPTER_VERSION = "0.1.0";
@@ -181,7 +182,7 @@ function groupBy(values, keyFor) {
   return groups;
 }
 
-export function buildMarkdownDocumentProjection(graph) {
+export function buildMarkdownDocumentProjection(graph, storage = undefined) {
   verifyTemporalProvenanceGraph(graph);
   const nodes = [...graph.nodes].sort((left, right) => compare(left.kind, right.kind) || compare(left.nodeId, right.nodeId));
   const edges = [...graph.edges].sort((left, right) => compare(left.type, right.type) || compare(left.edgeId, right.edgeId));
@@ -221,7 +222,7 @@ export function buildMarkdownDocumentProjection(graph) {
 
   const output = [];
   const indexLines = [
-    "# HEAD Agent derived knowledge graph",
+    formatForVerifiedOwner(storage).dialect === "lode" ? "# Lode Agent derived knowledge graph" : "# HEAD Agent derived knowledge graph",
     "",
     "> This is a deterministic, rebuildable projection of a verified GraphSnapshot. It is not project canon, an instruction source, or promotion authority.",
     "",
@@ -245,7 +246,7 @@ export function buildMarkdownDocumentProjection(graph) {
     const pages = relationPages.filter((page) => page.type === type);
     indexLines.push(`| ${markdown(type)} | ${edgeGroups.get(type).length} | ${pages.map((page, index) => `[${index + 1}](${page.relativePath})`).join(", ")} |`);
   }
-  output.push(document("index.md", "HEAD Agent derived knowledge graph", indexLines.join("\n")));
+  output.push(document("index.md", formatForVerifiedOwner(storage).dialect === "lode" ? "Lode Agent derived knowledge graph" : "HEAD Agent derived knowledge graph", indexLines.join("\n")));
 
   for (const page of nodePages) {
     const lines = [
@@ -296,8 +297,8 @@ export function buildMarkdownDocumentProjection(graph) {
   const payload = {
     schemaVersion: 1,
     kind: "DocumentProjection",
-    protocol: { name: "head-agent-core-document-projection", version: DOCUMENT_PROJECTION_ADAPTER_VERSION },
-    renderer: { name: "head-agent-core-markdown", version: MARKDOWN_PROJECTION_VERSION },
+    protocol: { name: formatForVerifiedOwner(storage).protocol("head-agent-core-document-projection"), version: DOCUMENT_PROJECTION_ADAPTER_VERSION },
+    renderer: { name: formatForVerifiedOwner(storage).protocol("head-agent-core-markdown"), version: MARKDOWN_PROJECTION_VERSION },
     projectId: graph.projectId,
     graphSnapshotId: graph.graphSnapshotId,
     graphSnapshotHash: graph.graphSnapshotHash,
@@ -323,11 +324,11 @@ export function buildMarkdownDocumentProjection(graph) {
   return { ...payload, documentProjectionId: `document-projection-${documentProjectionHash.slice(0, 24)}`, documentProjectionHash };
 }
 
-export function verifyDocumentProjection(value, expectedGraph = null) {
+export function verifyDocumentProjection(value, expectedGraph = null, storage = undefined) {
   if (!value || value.kind !== "DocumentProjection" || value.schemaVersion !== 1
-    || value.protocol?.name !== "head-agent-core-document-projection"
+    || !familyFormatForOriginal("head-agent-core-document-projection", value, storage)
     || value.protocol?.version !== DOCUMENT_PROJECTION_ADAPTER_VERSION
-    || value.renderer?.name !== "head-agent-core-markdown" || value.renderer?.version !== MARKDOWN_PROJECTION_VERSION
+    || value.renderer?.name !== familyFormatForOriginal("head-agent-core-document-projection", value, storage)?.protocol("head-agent-core-markdown") || value.renderer?.version !== MARKDOWN_PROJECTION_VERSION
     || value.format !== "markdown" || typeof value.projectId !== "string" || !value.projectId
     || !/^graph-snapshot-[a-f0-9]{24}$/.test(value.graphSnapshotId || "")
     || !/^[a-f0-9]{64}$/.test(value.graphSnapshotHash || "")
@@ -373,11 +374,11 @@ export function verifyDocumentProjection(value, expectedGraph = null) {
   return value;
 }
 
-function pointerFor(projection) {
+function pointerFor(projection, storage) {
   const payload = {
     schemaVersion: 1,
     kind: "DocumentProjectionPointer",
-    protocol: { name: "head-agent-core-document-projection", version: DOCUMENT_PROJECTION_ADAPTER_VERSION },
+    protocol: { name: formatForVerifiedOwner(storage).protocol("head-agent-core-document-projection"), version: DOCUMENT_PROJECTION_ADAPTER_VERSION },
     projectId: projection.projectId,
     documentProjectionId: projection.documentProjectionId,
     documentProjectionHash: projection.documentProjectionHash,
@@ -395,9 +396,9 @@ function pointerFor(projection) {
   return { ...payload, pointerId: `document-projection-pointer-${pointerHash.slice(0, 24)}`, pointerHash };
 }
 
-export function verifyDocumentProjectionPointer(value, expectedProjection = null) {
+export function verifyDocumentProjectionPointer(value, expectedProjection = null, storage = undefined) {
   if (!value || value.kind !== "DocumentProjectionPointer" || value.schemaVersion !== 1
-    || value.protocol?.name !== "head-agent-core-document-projection"
+    || !familyFormatForOriginal("head-agent-core-document-projection", value, storage)
     || value.protocol?.version !== DOCUMENT_PROJECTION_ADAPTER_VERSION
     || typeof value.projectId !== "string" || !value.projectId
     || !/^document-projection-[a-f0-9]{24}$/.test(value.documentProjectionId || "")
@@ -417,7 +418,8 @@ export function verifyDocumentProjectionPointer(value, expectedProjection = null
   if (value.pointerHash !== expectedHash || value.pointerId !== `document-projection-pointer-${expectedHash.slice(0, 24)}`) {
     fail("Document projection pointer digest verification failed.", "DOCUMENT_PROJECTION_POINTER_DIGEST_MISMATCH");
   }
-  if (expectedProjection && (value.documentProjectionId !== expectedProjection.documentProjectionId
+  if (expectedProjection && (value.protocol.name !== expectedProjection.protocol?.name
+    || value.documentProjectionId !== expectedProjection.documentProjectionId
     || value.documentProjectionHash !== expectedProjection.documentProjectionHash
     || value.graphSnapshotId !== expectedProjection.graphSnapshotId || value.graphSnapshotHash !== expectedProjection.graphSnapshotHash
     || value.sourceSnapshotId !== expectedProjection.sourceSnapshotId || value.projectId !== expectedProjection.projectId)) {
@@ -446,9 +448,10 @@ function publishedDrift(projection, actualDocuments) {
 }
 
 export class LocalMarkdownProjectionAdapter {
-  constructor({ projectRoot }) {
+  constructor({ projectRoot, storage }) {
     if (typeof projectRoot !== "string" || !projectRoot.trim()) fail("Local Markdown projection requires projectRoot.", "DOCUMENT_PROJECTION_ROOT_REQUIRED");
     this.projectRoot = path.resolve(projectRoot);
+    this.storage = storage;
     this.adapterVersion = DOCUMENT_PROJECTION_ADAPTER_VERSION;
   }
 
@@ -457,15 +460,15 @@ export class LocalMarkdownProjectionAdapter {
   }
 
   pointerLocation() {
-    return path.join(this.projectRoot, ".head", "document-projection", "markdown", "current.json");
+    return path.join(this.projectRoot, formatForVerifiedOwner(this.storage).directory, "document-projection", "markdown", "current.json");
   }
 
   projectionLocation(id) {
-    return path.join(this.projectRoot, ".head", "document-projection", "markdown", "snapshots", `${projectionId(id)}.json`);
+    return path.join(this.projectRoot, formatForVerifiedOwner(this.storage).directory, "document-projection", "markdown", "snapshots", `${projectionId(id)}.json`);
   }
 
   publishedRoot() {
-    return path.join(this.projectRoot, ".head", "generated", "knowledge");
+    return path.join(this.projectRoot, formatForVerifiedOwner(this.storage).directory, "generated", "knowledge");
   }
 
   publishedLocation(relativePath) {
@@ -500,7 +503,7 @@ export class LocalMarkdownProjectionAdapter {
   }
 
   listProjectionIds() {
-    const directory = path.join(this.projectRoot, ".head", "document-projection", "markdown", "snapshots");
+    const directory = path.join(this.projectRoot, formatForVerifiedOwner(this.storage).directory, "document-projection", "markdown", "snapshots");
     if (!fs.existsSync(directory)) return [];
     return fs.readdirSync(directory, { withFileTypes: true })
       .filter((entry) => entry.isFile() && /^document-projection-[a-f0-9]{24}\.json$/.test(entry.name))
@@ -585,26 +588,26 @@ export class InMemoryMarkdownProjectionAdapter {
   }
 }
 
-export function createDocumentProjectionAdapter({ projectRoot, adapter = null } = {}) {
-  return assertDocumentProjectionAdapter(adapter || new LocalMarkdownProjectionAdapter({ projectRoot }));
+export function createDocumentProjectionAdapter({ projectRoot, storage, adapter = null } = {}) {
+  return assertDocumentProjectionAdapter(adapter || new LocalMarkdownProjectionAdapter({ projectRoot, storage }));
 }
 
-function loadCurrentProjection(selected) {
+function loadCurrentProjection(selected, storage) {
   const pointerEntry = selected.readPointer();
   if (!pointerEntry) return { pointerEntry: null, pointer: null, projectionEntry: null, projection: null };
-  const pointer = verifyDocumentProjectionPointer(pointerEntry.document);
+  const pointer = verifyDocumentProjectionPointer(pointerEntry.document, null, storage);
   const projectionEntry = selected.readProjection(pointer.documentProjectionId);
   if (!projectionEntry) fail("Document projection pointer references a missing projection.", "DOCUMENT_PROJECTION_MISSING");
-  const projection = verifyDocumentProjection(projectionEntry.document);
-  verifyDocumentProjectionPointer(pointer, projection);
+  const projection = verifyDocumentProjection(projectionEntry.document, null, storage);
+  verifyDocumentProjectionPointer(pointer, projection, storage);
   return { pointerEntry, pointer, projectionEntry, projection };
 }
 
-export function materializeMarkdownProjection({ projectRoot, graph, adapter = null } = {}) {
+export function materializeMarkdownProjection({ projectRoot, storage, graph, adapter = null } = {}) {
   verifyTemporalProvenanceGraph(graph);
-  const selected = createDocumentProjectionAdapter({ projectRoot, adapter });
-  const next = buildMarkdownDocumentProjection(graph);
-  const current = loadCurrentProjection(selected);
+  const selected = createDocumentProjectionAdapter({ projectRoot, storage, adapter });
+  const next = buildMarkdownDocumentProjection(graph, storage);
+  const current = loadCurrentProjection(selected, storage);
   const actualBefore = selected.readPublishedDocuments();
   if (!current.projection && actualBefore.length) {
     fail("Unmanaged Markdown files already exist in the published view.", "DOCUMENT_PROJECTION_UNMANAGED_CONTENT");
@@ -614,22 +617,22 @@ export function materializeMarkdownProjection({ projectRoot, graph, adapter = nu
     if (drift.length) fail("Published Markdown contains unreviewed edits; capture DocumentChangeCandidates before rebuilding.", "DOCUMENT_PROJECTION_UNREVIEWED_DRIFT");
   }
 
-  return persistMarkdownProjection({ selected, graph, next, current });
+  return persistMarkdownProjection({ selected, graph, next, current }, storage);
 }
 
-function persistMarkdownProjection({ selected, graph, next, current }) {
+function persistMarkdownProjection({ selected, graph, next, current }, storage) {
 
   const existing = selected.readProjection(next.documentProjectionId);
   let projectionEntry;
   if (existing) {
-    const verified = verifyDocumentProjection(existing.document, graph);
+    const verified = verifyDocumentProjection(existing.document, graph, storage);
     if (documentProjectionCanonicalJson(verified) !== documentProjectionCanonicalJson(next)) {
       fail("Document projection adapter returned conflicting content for the same projection id.", "DOCUMENT_PROJECTION_CONFLICT");
     }
     projectionEntry = existing;
   } else {
     projectionEntry = selected.writeProjection(next.documentProjectionId, clone(next));
-    verifyDocumentProjection(projectionEntry.document, graph);
+    verifyDocumentProjection(projectionEntry.document, graph, storage);
     if (documentProjectionCanonicalJson(projectionEntry.document) !== documentProjectionCanonicalJson(next)) {
       fail("Document projection adapter changed the projection during materialization.", "DOCUMENT_PROJECTION_WRITE_MISMATCH");
     }
@@ -640,9 +643,9 @@ function persistMarkdownProjection({ selected, graph, next, current }) {
   const published = selected.publishDocuments(clone(next.documents), { removeRelativePaths });
   const driftAfter = publishedDrift(next, published);
   if (driftAfter.length) fail("Document projection adapter changed published Markdown content.", "DOCUMENT_PROJECTION_PUBLISH_MISMATCH");
-  const pointer = pointerFor(next);
+  const pointer = pointerFor(next, storage);
   const pointerEntry = selected.writePointer(clone(pointer));
-  verifyDocumentProjectionPointer(pointerEntry.document, next);
+  verifyDocumentProjectionPointer(pointerEntry.document, next, storage);
   if (documentProjectionCanonicalJson(pointerEntry.document) !== documentProjectionCanonicalJson(pointer)) {
     fail("Document projection adapter changed the pointer during materialization.", "DOCUMENT_PROJECTION_WRITE_MISMATCH");
   }
@@ -657,10 +660,10 @@ function persistMarkdownProjection({ selected, graph, next, current }) {
   };
 }
 
-export function inspectMarkdownProjection({ projectRoot, graph, adapter = null } = {}) {
+export function inspectMarkdownProjection({ projectRoot, storage, graph, adapter = null } = {}) {
   verifyTemporalProvenanceGraph(graph);
-  const selected = createDocumentProjectionAdapter({ projectRoot, adapter });
-  const current = loadCurrentProjection(selected);
+  const selected = createDocumentProjectionAdapter({ projectRoot, storage, adapter });
+  const current = loadCurrentProjection(selected, storage);
   const actual = selected.readPublishedDocuments();
   if (!current.projection) return {
     status: actual.length ? "unmanaged" : "not-materialized",
@@ -672,7 +675,7 @@ export function inspectMarkdownProjection({ projectRoot, graph, adapter = null }
   const stale = current.projection.projectId !== graph.projectId || current.projection.graphSnapshotId !== graph.graphSnapshotId
     || current.projection.graphSnapshotHash !== graph.graphSnapshotHash || current.projection.sourceSnapshotId !== graph.sourceSnapshotId;
   if (!stale) {
-    const expected = buildMarkdownDocumentProjection(graph);
+    const expected = buildMarkdownDocumentProjection(graph, storage);
     if (documentProjectionCanonicalJson(current.projection) !== documentProjectionCanonicalJson(expected)) {
       fail("Stored DocumentProjection differs from the deterministic Markdown reference.", "DOCUMENT_PROJECTION_SEMANTIC_MISMATCH");
     }
@@ -694,13 +697,13 @@ export function inspectMarkdownProjection({ projectRoot, graph, adapter = null }
   };
 }
 
-function candidateDocument(projectRoot, id) {
-  return path.join(path.resolve(projectRoot), ".head", "document-changes", "candidate-sets", `${candidateSetId(id)}.json`);
+function candidateDocument(projectRoot, id, storage) {
+  return path.join(path.resolve(projectRoot), formatForVerifiedOwner(storage).directory, "document-changes", "candidate-sets", `${candidateSetId(id)}.json`);
 }
 
-export function verifyDocumentChangeCandidateSet(value) {
+export function verifyDocumentChangeCandidateSet(value, storage = undefined) {
   if (!value || value.kind !== "DocumentChangeCandidateSet" || value.schemaVersion !== 1
-    || value.protocol?.name !== "head-agent-core-document-change-candidates"
+    || !familyFormatForOriginal("head-agent-core-document-change-candidates", value, storage)
     || value.protocol?.version !== DOCUMENT_PROJECTION_ADAPTER_VERSION
     || typeof value.projectId !== "string" || !value.projectId
     || !/^document-projection-[a-f0-9]{24}$/.test(value.documentProjectionId || "")
@@ -754,15 +757,15 @@ export function verifyDocumentChangeCandidateSet(value) {
   return value;
 }
 
-export function captureDocumentChangeCandidates({ projectRoot, graph, adapter = null, persist = true } = {}) {
+export function captureDocumentChangeCandidates({ projectRoot, storage, graph, adapter = null, persist = true } = {}) {
   verifyTemporalProvenanceGraph(graph);
-  const selected = createDocumentProjectionAdapter({ projectRoot, adapter });
-  const current = loadCurrentProjection(selected);
+  const selected = createDocumentProjectionAdapter({ projectRoot, storage, adapter });
+  const current = loadCurrentProjection(selected, storage);
   if (!current.projection) fail("A verified base DocumentProjection is required before capturing edits.", "DOCUMENT_PROJECTION_NOT_MATERIALIZED");
   if (current.projection.graphSnapshotId !== graph.graphSnapshotId || current.projection.graphSnapshotHash !== graph.graphSnapshotHash) {
     fail("Document edits cannot be captured against a stale GraphSnapshot.", "DOCUMENT_PROJECTION_STALE");
   }
-  const expectedProjection = buildMarkdownDocumentProjection(graph);
+  const expectedProjection = buildMarkdownDocumentProjection(graph, storage);
   if (documentProjectionCanonicalJson(current.projection) !== documentProjectionCanonicalJson(expectedProjection)) {
     fail("Document edits cannot be captured against a semantically divergent projection.", "DOCUMENT_PROJECTION_SEMANTIC_MISMATCH");
   }
@@ -795,7 +798,7 @@ export function captureDocumentChangeCandidates({ projectRoot, graph, adapter = 
   const payload = {
     schemaVersion: 1,
     kind: "DocumentChangeCandidateSet",
-    protocol: { name: "head-agent-core-document-change-candidates", version: DOCUMENT_PROJECTION_ADAPTER_VERSION },
+    protocol: { name: formatForVerifiedOwner(storage).protocol("head-agent-core-document-change-candidates"), version: DOCUMENT_PROJECTION_ADAPTER_VERSION },
     projectId: graph.projectId,
     documentProjectionId: current.projection.documentProjectionId,
     documentProjectionHash: current.projection.documentProjectionHash,
@@ -813,12 +816,12 @@ export function captureDocumentChangeCandidates({ projectRoot, graph, adapter = 
     ...payload,
     candidateSetId: `document-change-candidate-set-${candidateSetHash.slice(0, 24)}`,
     candidateSetHash,
-  });
+  }, storage);
   let file = null;
   if (persist) {
-    file = candidateDocument(projectRoot, candidateSet.candidateSetId);
+    file = candidateDocument(projectRoot, candidateSet.candidateSetId, storage);
     if (fs.existsSync(file)) {
-      const existing = verifyDocumentChangeCandidateSet(parseDocument(file, "DocumentChangeCandidateSet"));
+      const existing = verifyDocumentChangeCandidateSet(parseDocument(file, "DocumentChangeCandidateSet"), storage);
       if (documentProjectionCanonicalJson(existing) !== documentProjectionCanonicalJson(candidateSet)) {
         fail("Stored DocumentChangeCandidateSet conflicts with the same identity.", "DOCUMENT_CHANGE_CANDIDATE_SET_CONFLICT");
       }
@@ -827,16 +830,16 @@ export function captureDocumentChangeCandidates({ projectRoot, graph, adapter = 
   return { status: persist ? "captured" : "preview", candidateSet, file, adapter: selected.describe() };
 }
 
-export function readDocumentChangeCandidateSet({ projectRoot, id } = {}) {
-  const file = candidateDocument(projectRoot, id);
+export function readDocumentChangeCandidateSet({ projectRoot, storage, id } = {}) {
+  const file = candidateDocument(projectRoot, id, storage);
   if (!fs.existsSync(file)) fail(`DocumentChangeCandidateSet is missing: ${id}`, "DOCUMENT_CHANGE_CANDIDATE_SET_NOT_FOUND");
-  return { status: "verified", file, candidateSet: verifyDocumentChangeCandidateSet(parseDocument(file, "DocumentChangeCandidateSet")) };
+  return { status: "verified", file, candidateSet: verifyDocumentChangeCandidateSet(parseDocument(file, "DocumentChangeCandidateSet"), storage) };
 }
 
-export function verifyDocumentChangeCandidateSetAgainstPublished({ projectRoot, candidateSet, adapter = null } = {}) {
-  const verified = verifyDocumentChangeCandidateSet(candidateSet);
-  const selected = createDocumentProjectionAdapter({ projectRoot, adapter });
-  const current = loadCurrentProjection(selected);
+export function verifyDocumentChangeCandidateSetAgainstPublished({ projectRoot, storage, candidateSet, adapter = null } = {}) {
+  const verified = verifyDocumentChangeCandidateSet(candidateSet, storage);
+  const selected = createDocumentProjectionAdapter({ projectRoot, storage, adapter });
+  const current = loadCurrentProjection(selected, storage);
   if (!current.projection
     || current.projection.documentProjectionId !== verified.documentProjectionId
     || current.projection.documentProjectionHash !== verified.documentProjectionHash
@@ -870,9 +873,9 @@ export function verifyDocumentChangeCandidateSetAgainstPublished({ projectRoot, 
   return { status: "verified", candidateSet: verified, projection: current.projection, publishedDocuments: actualDocuments, adapter: selected.describe() };
 }
 
-export function materializeReviewedMarkdownProjection({ projectRoot, graph, candidateSet, reviewDecision, adapter = null } = {}) {
+export function materializeReviewedMarkdownProjection({ projectRoot, storage, graph, candidateSet, reviewDecision, adapter = null } = {}) {
   verifyTemporalProvenanceGraph(graph);
-  const verified = verifyDocumentChangeCandidateSet(candidateSet);
+  const verified = verifyDocumentChangeCandidateSet(candidateSet, storage);
   if (!reviewDecision || reviewDecision.kind !== "ReviewDecision"
     || reviewDecision.decisionScope !== "document-to-product-canon"
     || reviewDecision.candidateSetId !== verified.candidateSetId
@@ -889,26 +892,26 @@ export function materializeReviewedMarkdownProjection({ projectRoot, graph, cand
     || new Set(partition).size !== partition.length) {
     fail("Document-change ReviewDecision does not partition the candidate set.", "DOCUMENT_CHANGE_REVIEW_SELECTION_MISMATCH");
   }
-  return { ...resumeReviewedMarkdownProjection({ projectRoot, graph, adapter,
+  return { ...resumeReviewedMarkdownProjection({ projectRoot, storage, graph, adapter,
     baseProjectionId: verified.documentProjectionId, candidateSet: verified }),
     reviewDecisionId: reviewDecision.reviewDecisionId, candidateSetId: verified.candidateSetId };
 }
 
 // Internal application primitive. The caller verifies the durable ReviewDecision.
 // Both original and target contents already live in immutable artifacts.
-export function resumeReviewedMarkdownProjection({ projectRoot, graph, adapter = null, baseProjectionId, candidateSet = null }) {
-  const selected = createDocumentProjectionAdapter({ projectRoot, adapter });
-  const current = loadCurrentProjection(selected);
+export function resumeReviewedMarkdownProjection({ projectRoot, storage, graph, adapter = null, baseProjectionId, candidateSet = null }) {
+  const selected = createDocumentProjectionAdapter({ projectRoot, storage, adapter });
+  const current = loadCurrentProjection(selected, storage);
   const baseEntry = selected.readProjection(baseProjectionId);
   if (!baseEntry) fail("Reviewed document base is missing.", "DOCUMENT_PROJECTION_MISSING");
-  const base = verifyDocumentProjection(baseEntry.document);
-  const next = buildMarkdownDocumentProjection(graph);
+  const base = verifyDocumentProjection(baseEntry.document, null, storage);
+  const next = buildMarkdownDocumentProjection(graph, storage);
   if (current.projection && ![base.documentProjectionId, next.documentProjectionId].includes(current.projection.documentProjectionId)) {
     fail("A later document pointer must be preserved.", "DOCUMENT_CHANGE_CANDIDATE_BASE_DRIFT");
   }
   const preimage = new Map(base.documents.map((item) => [item.relativePath, item.content]));
   if (candidateSet) {
-    verifyDocumentChangeCandidateSet(candidateSet);
+    verifyDocumentChangeCandidateSet(candidateSet, storage);
     if (candidateSet.documentProjectionId !== base.documentProjectionId || candidateSet.documentProjectionHash !== base.documentProjectionHash) {
       fail("Candidate document base differs.", "DOCUMENT_CHANGE_CANDIDATE_BASE_DRIFT");
     }
@@ -932,7 +935,7 @@ export function resumeReviewedMarkdownProjection({ projectRoot, graph, adapter =
   };
   check();
   const stored = selected.writeProjection(next.documentProjectionId, clone(next));
-  verifyDocumentProjection(stored.document, graph);
+  verifyDocumentProjection(stored.document, graph, storage);
   if (documentProjectionCanonicalJson(stored.document) !== documentProjectionCanonicalJson(next)) fail("Target projection differs.", "DOCUMENT_PROJECTION_CONFLICT");
   for (const item of next.documents) {
     if (check().get(item.relativePath) !== item.content) selected.publishDocuments([clone(item)]);
@@ -943,20 +946,20 @@ export function resumeReviewedMarkdownProjection({ projectRoot, graph, adapter =
   const published = selected.readPublishedDocuments();
   if (publishedDrift(next, published).length) fail("Document publication is incomplete.", "DOCUMENT_PROJECTION_PUBLISH_MISMATCH");
   check();
-  const pointer = pointerFor(next);
+  const pointer = pointerFor(next, storage);
   if (current.pointer?.documentProjectionId !== next.documentProjectionId) {
     const written = selected.writePointer(clone(pointer));
-    verifyDocumentProjectionPointer(written.document, next);
+    verifyDocumentProjectionPointer(written.document, next, storage);
   }
   return { status: "projected", projection: next, pointer, adapter: selected.describe() };
 }
 
-export function verifyDocumentProjectionAdapterConformance({ projectRoot, graph, referenceAdapter, candidateAdapter } = {}) {
+export function verifyDocumentProjectionAdapterConformance({ projectRoot, storage, graph, referenceAdapter, candidateAdapter } = {}) {
   verifyTemporalProvenanceGraph(graph);
-  const reference = createDocumentProjectionAdapter({ projectRoot, adapter: referenceAdapter });
-  const candidate = createDocumentProjectionAdapter({ projectRoot, adapter: candidateAdapter });
-  const referenceResult = materializeMarkdownProjection({ projectRoot, graph, adapter: reference });
-  const candidateResult = materializeMarkdownProjection({ projectRoot, graph, adapter: candidate });
+  const reference = createDocumentProjectionAdapter({ projectRoot, storage, adapter: referenceAdapter });
+  const candidate = createDocumentProjectionAdapter({ projectRoot, storage, adapter: candidateAdapter });
+  const referenceResult = materializeMarkdownProjection({ projectRoot, storage, graph, adapter: reference });
+  const candidateResult = materializeMarkdownProjection({ projectRoot, storage, graph, adapter: candidate });
   if (documentProjectionCanonicalJson(referenceResult.projection) !== documentProjectionCanonicalJson(candidateResult.projection)
     || documentProjectionCanonicalJson(reference.readPublishedDocuments().map(({ relativePath, contentHash, byteLength: bytes }) => ({ relativePath, contentHash, byteLength: bytes })))
       !== documentProjectionCanonicalJson(candidate.readPublishedDocuments().map(({ relativePath, contentHash, byteLength: bytes }) => ({ relativePath, contentHash, byteLength: bytes })))) {
@@ -965,7 +968,7 @@ export function verifyDocumentProjectionAdapterConformance({ projectRoot, graph,
   const payload = {
     schemaVersion: 1,
     kind: "DocumentProjectionConformanceReport",
-    protocol: { name: "head-agent-core-document-projection-conformance", version: DOCUMENT_PROJECTION_ADAPTER_VERSION },
+    protocol: { name: formatForVerifiedOwner(storage).protocol("head-agent-core-document-projection-conformance"), version: DOCUMENT_PROJECTION_ADAPTER_VERSION },
     graphSnapshotId: graph.graphSnapshotId,
     graphSnapshotHash: graph.graphSnapshotHash,
     documentProjectionId: referenceResult.projection.documentProjectionId,

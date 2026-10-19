@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { initializeProject, inspectProject } from "../scripts/lib/head-core.mjs";
+import { formatForVerifiedOwner } from "../scripts/lib/project-storage-format.mjs";
 import { ingestStructuredObservation } from "../scripts/lib/observation-adapter.mjs";
 import { recordDerivedObservation } from "../scripts/lib/observation-store.mjs";
 import * as api from "../scripts/lib/observation-projection.mjs";
@@ -24,7 +25,9 @@ function fixture(t) {
     fs.rmSync(root, { recursive: true, force: true });
   });
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
-  return root;
+  const storage = inspectProject(root).storage;
+  const layout = formatForVerifiedOwner(storage);
+  return { root, storage, layout };
 }
 function snapshot(root) {
   const files = {};
@@ -48,7 +51,7 @@ async function record(root, index, typeKey = "example.query.a") {
 }
 
 test("query replaces status with exact unfiltered summary and preserves filtered paging/coverage", async t => {
-  const root = fixture(t), first = await record(root, 0);
+  const { root, storage, layout } = fixture(t), first = await record(root, 0);
   await record(root, 1); await record(root, 2, "example.query.b");
   recordDerivedObservation({ root, descriptor: descriptor("example.query.comparison"), input: {
     subject: { type: "example.unit", key: "unit" },
@@ -56,7 +59,7 @@ test("query replaces status with exact unfiltered summary and preserves filtered
     inputObservationIds: [first.observation.observationId],
     algorithm: { key: "fixture-count", version: "1", digest: digest("count") }, coverage, payload: { count: 1 } } });
   const before = snapshot(root), project = inspectProject(root).project;
-  const projection = api.loadObservationProjection({ projectRoot: project.projectRoot, projectId: project.projectId });
+  const projection = api.loadObservationProjection({ projectRoot: project.projectRoot, projectId: project.projectId, storage });
   const page = api.queryObservations({ root, typeKey: "example.query.a", recordKind: "observed", limit: 1 });
   assert.equal(api.inspectObservations, undefined);
   assert.deepEqual(page.inventorySummary, { scope: "all-retained-observations", status: "active", counts: {
@@ -82,11 +85,11 @@ test("query replaces status with exact unfiltered summary and preserves filtered
     for (const field of ["instructionAuthority", "promotionAuthority", "recoveryAuthority"]) assert.equal(result[field], false);
   }
   assert.deepEqual(snapshot(root), before);
-  assert.equal(fs.existsSync(path.join(root, ".head/world-model/current.json")), false);
+  assert.equal(fs.existsSync(path.join(root, layout.directory, "world-model/current.json")), false);
 });
 
 test("empty inventory and cursor errors are explicit and do not block unrelated ordinary work", async t => {
-  const root = fixture(t);
+  const { root, layout } = fixture(t);
   const empty = api.queryObservations({ root });
   assert.equal(empty.inventorySummary.status, "not_started");
   assert.deepEqual(empty.inventorySummary.counts, { descriptors: 0, observations: 0, derivedObservations: 0, receipts: 0, nodes: 0, edges: 0 });
@@ -103,9 +106,9 @@ test("empty inventory and cursor errors are explicit and do not block unrelated 
 });
 
 test("missing exact receipt remains an observation-local error rather than an ordinary work gate", async t => {
-  const root = fixture(t);
+  const { root, layout } = fixture(t);
   await record(root, 0);
-  const receipts = path.join(root, ".head/observations/receipts");
+  const receipts = path.join(root, layout.directory, "observations/receipts");
   const receipt = path.join(receipts, fs.readdirSync(receipts)[0]);
   fs.unlinkSync(receipt); // Synthetic fixture only; not a user-data migration.
   const before = snapshot(root);

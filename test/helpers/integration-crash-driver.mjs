@@ -4,9 +4,16 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-const [installed, root, inputFile, boundary, readyFile] = process.argv.slice(2);
+const [installed, root, inputFile, boundary, readyFile, integrationDirectory] = process.argv.slice(2);
 if (!["started", "post-effect", "result-publication"].includes(boundary)) throw Error("Unknown test boundary");
-const prefix = path.join(fs.realpathSync(root), ".head/runtime/worker-integrations") + path.sep;
+// The parent captured this exact target from the verified fresh fixture before
+// installing the crash hook. Never rediscover storage after fault injection.
+if (!integrationDirectory || !path.isAbsolute(integrationDirectory)) throw Error("Missing exact integration fault directory");
+const relativeTarget = path.relative(fs.realpathSync(root), path.resolve(integrationDirectory)).split(path.sep);
+if (relativeTarget.length !== 3 || relativeTarget[0] === ".." || relativeTarget[1] !== "runtime" || relativeTarget[2] !== "worker-integrations") {
+  throw Error("Integration fault directory is outside the exact fixture layout");
+}
+const prefix = path.resolve(integrationDirectory) + path.sep;
 const original = fs.linkSync;
 let reached = false;
 function stopAtBoundary(target) {

@@ -1,3 +1,5 @@
+import { formatForVerifiedOwner, familyFormatForOriginal } from "./project-storage-format.mjs";
+const lineageFormat = record => familyFormatForOriginal({ sessionIdentity: true }, record);
 import fs from "node:fs";
 import path from "node:path";
 import { captureWorkerWriteBasis, verifyWorkerWriteBasis } from "./worker-patch-basis.mjs";
@@ -22,9 +24,9 @@ function finiteBound(value) {
   return value;
 }
 
-function observedIdentity(root, relative) {
+function observedIdentity(root, relative, storage) {
   const result = [];
-  const parts = workerSourcePathParts(relative);
+  const parts = workerSourcePathParts(relative, storage);
   let cursor = path.resolve(root);
   for (let index = -1; index < parts.length; index++) {
     if (index >= 0) cursor = path.join(cursor, parts[index]);
@@ -46,11 +48,11 @@ function observedIdentity(root, relative) {
   return result;
 }
 
-function observePath(root, selected, maxBytes) {
+function observePath(root, selected, maxBytes, storage) {
   try {
-    const identityBefore = observedIdentity(root, selected.path);
-    const [image] = captureWorkerWriteBasis({ root, paths: [selected.path], maxBytes });
-    const identityAfter = observedIdentity(root, selected.path);
+    const identityBefore = observedIdentity(root, selected.path, storage);
+    const [image] = captureWorkerWriteBasis({ root, paths: [selected.path], maxBytes, storage });
+    const identityAfter = observedIdentity(root, selected.path, storage);
     return { path: selected.path, image: compact(image), identities: identityAfter,
       changedDuringCapture: json(identityBefore) !== json(identityAfter) };
   } catch (error) {
@@ -60,7 +62,7 @@ function observePath(root, selected, maxBytes) {
   }
 }
 
-function prepareSelection(dependencies, patches) {
+function prepareSelection(dependencies, patches, storage) {
   if (!Array.isArray(dependencies) || !dependencies.length || !Array.isArray(patches)) fail("Integration basis needs bounded member dependencies and effects.");
   const selected = new Map();
   let maxBytes = 0;
@@ -71,7 +73,7 @@ function prepareSelection(dependencies, patches) {
       || !/^[a-f0-9]{64}$/.test(dependency.authorizationHash || "")) fail("Invalid dependency member provenance.");
     members.add(dependency.memberIndex);
     finiteBound(dependency.maxBytes);
-    verifyWorkerSourceBasis(dependency.sourceBasis, dependency.maxBytes);
+    verifyWorkerSourceBasis(dependency.sourceBasis, dependency.maxBytes, storage);
     maxBytes = finiteBound(maxBytes + dependency.maxBytes);
     for (const source of dependency.sourceBasis) {
       const identity = key(source.path);
@@ -90,8 +92,8 @@ function prepareSelection(dependencies, patches) {
       || !Array.isArray(patch.memberIndices) || !patch.memberIndices.length
       || new Set(patch.memberIndices).size !== patch.memberIndices.length || patch.memberIndices.some(index => !members.has(index))) fail("Invalid effect provenance.");
     const bound = finiteBound((patch.before.bytes || 0) + (patch.after.bytes || 0));
-    verifyWorkerWriteBasis([patch.before], bound);
-    verifyWorkerWriteBasis([patch.after], bound);
+    verifyWorkerWriteBasis([patch.before], bound, storage);
+    verifyWorkerWriteBasis([patch.after], bound, storage);
     effectBytes = finiteBound(effectBytes + bound);
     const identity = key(patch.before.path);
     const entry = selected.get(identity) || { path: patch.before.path, originals: [], effect: null, maxBytes: 0 };
@@ -110,12 +112,12 @@ function prepareSelection(dependencies, patches) {
 // Low-level read-only observation. Supplied labels are provenance *claims* until
 // the public reader below binds them to verified stored invocation records.
 // This helper does not reserve no-op ownership or decide semantic sufficiency.
-export function observeWorkerIntegrationReadBasis({ root, dependencies, patches }) {
-  const { selected, maxBytes } = prepareSelection(dependencies, patches);
+export function observeWorkerIntegrationReadBasis({ root, dependencies, patches, storage }) {
+  const { selected, maxBytes } = prepareSelection(dependencies, patches, storage);
   const pass = () => {
     let remaining = maxBytes;
     return selected.map(entry => {
-      const observed = observePath(root, entry, Math.min(entry.maxBytes, remaining));
+      const observed = observePath(root, entry, Math.min(entry.maxBytes, remaining), storage);
       remaining -= observed.image.bytes || 0;
       return observed;
     });
@@ -150,7 +152,7 @@ export function observeWorkerIntegrationReadBasis({ root, dependencies, patches 
 
 function memberDependencies(root, intent) {
   return intent.members.map((member, memberIndex) => {
-    const { authorization, receipt } = readRuntimeInvocationRecord({ root, authorizationId: member.authorizationId });
+    const { authorization, receipt } = readRuntimeInvocationRecord({ root, authorizationId: member.authorizationId, storage: lineageFormat(intent.lineage) });
     if (authorization.authorizationHash !== member.authorizationHash || receipt.receiptId !== member.lifecycleReceiptId
       || authorization.executionInput.digest !== member.inputDigest || !authorization.workerInput) fail("Dependency provenance differs from integration member.");
     return { memberIndex, authorizationId: member.authorizationId, authorizationHash: member.authorizationHash,
@@ -161,11 +163,11 @@ function memberDependencies(root, intent) {
 // Historical intent identity remains readable across current-source drift. This
 // projection reports that drift for HEAD/whole-result verification; it does not
 // require the source to remain forever equal to a worker's original selection.
-export function readWorkerIntegrationBasis({ root = ".", integrationId } = {}) {
-  const { intent } = readWorkerPatchIntegration({ root, integrationId });
+export function readWorkerIntegrationBasis({ root = ".", integrationId, storage } = {}) {
+  const { intent } = readWorkerPatchIntegration({ root, integrationId, storage });
   const dependencies = memberDependencies(root, intent);
-  const observed = observeWorkerIntegrationReadBasis({ root, dependencies, patches: intent.composition.patches });
-  const { intent: after } = readWorkerPatchIntegration({ root, integrationId });
+  const observed = observeWorkerIntegrationReadBasis({ root, dependencies, patches: intent.composition.patches, storage: lineageFormat(intent.lineage) });
+  const { intent: after } = readWorkerPatchIntegration({ root, integrationId, storage });
   if (json(intent) !== json(after) || json(dependencies) !== json(memberDependencies(root, after))) fail("Stored integration basis changed during observation.");
   const { basisDigest: ignored, ...view } = observed;
   const projection = { ...view, integrationId: intent.integrationId, integrationHash: intent.integrationHash,

@@ -1,22 +1,26 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { formatForVerifiedOwner, familyFormatForOriginal, relativeProjectArtifact } from "./project-storage-format.mjs";
 import { inspectRequiredIndex } from "./arcadedb-schema-contract.mjs";
 import {
   ARCADEDB_GRAPH_RESERVED_SCHEMA,
+  arcadeDbGraphReservedSchemaFor,
   ArcadeDbHttpTransport,
   inspectArcadeDbGraphProjectionActivation,
 } from "./graph-projection-adapter.mjs";
 
 export const ARCADEDB_DATABASE_LIFECYCLE_VERSION = "0.2.0";
-const RECEIPT_DIRECTORY = path.join(".head", "graph-projection", "arcadedb", "database-lifecycle", "receipts");
-const AUDIT_DIRECTORY = path.join(".head", "graph-projection", "arcadedb", "database-lifecycle", "audits");
-const CURRENT_RECEIPT = path.join(".head", "graph-projection", "arcadedb", "database-lifecycle", "current.json");
-const ACTIVATION_POINTERS = Object.freeze([
-  path.join(".head", "graph-projection", "arcadedb", "current.json"),
-  path.join(".head", "graph-projection", "arcadedb", "topology", "current.json"),
-  path.join(".head", "graph-projection", "arcadedb", "sync", "current.json"),
-]);
+function lifecycleArtifact(storage, ...segments) {
+  return relativeProjectArtifact(storage, "graph-projection", "arcadedb", "database-lifecycle", ...segments);
+}
+function activationPointers(storage) {
+  return [
+    relativeProjectArtifact(storage, "graph-projection", "arcadedb", "current.json"),
+    relativeProjectArtifact(storage, "graph-projection", "arcadedb", "topology", "current.json"),
+    relativeProjectArtifact(storage, "graph-projection", "arcadedb", "sync", "current.json"),
+  ];
+}
 
 const fail = (message, code = "ARCADEDB_DATABASE_LIFECYCLE_ERROR") => {
   const error = new Error(message);
@@ -45,8 +49,8 @@ function atomicWrite(file, content) {
   }
 }
 
-function configuredSelection(projectRoot) {
-  const configured = inspectArcadeDbGraphProjectionActivation({ projectRoot });
+function configuredSelection(projectRoot, storage) {
+  const configured = inspectArcadeDbGraphProjectionActivation({ projectRoot, storage });
   if (!configured.storageSelection || configured.storageSelection.mode !== "graphdb") {
     fail("Onboarding must select GraphDB before database lifecycle inspection.", "ARCADEDB_SELECTION_REQUIRED");
   }
@@ -71,7 +75,8 @@ function normalizedProperties(value) {
   return result;
 }
 
-function compatibilityFor(records) {
+function compatibilityFor(records, storage) {
+  const reservedSchema = arcadeDbGraphReservedSchemaFor(storage);
   if (!Array.isArray(records)) fail("ArcadeDB schema inspection returned an invalid result.", "ARCADEDB_INVALID_RESPONSE");
   const byName = new Map();
   for (const record of records) {
@@ -82,12 +87,21 @@ function compatibilityFor(records) {
     byName.set(record.name, record);
   }
   const conflicts = [];
+  // A new namespace must not adopt or migrate the existing HEAD DB schema.
+  if (formatForVerifiedOwner(storage).dialect === "lode") {
+    for (const legacy of ARCADEDB_GRAPH_RESERVED_SCHEMA) {
+      if (byName.has(legacy.name)) conflicts.push({
+        reservedType: formatForVerifiedOwner(storage).kind(legacy.name),
+        field: "namespace", expected: "lode-reserved-schema", observed: "legacy-reserved-schema",
+      });
+    }
+  }
   const unverifiable = [];
   const indexChecks = [];
   let missingIndexCount = 0;
   const reservedTypesPresent = [];
   let missingPropertyCount = 0;
-  for (const expected of ARCADEDB_GRAPH_RESERVED_SCHEMA) {
+  for (const expected of reservedSchema) {
     const observed = byName.get(expected.name);
     if (!observed) continue;
     reservedTypesPresent.push(expected.name);
@@ -136,9 +150,9 @@ function compatibilityFor(records) {
     indexChecks,
     missingIndexCount,
     reservedTypesPresent,
-    missingReservedTypeCount: ARCADEDB_GRAPH_RESERVED_SCHEMA.length - reservedTypesPresent.length,
+    missingReservedTypeCount: reservedSchema.length - reservedTypesPresent.length,
     missingPropertyCount,
-    unrelatedTypeCount: [...byName.keys()].filter((name) => !ARCADEDB_GRAPH_RESERVED_SCHEMA.some((item) => item.name === name)).length,
+    unrelatedTypeCount: [...byName.keys()].filter((name) => !reservedSchema.some((item) => item.name === name)).length,
   };
 }
 
@@ -148,8 +162,9 @@ function auditIdentity(payload) {
 }
 
 export function verifyArcadeDbDatabaseCompatibilityAudit(document) {
+  const format = familyFormatForOriginal("head-agent-core-arcadedb-database-lifecycle", document);
   if (!document || document.kind !== "ArcadeDbDatabaseCompatibilityAudit" || document.schemaVersion !== 1
-    || document.protocol?.name !== "head-agent-core-arcadedb-database-lifecycle"
+    || !format
     || document.protocol?.version !== ARCADEDB_DATABASE_LIFECYCLE_VERSION
     || typeof document.projectId !== "string" || !document.projectId
     || !/^onboarding-storage-[a-f0-9]{24}$/.test(document.storageSelectionId || "")
@@ -174,7 +189,7 @@ export function verifyArcadeDbDatabaseCompatibilityAudit(document) {
   const compatible = document.status.startsWith("compatible-");
   const expectedExists = document.status !== "database-missing";
   const expectedResetEligible = document.status === "incompatible-reserved-schema";
-  const reservedNames = new Set(ARCADEDB_GRAPH_RESERVED_SCHEMA.map((item) => item.name));
+  const reservedNames = new Set(arcadeDbGraphReservedSchemaFor(format).map((item) => item.name));
   if (document.databaseExists !== expectedExists || document.canActivateWithoutReset !== compatible
     || document.resetEligible !== expectedResetEligible
     || (document.status === "unverifiable-reserved-schema" && (document.unverifiable.length === 0 || document.conflicts.length !== 0))
@@ -198,18 +213,20 @@ export function verifyArcadeDbDatabaseCompatibilityAudit(document) {
   return document;
 }
 
-export function inspectArcadeDbDatabaseCompatibility({ root = ".", transport = null } = {}) {
+export function inspectArcadeDbDatabaseCompatibility({ root = ".", transport = null, storage = null } = {}) {
+  const format = formatForVerifiedOwner(storage);
+  const reservedSchema = arcadeDbGraphReservedSchemaFor(storage);
   const projectRoot = path.resolve(root);
-  const storageSelection = configuredSelection(projectRoot);
-  const selectedTransport = assertLifecycleTransport(transport || new ArcadeDbHttpTransport({ storageSelection }));
+  const storageSelection = configuredSelection(projectRoot, storage);
+  const selectedTransport = assertLifecycleTransport(transport || new ArcadeDbHttpTransport({ storageSelection, storage }));
   selectedTransport.ready();
   const exists = selectedTransport.databaseExists();
-  const compatibility = exists ? compatibilityFor(selectedTransport.readSchemaTypes()) : {
+  const compatibility = exists ? compatibilityFor(selectedTransport.readSchemaTypes(), storage) : {
     conflicts: [],
     unverifiable: [], indexChecks: [], missingIndexCount: 0,
     reservedTypesPresent: [],
-    missingReservedTypeCount: ARCADEDB_GRAPH_RESERVED_SCHEMA.length,
-    missingPropertyCount: Object.values(ARCADEDB_GRAPH_RESERVED_SCHEMA).reduce((sum, item) => sum + Object.keys(item.properties).length, 0),
+    missingReservedTypeCount: reservedSchema.length,
+    missingPropertyCount: Object.values(reservedSchema).reduce((sum, item) => sum + Object.keys(item.properties).length, 0),
     unrelatedTypeCount: 0,
   };
   const status = !exists
@@ -226,7 +243,7 @@ export function inspectArcadeDbDatabaseCompatibility({ root = ".", transport = n
   return auditIdentity({
     schemaVersion: 1,
     kind: "ArcadeDbDatabaseCompatibilityAudit",
-    protocol: { name: "head-agent-core-arcadedb-database-lifecycle", version: ARCADEDB_DATABASE_LIFECYCLE_VERSION },
+    protocol: { name: format.protocol("head-agent-core-arcadedb-database-lifecycle"), version: ARCADEDB_DATABASE_LIFECYCLE_VERSION },
     projectId: storageSelection.projectId,
     storageSelectionId: storageSelection.storageSelectionId,
     storageSelectionHash: storageSelection.storageSelectionHash,
@@ -245,9 +262,9 @@ export function inspectArcadeDbDatabaseCompatibility({ root = ".", transport = n
   });
 }
 
-function invalidateActivationPointers(projectRoot) {
+function invalidateActivationPointers(projectRoot, storage) {
   const invalidated = [];
-  for (const relative of ACTIVATION_POINTERS) {
+  for (const relative of activationPointers(storage)) {
     const file = path.join(projectRoot, relative);
     if (!fs.existsSync(file)) continue;
     fs.unlinkSync(file);
@@ -256,11 +273,12 @@ function invalidateActivationPointers(projectRoot) {
   return invalidated;
 }
 
-function receiptFor({ storageSelection, before, after, action, invalidatedPointers }) {
+function receiptFor({ storageSelection, before, after, action, invalidatedPointers, storage }) {
+  const format = formatForVerifiedOwner(storage);
   const payload = {
     schemaVersion: 1,
     kind: "ArcadeDbDatabaseLifecycleReceipt",
-    protocol: { name: "head-agent-core-arcadedb-database-lifecycle", version: ARCADEDB_DATABASE_LIFECYCLE_VERSION },
+    protocol: { name: format.protocol("head-agent-core-arcadedb-database-lifecycle"), version: ARCADEDB_DATABASE_LIFECYCLE_VERSION },
     projectId: storageSelection.projectId,
     storageSelectionId: storageSelection.storageSelectionId,
     storageSelectionHash: storageSelection.storageSelectionHash,
@@ -281,8 +299,9 @@ function receiptFor({ storageSelection, before, after, action, invalidatedPointe
 }
 
 export function verifyArcadeDbDatabaseLifecycleReceipt(document) {
+  const format = familyFormatForOriginal("head-agent-core-arcadedb-database-lifecycle", document);
   if (!document || document.kind !== "ArcadeDbDatabaseLifecycleReceipt" || document.schemaVersion !== 1
-    || document.protocol?.name !== "head-agent-core-arcadedb-database-lifecycle"
+    || !format
     || document.protocol?.version !== ARCADEDB_DATABASE_LIFECYCLE_VERSION
     || typeof document.projectId !== "string" || !document.projectId
     || !/^onboarding-storage-[a-f0-9]{24}$/.test(document.storageSelectionId || "")
@@ -309,17 +328,17 @@ export function verifyArcadeDbDatabaseLifecycleReceipt(document) {
   return document;
 }
 
-function persistReceipt(projectRoot, receipt, audits) {
+function persistReceipt(projectRoot, receipt, audits, storage) {
   verifyArcadeDbDatabaseLifecycleReceipt(receipt);
   for (const audit of audits) {
     verifyArcadeDbDatabaseCompatibilityAudit(audit);
-    const auditFile = path.join(projectRoot, AUDIT_DIRECTORY, `${audit.auditId}.json`);
+    const auditFile = path.join(projectRoot, lifecycleArtifact(storage, "audits"), `${audit.auditId}.json`);
     if (fs.existsSync(auditFile)) {
       const existing = verifyArcadeDbDatabaseCompatibilityAudit(JSON.parse(fs.readFileSync(auditFile, "utf8")));
       if (canonicalJson(existing) !== canonicalJson(audit)) fail("ArcadeDB database compatibility audit conflicts with existing content.", "ARCADEDB_DATABASE_AUDIT_CONFLICT");
     } else atomicWrite(auditFile, json(audit));
   }
-  const file = path.join(projectRoot, RECEIPT_DIRECTORY, `${receipt.receiptId}.json`);
+  const file = path.join(projectRoot, lifecycleArtifact(storage, "receipts"), `${receipt.receiptId}.json`);
   if (fs.existsSync(file)) {
     const existing = verifyArcadeDbDatabaseLifecycleReceipt(JSON.parse(fs.readFileSync(file, "utf8")));
     if (canonicalJson(existing) !== canonicalJson(receipt)) fail("ArcadeDB database lifecycle receipt conflicts with existing content.", "ARCADEDB_DATABASE_LIFECYCLE_RECEIPT_CONFLICT");
@@ -336,20 +355,20 @@ function persistReceipt(projectRoot, receipt, audits) {
     targetValuePersisted: false,
   };
   const pointerHash = digest(canonicalJson(pointerPayload));
-  atomicWrite(path.join(projectRoot, CURRENT_RECEIPT), json({ ...pointerPayload, pointerId: `arcadedb-database-lifecycle-pointer-${pointerHash.slice(0, 24)}`, pointerHash }));
+  atomicWrite(path.join(projectRoot, lifecycleArtifact(storage, "current.json")), json({ ...pointerPayload, pointerId: `arcadedb-database-lifecycle-pointer-${pointerHash.slice(0, 24)}`, pointerHash }));
   return { receipt };
 }
 
-export function initializeArcadeDbDatabase({ root = ".", resetIncompatible = false, confirmDatabase = "", transport = null } = {}) {
+export function initializeArcadeDbDatabase({ root = ".", resetIncompatible = false, confirmDatabase = "", transport = null, storage = null } = {}) {
   const projectRoot = path.resolve(root);
-  const storageSelection = configuredSelection(projectRoot);
-  const selectedTransport = assertLifecycleTransport(transport || new ArcadeDbHttpTransport({ storageSelection }));
-  const before = inspectArcadeDbDatabaseCompatibility({ root: projectRoot, transport: selectedTransport });
+  const storageSelection = configuredSelection(projectRoot, storage);
+  const selectedTransport = assertLifecycleTransport(transport || new ArcadeDbHttpTransport({ storageSelection, storage }));
+  const before = inspectArcadeDbDatabaseCompatibility({ root: projectRoot, transport: selectedTransport, storage });
   if (before.status === "unverifiable-reserved-schema") fail("Inspect the required HEAD schema metadata; uncertainty does not justify database reset.", "ARCADEDB_SCHEMA_UNVERIFIED");
   let action = "reused-compatible-database";
   let invalidatedPointers = [];
   if (before.status === "database-missing") {
-    invalidatedPointers = invalidateActivationPointers(projectRoot);
+    invalidatedPointers = invalidateActivationPointers(projectRoot, storage);
     selectedTransport.createDatabase();
     action = "created-missing-database";
   } else if (before.status === "incompatible-reserved-schema") {
@@ -359,22 +378,22 @@ export function initializeArcadeDbDatabase({ root = ".", resetIncompatible = fal
     if (typeof confirmDatabase !== "string" || confirmDatabase !== storageSelection.graphdb.database) {
       fail("ArcadeDB reset confirmation does not exactly match the selected database.", "ARCADEDB_DATABASE_RESET_TARGET_MISMATCH");
     }
-    invalidatedPointers = invalidateActivationPointers(projectRoot);
+    invalidatedPointers = invalidateActivationPointers(projectRoot, storage);
     selectedTransport.dropDatabase();
     selectedTransport.createDatabase();
     action = "reset-incompatible-database";
   }
-  const after = inspectArcadeDbDatabaseCompatibility({ root: projectRoot, transport: selectedTransport });
+  const after = inspectArcadeDbDatabaseCompatibility({ root: projectRoot, transport: selectedTransport, storage });
   if (!after.databaseExists || after.conflicts.length > 0) {
     fail("ArcadeDB database initialization did not produce a compatible target.", "ARCADEDB_DATABASE_INITIALIZATION_FAILED");
   }
-  const receipt = receiptFor({ storageSelection, before, after, action, invalidatedPointers });
+  const receipt = receiptFor({ storageSelection, before, after, action, invalidatedPointers, storage });
   return {
     status: "compatible-ready-for-activation",
     action,
     before,
     after,
-    ...persistReceipt(projectRoot, receipt, [before, after]),
+    ...persistReceipt(projectRoot, receipt, [before, after], storage),
     credentialsPersisted: false,
     targetValuePersisted: false,
   };

@@ -17,17 +17,17 @@ console.log(JSON.stringify({ event: "supervisor-manifest-test", pid: process.pid
   command: process.execPath, args: process.argv.slice(1), cwd: process.cwd(), ports: [], nativeExecutionPerformed: false }));
 
 const targets = [
-  ["win32", "x64", "windows-x64", "head-agent-supervisor.exe"],
-  ["linux", "x64", "linux-x64", "head-agent-supervisor"],
-  ["linux", "arm64", "linux-arm64", "head-agent-supervisor"],
-  ["darwin", "x64", "darwin-x64", "head-agent-supervisor"],
-  ["darwin", "arm64", "darwin-arm64", "head-agent-supervisor"],
+  ["win32", "x64", "windows-x64", "lode-agent-supervisor.exe"],
+  ["linux", "x64", "linux-x64", "lode-agent-supervisor"],
+  ["linux", "arm64", "linux-arm64", "lode-agent-supervisor"],
+  ["darwin", "x64", "darwin-x64", "lode-agent-supervisor"],
+  ["darwin", "arm64", "darwin-arm64", "lode-agent-supervisor"],
 ];
 
 function fixture(t, target = targets.find(([platform, arch]) => platform === process.platform && arch === process.arch)) {
   assert.ok(target, "Test requires a supported manifest target.");
   const [platform, arch, directory, filename] = target;
-  const root = fs.mkdtempSync(path.join(process.env.HEAD_AGENT_TEST_TMP || os.tmpdir(), "head-supervisor-manifest-"));
+  const root = fs.mkdtempSync(path.join(process.env.LODE_AGENT_TEST_TMP || process.env.HEAD_AGENT_TEST_TMP || os.tmpdir(), "head-supervisor-manifest-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const manifestDirectory = path.join(root, "dist", directory);
   fs.mkdirSync(manifestDirectory, { recursive: true });
@@ -83,7 +83,7 @@ test("manifest declares process and file-effect protocols without platform capab
       grantsExecutionAuthorization: false, grantsWriteAuthorization: false, mutatesCanon: false,
     });
   }
-  const nativeRoot = new URL("../native/head-agent-worker/internal/", import.meta.url);
+  const nativeRoot = new URL("../native/lode-agent-worker/internal/", import.meta.url);
   for (const [file, constant, version] of [
     ["fileeffect/transport.go", "TransportProtocolVersion", "0.1.0"],
     ["fileeffect/image.go", "ImageProtocolVersion", "0.1.0"],

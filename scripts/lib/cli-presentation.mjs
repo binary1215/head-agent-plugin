@@ -1,3 +1,4 @@
+import { resolveOperation } from "./lode-operation-contract.mjs";
 import { organizeSelectedWorkBodies, workBodyTuples } from "./session-work-body-organization.mjs";
 import { isDeepStrictEqual } from "node:util";
 
@@ -24,7 +25,7 @@ const RECOVERY_LABELS = {
   "unavailable-until-core-ready": "available after Core initialization",
   "blocked-by-core-drift": "attention required because Core projections drifted",
   "no-current-checkpoint": "no current checkpoint; ordinary Session work is available",
-  "verified-current-checkpoint": "checkpoint artifacts verified and restorable; semantic freshness remains a HEAD judgment",
+  "verified-current-checkpoint": "checkpoint artifacts verified and restorable; semantic freshness remains a Lode judgment",
   "attention-required": "current checkpoint needs attention before recovery",
 };
 
@@ -51,12 +52,12 @@ function commandGroups(commands) {
 export function formatHelp(value) {
   const groups = commandGroups(value.commands || []);
   const lines = [
-    "HEAD Agent Core",
-    "In a supported coding conversation, describe the task in ordinary language; HEAD handles the internal setup.",
+    "Lode Agent Core",
+    "In a supported coding conversation, describe the task in ordinary language; Lode handles the internal setup.",
     "Core-first by default. Find bounded graph evidence, use source fallback when needed, and activate Product governance or durable execution for their intended outcomes.",
   ];
-  if (value.executionMeans?.default === "head-direct") {
-    lines.push("Work directly by default; use available Host tools for useful delegation, then let HEAD integrate the results.",
+  if (["head-direct", "lode-direct"].includes(value.executionMeans?.default)) {
+    lines.push("Work directly by default; use available Host tools for useful delegation, then let Lode integrate the results.",
       "If delegation never started or has no remaining effects, continue directly or sequentially; inspect uncertain work before replacement.");
   }
   if (value.surface === "managed-maintenance") lines.push("Managed execution: use it when durable ownership, recovery or effect settlement is needed. Original authorization and effect checks apply.");
@@ -72,7 +73,7 @@ export function formatHelp(value) {
 }
 
 function formatUnavailableSession(value, { doctor = false } = {}) {
-  const lines = ["HEAD Session selection is unavailable; independent work can continue.",
+  const lines = ["Lode Session selection is unavailable; independent work can continue.",
     "Selected Session, Run and recovery: unavailable (not inspected)."];
   if (value.project) lines.push(`Project identity: ${compactText(value.project.projectId, 160)} (verified; readiness not assessed)`);
   const direction = value.currentProjectDirection;
@@ -82,10 +83,10 @@ function formatUnavailableSession(value, { doctor = false } = {}) {
       for (const item of direction.input[key]) lines.push(`${label}: ${compactText(item, 300)}`);
     }
   } else lines.push(value.currentProjectDirectionAvailability?.status === "unavailable"
-    ? "Current common direction: unavailable, not empty; only direction-dependent effects need HEAD follow-up."
+    ? "Current common direction: unavailable, not empty; only direction-dependent effects need Lode follow-up."
     : "Current common direction: not recorded (not an approved empty direction).");
   if (doctor) lines.push("Loaded/configured package: not assessed", "Host restart: not assessed", "Managed projection drift: not assessed");
-  lines.push("", value.nextHeadAction,
+  lines.push("", value.nextLodeAction ?? value.nextHeadAction,
     "User action: none for independent work. Session-dependent work alone may need selection clarification.",
     "This read restored no Session, granted no authorization and changed no project state. Technical details: --json");
   return `${lines.join("\n")}\n`;
@@ -100,21 +101,21 @@ export function formatProjectStatus(value, { doctor = false } = {}) {
   const productDecision = product?.state === "review_required"
     ? "Product candidates need review; ordinary work remains available"
     : "none for ordinary work";
-  const integrityAttention = core?.state === "drifted" || recovery?.headActionRequired;
+  const integrityAttention = core?.state === "drifted" || (recovery?.lodeActionRequired ?? recovery?.headActionRequired);
   if (!doctor && !integrityAttention && value.currentProjectDirectionAvailability?.status === "unavailable") {
-    return "HEAD Session context remains available; current common direction is unavailable. Continue independent work; only direction-dependent effects or publication need HEAD follow-up.\n";
+    return "Lode Session context remains available; current common direction is unavailable. Continue independent work; only direction-dependent effects or publication need Lode follow-up.\n";
   }
   const next = value.nextAction?.id === "work_directly"
     ? "Continue the user's original task."
     : compactText(value.nextAction?.summary || "Continue with the task.");
   if (!doctor && value.presentation?.mode === "quiet") {
-    return `${core?.state === "ready" ? "HEAD is ready — continue the task." : "HEAD is not initialized; ordinary work remains available."}\n`;
+    return `${core?.state === "ready" ? "Lode is ready — continue the task." : "Lode is not initialized; ordinary work remains available."}\n`;
   }
   if (!doctor && value.presentation?.mode === "notice") {
-    return `HEAD is ready — ordinary work continues; ${value.attention?.items?.length || 0} optional item(s) are available when relevant.\n`;
+    return `Lode is ready — ordinary work continues; ${value.attention?.items?.length || 0} optional item(s) are available when relevant.\n`;
   }
   const lines = [
-    core?.state === "ready" ? "HEAD is ready — continue the task." : "HEAD needs attention before a HEAD-managed mutation.",
+    core?.state === "ready" ? "Lode is ready — continue the task." : "Lode needs attention before a Lode-managed mutation.",
     "",
     `Project: ${core?.state || value.status}`,
     `Recovery: ${RECOVERY_LABELS[recovery?.state] || recovery?.state || "unknown"}`,
@@ -124,7 +125,7 @@ export function formatProjectStatus(value, { doctor = false } = {}) {
   ];
   if (integrityAttention) {
     lines.push(core?.state === "drifted"
-      ? "Integrity notice: inspect managed projection drift before a mutating HEAD operation."
+      ? "Integrity notice: inspect managed projection drift before a mutating Lode operation."
       : "Recovery notice: inspect the checkpoint before relying on recovery; ordinary work remains available when it does not depend on that checkpoint.");
   }
   if (doctor || (value.drift?.length || 0) > 0) {
@@ -138,7 +139,8 @@ export function formatProjectStatus(value, { doctor = false } = {}) {
     if (recovery?.checkpointUpdate?.status) lines.push(`Checkpoint update: ${recovery.checkpointUpdate.status}`);
     if (recovery?.semanticFreshness) lines.push("Semantic freshness: not mechanically determined");
     if (recovery?.observationConsistency?.state) lines.push(`Recovery observation: ${recovery.observationConsistency.state}`);
-    if (recovery?.recoveryNextHeadAction?.summary) lines.push(`Recovery next: ${compactText(recovery.recoveryNextHeadAction.summary, 240)}`);
+    const recoveryNext = recovery?.recoveryNextLodeAction ?? recovery?.recoveryNextHeadAction;
+    if (recoveryNext?.summary) lines.push(`Recovery next: ${compactText(recoveryNext.summary, 240)}`);
   }
   if (value.nextAction) {
     lines.push("", `Next: ${next}`);
@@ -160,12 +162,12 @@ export function formatProjectBootstrap(value) {
   const recovery = value.readiness?.recovery;
   const ready = core?.state === "ready";
   const needsProductReview = product?.state === "review_required";
-  const integrityAttention = !ready || recovery?.headActionRequired;
+  const integrityAttention = !ready || (recovery?.lodeActionRequired ?? recovery?.headActionRequired);
   const next = value.nextAction?.id === "work_directly"
     ? "Continue the user's original task in this conversation."
     : compactText(value.nextAction?.summary || "Continue with the task.");
   return `${[
-    ready ? "HEAD is ready." : "HEAD could not reach a ready Core state.",
+    ready ? "Lode is ready." : "Lode could not reach a ready Core state.",
     "",
     `Project: ${value.projectAction || "inspected"}`,
     `Recovery: ${RECOVERY_LABELS[recovery?.state] || recovery?.state || "unknown"}`,
@@ -173,7 +175,7 @@ export function formatProjectBootstrap(value) {
     `User decision: ${needsProductReview ? "required before Product candidates can be approved; ordinary work remains available" : "none"}`,
     ...(integrityAttention ? [ready
       ? "Recovery notice: inspect the checkpoint before relying on recovery; ordinary work remains available when independent of it."
-      : "Integrity notice: inspect the reported Core boundary before a mutating HEAD operation."] : []),
+      : "Integrity notice: inspect the reported Core boundary before a mutating Lode operation."] : []),
     "",
     `Next: ${next}`,
     "Technical details remain available in the structured result or with --json.",
@@ -191,7 +193,7 @@ function formatReturnedRecoveryContext(views, checkpoint, workContext) {
   const direction = directionView?.currentProjectDirection;
   const lines = [];
   if (commonUnavailable) {
-    lines.push("Current common direction is unavailable, not empty. Independent work continues; only direction-dependent effects or publication need HEAD follow-up.");
+    lines.push("Current common direction is unavailable, not empty. Independent work continues; only direction-dependent effects or publication need Lode follow-up.");
   } else if (direction?.input) {
     const input = direction.input;
     if (input.goal === "" && ["constraints", "decisions", "cancelledActions"].every((key) => Array.isArray(input[key]) && input[key].length === 0)) {
@@ -229,8 +231,8 @@ export function formatSessionRestore(value) {
   const context = formatReturnedRecoveryContext([value?.projection, value], checkpoint);
   return `${[
     !checkpoint ? "No verified Session checkpoint was supplied; ordinary independent work remains available." : context.commonUnavailable
-      ? "HEAD verified the retained Session checkpoint; current common direction remains unavailable, not empty."
-      : "HEAD recovered the current direction from verified project artifacts.",
+      ? "Lode verified the retained Session checkpoint; current common direction remains unavailable, not empty."
+      : "Lode recovered the current direction from verified project artifacts.",
     "",
     context.text,
     ...(checkpoint ? [`Open reviews: ${Array.isArray(checkpoint.openReviewIds) ? checkpoint.openReviewIds.length : 0}`] : []),
@@ -260,27 +262,27 @@ export function formatConversationRecovery(value) {
   const lines = [];
   if (value?.status === "compaction_lifecycle_prepared") {
     lines.push(
-      "HEAD and the Host prepared compaction recovery automatically.",
+      "Lode and the Host prepared compaction recovery automatically.",
       "The exact P2 direction is checkpointed and the one-time transport token stays Host-local.",
       "User action: none.",
     );
   } else if (entry?.status === "conversation_direction_restored") {
     lines.push(
-      "HEAD restored the verified Session checkpoint automatically.",
+      "Lode restored the verified Session checkpoint automatically.",
       "User action: none — continue the task from the original objective.",
     );
   } else if (entry?.status === "conversation_ready") {
     lines.push(
-      "HEAD conversation entry is ready.",
+      "Lode conversation entry is ready.",
       "No recovery checkpoint exists, so ordinary work continues without a recovery gate.",
       "User action: none.",
     );
   } else {
     lines.push(
-      "HEAD could not verify recovery-dependent direction automatically.",
+      "Lode could not verify recovery-dependent direction automatically.",
       `Reason: ${entry?.reasonCode || value?.reasonCode || "recovery evidence needs inspection"}`,
       "Ordinary independent work remains available; only work that depends on the unverified checkpoint is paused.",
-      "User action: none unless HEAD identifies a material decision after inspection.",
+      "User action: none unless Lode identifies a material decision after inspection.",
     );
   }
   if (["quiet", "notice"].includes(value?.presentation?.mode) && !value?.conversationEntry && ["conversation_ready", "conversation_direction_restored"].includes(value?.status)) {
@@ -288,7 +290,7 @@ export function formatConversationRecovery(value) {
     const work = entry.workContext;
     const emptyQuiet = value.presentation.mode === "quiet" && value.status === "conversation_ready" && context.onlyUnrecordedDirection
       && work?.status === "work_context_not_recorded" && work.coverage?.originals === 0 && work.records?.length === 0 && !executionText;
-    return `${value.status === "conversation_direction_restored" ? "HEAD restored the verified Session checkpoint — continue the task" : "HEAD is ready — continue the task"}${suffix}.\n${emptyQuiet ? "" : context.text}${executionText}${formatSessionWorkContext(entry.workContext)}${formatRelatedNativeWork(entry.relatedNativeWorkContext)}`;
+    return `${value.status === "conversation_direction_restored" ? "Lode restored the verified Session checkpoint — continue the task" : "Lode is ready — continue the task"}${suffix}.\n${emptyQuiet ? "" : context.text}${executionText}${formatSessionWorkContext(entry.workContext)}${formatRelatedNativeWork(entry.relatedNativeWorkContext)}`;
   }
   for (const attention of entry?.attention?.items || []) {
     if (attention.actionability === "immediate") lines.push(`${attention.owner} follow-up: ${compactText(attention.summary, 300)}`);
@@ -300,15 +302,15 @@ export function formatConversationRecovery(value) {
   } else if (value?.status === "provider_compaction_outcome_uncertain") {
     lines.push("The provider outcome is uncertain and will not be replayed automatically. Verified P2 direction remains available.");
   } else if (value?.status === "conversation_direction_restored_without_transport_continuation") {
-    lines.push("Transport continuation was unavailable, so HEAD will continue as a fresh logical HEAD from verified P2 artifacts.");
+    lines.push("Transport continuation was unavailable, so Lode will continue as a fresh logical Lode from verified P2 artifacts.");
   } else if (value?.status === "compaction_lifecycle_continued" || value?.status === "compaction_lifecycle_already_continued") {
     lines.push("Verified continuation converged; duplicate Host delivery cannot apply it twice.");
   } else if (value?.status === "provider_compaction_failed" || value?.status === "provider_compaction_failure_already_recorded") {
     lines.push("Provider compaction failed; only that epoch was closed and verified P2 direction remains available.");
   } else if (value?.status === "compaction_lifecycle_superseded") {
     lines.push("A newer real user turn superseded the older prepared continuation.");
-  } else if (value?.status === "head_direction_required") {
-    lines.push("Provider HEAD must author the current bounded recovery direction internally; the user is not asked to fill a schema.");
+  } else if (["head_direction_required", "lode_direction_required"].includes(value?.status)) {
+    lines.push("Provider Lode must author the current bounded recovery direction internally; the user is not asked to fill a schema.");
   }
   lines.push("", "No provider summary, provider session identity, review result, or Product Canon was promoted by this projection.", "Technical details: use the structured result or --json");
   return `${lines.join("\n")}\n${context.text}${executionText}${formatSessionWorkContext(entry.workContext)}${formatRelatedNativeWork(entry.relatedNativeWorkContext)}`;
@@ -501,7 +503,7 @@ export function formatSessionWorkContext(value) {
       + (value.ordinaryWorkBlocked === false ? " Ordinary work remains available.\n" : "\n");
     markKnownNeutralFields(value, handled, { persisted: false, recoveryAuthority: false, instructionAuthority: false,
       promotionAuthority: false, executionReplayAllowed: false, ordinaryWorkBlocked: false,
-      interpretation: "P3 HEAD-authored historical evidence, not current direction, approval, or proof of an external effect. Current Project constraints and selected Session P2 take precedence." });
+      interpretation: "P3 Lode-authored historical evidence, not current direction, approval, or proof of an external effect. Current Project constraints and selected Session P2 take precedence." });
     markRenderedBodyGroups(value, handled, value.records.map((record, index) => ({ index, value: record })), "content", value);
   }
   if (!value.records.length) text += originalField("workContext.records", value.records);
@@ -574,9 +576,9 @@ export function formatOnboardingGuide(value) {
     lines.push(
       `Unknowns: ${review.unknownCount || 0}`,
       "Options: accept all, accept a selection, revise, or reject.",
-      "Recommendation: HEAD should assess the evidence in this conversation; Core supplies no automatic disposition.",
+      "Recommendation: Lode should assess the evidence in this conversation; Core supplies no automatic disposition.",
       "",
-      "Reply in natural language. HEAD will re-read the exact current candidate set before applying an unambiguous decision.",
+      "Reply in natural language. Lode will re-read the exact current candidate set before applying an unambiguous decision.",
     );
   } else if (value?.status === "ready") {
     lines.push("Product knowledge is reviewed and ready for task-scoped use.", "User decision: none.", "Next: continue the original task.");
@@ -601,7 +603,7 @@ export function formatFeatureMappingStatus(value) {
       lines.push(
         "The Feature mapping decision is already saved.",
         "User decision: none — do not ask the user to approve or reject it again.",
-        `HEAD action: ${compactText(readiness?.nextAction || "retry the unchanged saved decision to finish its pending derived state update.", 240)}`,
+        `Lode action: ${compactText(readiness?.nextAction || "retry the unchanged saved decision to finish its pending derived state update.", 240)}`,
       );
     } else if (readiness?.runConflict) {
       lines.push(
@@ -616,7 +618,7 @@ export function formatFeatureMappingStatus(value) {
       );
       if (readiness.explicitRejectionAvailable) {
         lines.push(
-          "Available action: explicitly reject this exact outdated set, then have HEAD propose fresh evidence.",
+          "Available action: explicitly reject this exact outdated set, then have Lode propose fresh evidence.",
           "Earlier approved mappings remain unchanged.",
         );
       } else {
@@ -635,9 +637,9 @@ export function formatFeatureMappingStatus(value) {
       if (candidates.length > 5) lines.push(`  - ${candidates.length - 5} more candidates`);
       lines.push(
         "Options: accept all, accept a selection, or reject.",
-        "Recommendation: none is generated mechanically; HEAD assesses the exact evidence.",
+        "Recommendation: none is generated mechanically; Lode assesses the exact evidence.",
         "",
-        "Reply in natural language. HEAD will verify the unchanged candidate set before applying the decision.",
+        "Reply in natural language. Lode will verify the unchanged candidate set before applying the decision.",
       );
     }
   } else if (value?.status === "reviewed") {
@@ -658,7 +660,7 @@ export function formatChangeSetStatus(value) {
     lines.push(
       "The Change impact decision is already saved.",
       "User decision: none — do not ask the user to approve or reject it again.",
-      `HEAD action: ${compactText(readiness?.nextAction || "retry the unchanged saved decision to finish its pending derived state update.", 240)}`,
+      `Lode action: ${compactText(readiness?.nextAction || "retry the unchanged saved decision to finish its pending derived state update.", 240)}`,
     );
   } else if (value?.status === "awaiting_review" && readiness?.runConflict) {
     lines.push(
@@ -678,11 +680,11 @@ export function formatChangeSetStatus(value) {
       "Change impacts need your review.",
       `Subject: ${candidates.length} evidence-linked impact candidates`,
       "Options: accept all, accept a selection, or reject.",
-      "Recommendation: none is generated mechanically; HEAD assesses the exact evidence.",
-      "Reply in natural language. HEAD will verify the unchanged candidate set before applying the decision.",
+      "Recommendation: none is generated mechanically; Lode assesses the exact evidence.",
+      "Reply in natural language. Lode will verify the unchanged candidate set before applying the decision.",
     );
   } else if (value?.status === "awaiting_evidence") {
-    lines.push("No reviewed Product mapping supports an impact candidate yet.", "User decision: none now. HEAD may gather exact evidence when the task needs it.");
+    lines.push("No reviewed Product mapping supports an impact candidate yet.", "User decision: none now. Lode may gather exact evidence when the task needs it.");
   } else if (value?.status === "reviewed") {
     lines.push("Change impacts have an explicit review.", "Next: use the reviewed impact facts when relevant.");
   } else if (value?.status === "rejected") {
@@ -700,7 +702,7 @@ export function formatPendingReview(value) {
   const result = review.resultPacket || {};
   const options = review.reviewProtocol?.allowedDispositions || [];
   return `${[
-    "A durable Run result needs Fresh HEAD review.",
+    "A durable Run result needs Fresh Lode review.",
     "",
     `Objective: ${compactText(plan.objective || "not recorded", 240)}`,
     `Result: ${compactText(result.summary || result.status || "evidence packet ready", 240)}`,
@@ -737,7 +739,7 @@ export function formatConformanceFinding(value) {
     `Resolution candidates: ${Array.isArray(value?.resolutions) ? value.resolutions.length : 0}`,
     "Options: acknowledge, defer, dismiss, request a code fix, request Canon revision, or accept an exact resolution.",
     "",
-    "HEAD may acknowledge or defer this evidence without a user response. Ask the user only for dismissal, resolution acceptance, or new direction; re-read the exact finding first.",
+    "Lode may acknowledge or defer this evidence without a user response. Ask the user only for dismissal, resolution acceptance, or new direction; re-read the exact finding first.",
     `Latest disposition author: ${value?.latestDisposition?.actor || "none"}.`,
     "This finding neither blocks ordinary work nor authorizes a fix by itself.",
   ].join("\n")}\n`;
@@ -745,7 +747,7 @@ export function formatConformanceFinding(value) {
 
 export function formatReviewOutcome(value) {
   const disposition = value?.reviewDecision?.disposition || value?.disposition?.disposition || "recorded";
-  const headMaintenance = value?.disposition?.authority === "head-maintenance-evidence-not-user-decision-or-execution-authority";
+  const headMaintenance = ["head-maintenance-evidence-not-user-decision-or-execution-authority", "lode-maintenance-evidence-not-user-decision-or-execution-authority"].includes(value?.disposition?.authority);
   const authorityChanged = value?.authorityEffect === "explicit-product-canon-transition";
   const graphDeferred = value?.productGraph?.status === "deferred";
   const graphReason = /^[A-Z][A-Z0-9_:-]{0,127}$/.test(value?.productGraph?.reasonCode || "")
@@ -753,7 +755,7 @@ export function formatReviewOutcome(value) {
   const savedDecisionId = /^[a-z-]+-[a-f0-9]{24}$/.test(value?.reviewDecision?.reviewDecisionId || "")
     ? value.reviewDecision.reviewDecisionId : "decision";
   return `${[
-    headMaintenance ? "HEAD evidence maintenance was recorded; no user decision was claimed or requested." : "The explicit user decision was recorded.",
+    headMaintenance ? "Lode evidence maintenance was recorded; no user decision was claimed or requested." : "The explicit user decision was recorded.",
     "",
     `Disposition: ${disposition}`,
     `Product Canon changed: ${authorityChanged ? "yes, through the scoped ReviewDecision" : "no"}`,
@@ -768,8 +770,8 @@ export function formatReviewOutcome(value) {
 export function formatContextPreparation(value) {
   const preparation = value?.preparation || {};
   const lines = [
-    "HEAD Context: selected evidence is ready for HEAD assessment.",
-    "User action: none. HEAD inspects original sources and expands useful evidence as needed.",
+    "Lode Context: selected evidence is ready for Lode assessment.",
+    "User action: none. Lode inspects original sources and expands useful evidence as needed.",
   ];
   if (preparation.remainingUncertainty?.length) lines.push(`Remaining uncertainty: ${preparation.remainingUncertainty.join(" ")}`);
   lines.push("No authority or recovery state changed.", "", "Technical details: rerun with --json");
@@ -780,7 +782,7 @@ export function formatContextPreview(value) {
   const workflow = value?.workflow || {};
   const budget = workflow.budget || capsule.budget || {};
   const lines = [
-    "HEAD Context preview: selected evidence is ready for HEAD assessment.",
+    "Lode Context preview: selected evidence is ready for Lode assessment.",
     `Budget: ${formatBudget(budget.usedApproxTokens)} used of ${formatBudget(budget.requestedApproxTokens || budget.maxApproxTokens)} approximate tokens`,
   ];
   const explanation = workflow.explanation;
@@ -792,8 +794,8 @@ export function formatContextPreview(value) {
     }
     if (explanation.remainingUncertainty.length) lines.push(`Remaining uncertainty: ${explanation.remainingUncertainty.join(" ")}`);
   }
-  if (capsule.evidenceGaps?.length) lines.push(`Evidence gaps: ${capsule.evidenceGaps.length}; HEAD inspects or expands relevant sources.`);
-  lines.push("User action: none. HEAD judges relevance and sufficiency; no inclusion-proof gate.",
+  if (capsule.evidenceGaps?.length) lines.push(`Evidence gaps: ${capsule.evidenceGaps.length}; Lode inspects or expands relevant sources.`);
+  lines.push("User action: none. Lode judges relevance and sufficiency; no inclusion-proof gate.",
     "This preview changed no project state and granted no authority.", "", "Technical details: rerun with --json");
   return `${lines.join("\n")}\n`;
 }
@@ -802,12 +804,12 @@ export function formatCheckpointBasis(value) {
   const availability = value?.syncAvailability || "unknown";
   const lines = [
     availability === "ready"
-      ? "HEAD recovery basis: current and ready for a fresh HEAD direction."
-      : `HEAD recovery basis: ${availability}.`,
+      ? "Lode recovery basis: current and ready for a fresh Lode direction."
+      : `Lode recovery basis: ${availability}.`,
     `Basis: ${basis.basisId || "unavailable"}`,
     "User action: none. This read changed no checkpoint or authority.",
   ];
-  if (availability !== "ready") lines.push("Next: HEAD handles the exact transition before retrying checkpoint sync; ordinary independent work remains available.");
+  if (availability !== "ready") lines.push("Next: Lode handles the exact transition before retrying checkpoint sync; ordinary independent work remains available.");
   lines.push("", "Technical details: rerun with --json");
   return `${lines.join("\n")}\n`;
 }
@@ -819,27 +821,28 @@ export function formatCheckpointDiagnosis(value) {
   const update = value?.checkpointUpdate || {};
   const consistency = value?.observationConsistency || {};
   const titles = {
-    "no-current-checkpoint": "HEAD checkpoint diagnosis: no current checkpoint.",
-    "verified-checkpoint": "HEAD checkpoint diagnosis: artifact recovery verified.",
-    "verified-checkpoint-with-missing-result-evidence": "HEAD checkpoint diagnosis: recovery verified; optional result evidence is missing.",
-    "current-checkpoint-artifact-missing": "HEAD checkpoint diagnosis: the pointed checkpoint artifact is missing.",
-    "required-recovery-artifact-missing": "HEAD checkpoint diagnosis: a required recovery artifact is missing.",
-    "checkpoint-integrity-failure": "HEAD checkpoint diagnosis: recovery artifact integrity failed.",
-    "checkpoint-reference-drift": "HEAD checkpoint diagnosis: checkpoint references do not match current lineage.",
-    "observation-changed-retry": "HEAD checkpoint diagnosis: state changed during this read.",
-    "core-drift": "HEAD checkpoint diagnosis: Core readiness needs attention.",
-    "verification-failed": "HEAD checkpoint diagnosis: verification did not complete.",
+    "no-current-checkpoint": "Lode checkpoint diagnosis: no current checkpoint.",
+    "verified-checkpoint": "Lode checkpoint diagnosis: artifact recovery verified.",
+    "verified-checkpoint-with-missing-result-evidence": "Lode checkpoint diagnosis: recovery verified; optional result evidence is missing.",
+    "current-checkpoint-artifact-missing": "Lode checkpoint diagnosis: the pointed checkpoint artifact is missing.",
+    "required-recovery-artifact-missing": "Lode checkpoint diagnosis: a required recovery artifact is missing.",
+    "checkpoint-integrity-failure": "Lode checkpoint diagnosis: recovery artifact integrity failed.",
+    "checkpoint-reference-drift": "Lode checkpoint diagnosis: checkpoint references do not match current lineage.",
+    "observation-changed-retry": "Lode checkpoint diagnosis: state changed during this read.",
+    "core-drift": "Lode checkpoint diagnosis: Core readiness needs attention.",
+    "verification-failed": "Lode checkpoint diagnosis: verification did not complete.",
   };
-  const lines = [titles[diagnosis.state] || `HEAD checkpoint diagnosis: ${diagnosis.state || "unknown"}.`];
+  const lines = [titles[diagnosis.state] || `Lode checkpoint diagnosis: ${diagnosis.state || "unknown"}.`];
   lines.push(`Checkpoint pointer: ${checkpoint.checkpointId || "none"}`);
   lines.push(`Artifact recovery: ${recovery.status || "unknown"}`);
   lines.push(`Checkpoint update: ${update.status || "unknown"}`);
   if (diagnosis.reasonCode && !new Set(["NO_CURRENT_CHECKPOINT", "CHECKPOINT_ARTIFACT_RECOVERY_VERIFIED"]).has(diagnosis.reasonCode)) {
     lines.push(`Reason: ${diagnosis.reasonCode}`);
   }
-  if (consistency.retryRequired) lines.push("Observed state was not a stable atomic snapshot; HEAD must retry this read before checkpoint-dependent action.");
-  lines.push("Semantic freshness: not mechanically determined. This read did not invoke another HEAD assessment.");
-  if (value?.nextHeadAction?.summary) lines.push(`Next: ${value.nextHeadAction.summary}`);
+  if (consistency.retryRequired) lines.push("Observed state was not a stable atomic snapshot; Lode must retry this read before checkpoint-dependent action.");
+  lines.push("Semantic freshness: not mechanically determined. This read did not invoke another Lode assessment.");
+  const nextAction = value?.nextLodeAction ?? value?.nextHeadAction;
+  if (nextAction?.summary) lines.push(`Next: ${nextAction.summary}`);
   lines.push("User action: none. Ordinary independent work remains available.");
   lines.push("This diagnosis wrote no checkpoint, lock, cache, approval, or authority.", "", "Technical details: rerun with --json");
   return `${lines.join("\n")}\n`;
@@ -849,11 +852,11 @@ export function formatCheckpointSync(value) {
   const outcome = value?.outcome || "unknown";
   const checkpointId = value?.checkpoint?.checkpointId || null;
   const title = {
-    created: "HEAD recovery checkpoint: synchronized.",
-    reused: "HEAD recovery checkpoint: already current; no write was needed.",
-    deferred: "HEAD recovery checkpoint: deferred while an exact transition is recovered.",
-    conflict: "HEAD recovery checkpoint: stale or conflicting direction was not written.",
-  }[outcome] || `HEAD recovery checkpoint: ${outcome}.`;
+    created: "Lode recovery checkpoint: synchronized.",
+    reused: "Lode recovery checkpoint: already current; no write was needed.",
+    deferred: "Lode recovery checkpoint: deferred while an exact transition is recovered.",
+    conflict: "Lode recovery checkpoint: stale or conflicting direction was not written.",
+  }[outcome] || `Lode recovery checkpoint: ${outcome}.`;
   const lines = [title];
   if (checkpointId) lines.push(`Checkpoint: ${checkpointId}`);
   if (value?.reasonCode) lines.push(`Reason: ${value.reasonCode}`);
@@ -867,9 +870,9 @@ export function formatCheckpointSync(value) {
 
 export function formatDeliveryStatus(value) {
   if (value?.status === "not_started") {
-    return "HEAD delivery evidence: none recorded for this selection. Ordinary work remains available.\n";
+    return "Lode delivery evidence: none recorded for this selection. Ordinary work remains available.\n";
   }
-  const lines = [`HEAD delivery evidence: ${value?.environments?.length || 0} environment(s), ${value?.targets?.length || 0} artifact-target history set(s).`];
+  const lines = [`Lode delivery evidence: ${value?.environments?.length || 0} environment(s), ${value?.targets?.length || 0} artifact-target history set(s).`];
   for (const environment of (value?.environments || []).slice(0, 10)) {
     const targetDetails = (value.targets || []).filter((target) => target.environmentKey === environment.environmentKey);
     const revisions = [...new Set(targetDetails.filter((target) => target.current).map((target) => `${target.artifactKey}@${target.current.revisionKey}`))].sort();
@@ -905,6 +908,7 @@ function formatSessionList(value) {
 }
 
 export function formatMcpToolContent(name, value) {
+  name = resolveOperation(name)?.semanticName ?? name;
   if (name === "head_session_list") return formatSessionList(value);
   if (name === "head_project_graph") return formatProjectGraph(value) ?? JSON.stringify(value);
   if (name === "head_bounded_worker_prepare") return formatWorkerPreparation(value);
@@ -935,7 +939,7 @@ export function formatMcpToolContent(name, value) {
 
 export function formatCliError(error) {
   return [
-    "HEAD could not complete that step.",
+    "Lode could not complete that step.",
     `Reason: ${compactText(error?.message || "Unknown error", 500)}`,
     `Code: ${error?.code || "HEAD_CLI_ERROR"}`,
     "No failed operation should be interpreted as a state change or approval.",
@@ -977,7 +981,7 @@ function formatWorkerPreparation(value) {
   if (value?.status !== "unavailable_for_selected_scope") return `${JSON.stringify(value, null, 2)}\n`;
   return [
     "Managed worker not prepared: selected-only input conflicts with existing CLI global instructions.",
-    "This limits this optional preparation, not HEAD or the entire provider backend. No model or account call was made by this preparation.",
+    "This limits this optional preparation, not Lode or the entire provider backend. No model or account call was made by this preparation.",
     value.guidance.nextStep,
     value.guidance.scopeChange,
     "No authorization or automatic fallback is supplied by this guidance. Technical details: --json", "",
@@ -990,7 +994,7 @@ function formatWorkerGuidance(value) {
   if (!guidance) return `${JSON.stringify(value, null, 2)}\n`;
   const counts = view.counts;
   const lines = [counts ? `Worker group: ${view.state}; ${counts.started}/${counts.requested} started, ${counts.succeeded} succeeded, ${counts.failed} failed, ${counts.waiting} waiting.`
-    : `Worker integration: ${view.status}; HEAD action: ${guidance.action}.`];
+    : `Worker integration: ${view.status}; Lode action: ${guidance.action}.`];
   for (const entry of (guidance.unavailable || []).slice(0, 8)) lines.push(`${compactText(entry.path, 160)} (${entry.role}): ${compactText(entry.reason, 120)}`);
   if (guidance.unavailable?.length > 8) lines.push(`${guidance.unavailable.length - 8} additional dependency issues in structured details.`);
   lines.push(guidance.nextStep);
@@ -1000,13 +1004,13 @@ function formatWorkerGuidance(value) {
 }
 
 function formatSourceContext(value) {
-  if (value.status === "head-selection-needed") return `${value.nextAction}\n`;
+  if (["head-selection-needed", "lode-selection-needed"].includes(value.status)) return `${value.nextAction}\n`;
   const ready = value.results.filter((item) => item.status === "ready" && item.includedInContext);
   const lines = [`Source context: ${ready.length}/${value.results.length} selected needs included.`];
   for (const item of value.results) lines.push(`${item.need.path}${item.need.symbol ? ` :: ${item.need.symbol}` : ""}: ${item.status}${item.reused ? " (reused; current bytes verified)" : ""}${item.code ? ` — ${item.code}` : ""}${item.unresolvedCount ? `; ${item.unresolvedCount} unresolved calls` : ""}`);
   if (value.pendingNeeds.length) lines.push("Only judgments depending on missing required evidence need attention; independent work can continue.");
   if (value.retentionPending?.length) lines.push("Some requested retention is unavailable: verified evidence remains usable, but durable handoff is not confirmed.");
   if (value.results.some((item) => item.storageIssues?.length)) lines.push("Stored-evidence issues are listed in the result; damaged originals were not overwritten or deleted.");
-  lines.push("Partial source observations, not runtime truth or semantic sufficiency. HEAD assesses what the task still needs.");
+  lines.push("Partial source observations, not runtime truth or semantic sufficiency. Lode assesses what the task still needs.");
   return `${lines.join("\n")}\n`;
 }

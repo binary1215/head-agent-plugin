@@ -20,6 +20,8 @@ function fixture(t) {
   fs.writeFileSync(path.join(root, "untracked.txt"), "untracked bytes");
   fs.mkdirSync(path.join(root, ".head"));
   fs.writeFileSync(path.join(root, ".head", "private.json"), "not child input");
+  fs.mkdirSync(path.join(root, ".lode"));
+  fs.writeFileSync(path.join(root, ".lode", "private.json"), "not child input");
   t.after(() => {
     assert.equal(path.dirname(container), parent);
     assert.match(path.basename(container), /^head-selected-workspace-/);
@@ -35,6 +37,7 @@ test("selected workspace retains dirty/untracked bytes without copying Canon or 
   assert.equal(binding.sandboxEnforced, false);
   assert.equal(binding.recoveryAuthority, false);
   assert.equal(fs.existsSync(path.join(f.workspaceRoot, ".head")), false);
+  assert.equal(fs.existsSync(path.join(f.workspaceRoot, ".lode")), false);
   assert.equal(fs.existsSync(path.join(f.workspaceRoot, ".git")), false);
   assert.equal(fs.readFileSync(path.join(f.workspaceRoot, "src/dirty.txt"), "utf8"), "selected dirty bytes Ω\r\n");
   assert.equal(verifyWorkerWorkspace({ binding, sourceBasis: f.sourceBasis }).executionRoot, f.workspaceRoot);

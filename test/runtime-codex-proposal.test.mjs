@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { EventEmitter } from "node:events";
 import test from "node:test";
-import { initializeProject, inspectProject } from "../scripts/lib/head-core.mjs";
+import { initializeProject, inspectProject } from "../scripts/lib/lode-core.mjs";
 import { buildRuntimeVersionEvidence } from "../scripts/lib/runtime-machine-execution.mjs";
 import { buildRuntimeProjectBinding, buildRuntimeProtocolEvidence } from "../scripts/lib/runtime-protocol-evidence.mjs";
 import { buildRuntimeInvocationAuthorization } from "../scripts/lib/runtime-invocation-lifecycle.mjs";
@@ -42,7 +42,7 @@ function schemaSpawn(_command, args) {
 }
 
 async function fixture(t, { timeoutMs = 6000, taskKey = "fresh-proposal", nativePrefix = false } = {}) {
-  const parent = fs.realpathSync(process.env.HEAD_AGENT_TEST_TMP || os.tmpdir());
+  const parent = fs.realpathSync(process.env.LODE_AGENT_TEST_TMP || process.env.HEAD_AGENT_TEST_TMP || os.tmpdir());
   const directory = fs.mkdtempSync(path.join(parent, "head-fresh-proposal-"));
   const root = path.join(directory, "project"), bin = path.join(directory, "bin"), codexHome = path.join(directory, "codex-home"), operational = path.join(directory, "operational");
   for (const item of [root, bin, codexHome, operational]) fs.mkdirSync(item);
@@ -54,6 +54,10 @@ async function fixture(t, { timeoutMs = 6000, taskKey = "fresh-proposal", native
     fs.rmSync(directory, { recursive: true, force: true });
   });
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const storage = inspectProject(root).storage;
+  assert.equal(storage.directory, ".lode");
+  assert.equal(fs.existsSync(path.resolve(root, ".lode/project.json")), true);
+  assert.equal(fs.existsSync(path.resolve(root, ".head/project.json")), false);
   fs.writeFileSync(path.join(root, "selected.txt"), "selected dirty bytes Ω\r\n");
   fs.writeFileSync(path.join(root, "unselected.txt"), "Never supplied to the proposal worker\n");
   const fakeExecutable = path.join(bin, process.platform === "win32" ? "codex.exe" : "codex");
@@ -63,7 +67,7 @@ async function fixture(t, { timeoutMs = 6000, taskKey = "fresh-proposal", native
   const versionEvidence = await buildRuntimeVersionEvidence({ runtimes: ["codex"], environment: discoveryEnvironment, spawnImplementation: schemaSpawn });
   const protocolEvidence = await buildRuntimeProtocolEvidence({ runtimes: ["codex"], environment: discoveryEnvironment, versionEvidence, spawnImplementation: schemaSpawn });
   const inspected = inspectProject(root);
-  const projectBinding = buildRuntimeProjectBinding({ projectId: inspected.project.projectId, headSessionId: inspected.state.sessionId,
+  const projectBinding = buildRuntimeProjectBinding({ storage, projectId: inspected.project.projectId, headSessionId: inspected.state.sessionId,
     projectRoot: root, projectStatus: "ready", versionEvidence, protocolEvidence });
   const sourceBasis = captureWorkerSourceBasis({ root, paths: ["selected.txt"], maxBytes: 1024 * 1024 });
   const proposalBasis = captureWorkerWriteBasis({ root, paths: ["selected.txt"], maxBytes: 1024 * 1024 });
@@ -77,16 +81,16 @@ async function fixture(t, { timeoutMs = 6000, taskKey = "fresh-proposal", native
       proposalPaths: ["selected.txt"], executionBoundary }, limits: { timeoutMs }, persist: true }).authorization;
   const processEvents = [];
   const onProcessEvent = event => { processEvents.push(event); console.log(JSON.stringify(event)); };
-  const selection = () => resolveVerifiedProcessSupervisor({ pluginRoot: process.env.HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT || pluginRoot });
+  const selection = () => resolveVerifiedProcessSupervisor({ pluginRoot: (process.env.LODE_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT || process.env.HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT) || pluginRoot });
   const options = () => ({ root, authorization, policy, workspaceBinding, executablePath: policy.executablePath,
     supervisorSelection: selection(), onProcessEvent, persist: true });
   const execute = (scenario = nativePrefix ? "prefix-normal" : "normal", overrides = {}) => (nativePrefix ? executeCodexNativePrefixProposalInvocation : executeCodexFreshProposalInvocation)({ ...options(), ...overrides },
     { protocolFixtureCapability: createCodexFreshProposalFixtureCapability({ scenario }) });
   const lease = () => inspectRuntimeExecutionLease({ projectRoot: root, projectId: authorization.projectId, authorizationId: authorization.authorizationId });
-  const p2 = [path.join(root, ".head", "project.json"), path.join(root, ".head", "sessions", "current.json")];
+  const p2 = [path.join(root, storage.directory, "project.json"), path.join(root, storage.directory, "sessions", "current.json")];
   const p2Bytes = p2.map(file => fs.readFileSync(file));
   const assertP2 = () => p2.forEach((file, i) => assert.deepEqual(fs.readFileSync(file), p2Bytes[i]));
-  return { root, directory, codexHome, operational, policy, authorization, workspaceBinding, proposalBasis, execute, options,
+  return { storage, root, directory, codexHome, operational, policy, authorization, workspaceBinding, proposalBasis, execute, options,
     processEvents, lease, assertP2 };
 }
 
@@ -207,7 +211,7 @@ test("normal fresh fixture consumes/releases once and persists exact proposal wi
   assert.equal(candidate.patches[0].after.path, "selected.txt");
   assert.deepEqual(fs.readFileSync(path.join(f.root, "selected.txt")), before);
   assert.deepEqual(fs.readFileSync(path.join(f.workspaceBinding.executionRoot, "selected.txt")), snapshotBefore);
-  assert.equal(readRuntimeInvocationRecord({ root: f.root, authorizationId: f.authorization.authorizationId }).status, "verified");
+  assert.equal(readRuntimeInvocationRecord({ root: f.root, storage: f.storage, authorizationId: f.authorization.authorizationId }).status, "verified");
   const spool = readRuntimeOutputSpool({ operationalRoot: f.operational, authorization: f.authorization });
   assert.equal(spool.terminal.result.receipt.receiptId, result.receipt.receiptId);
   const durable = JSON.stringify(result);

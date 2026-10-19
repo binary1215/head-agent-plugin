@@ -2,8 +2,8 @@
 
 ## Ordinary Host delegation versus managed runtime
 
-Direct HEAD work is the overall default. Ordinary delegation uses tools already
-offered by the current Host, a short brief, owned scope and HEAD integration;
+Direct Lode work is the overall default. Ordinary delegation uses tools already
+offered by the current Host, a short brief, owned scope and Lode integration;
 it does not call managed prepare/execute APIs merely because a worker is useful.
 Use supported fresh/direct/sequential work when the Host lacks a capability.
 Forked input stays within user scope. Preserve user edits and reconcile unknown
@@ -22,7 +22,7 @@ contracts keep their existing rules.
 
 Codex/Claude packaged lifecycle Hooks now write a bounded Host-local P5
 `native-observations` snapshot, separate from selection bindings and canonical
-`.head` records. Existing trusted native `head_project_status` reads it without
+`.lode` records. Existing trusted native `lode_project_status` reads it without
 writes and adds one optional `nativeContext` in text and structured output.
 The caller is not the queried logical Session's execution. A response-end or
 caller-end observation cannot close work, grant approval or authorize replay.
@@ -41,7 +41,7 @@ Supported Codex own first metadata (source-shaped against upstream commit
 `8c076942cb70fba8e5c4732c23f1faabc4aed484`) can supply explicit fork/parent edges.
 Shared-root child membership is not a direct-parent edge. The mapping captured
 when an edge is first retained, including no mapping, is not replaced by a later
-parent selection. Native `head_conversation_enter` may show fresh verified
+parent selection. Native `lode_conversation_enter` may show fresh verified
 historical source P3 bodies before its final child basis check; parent P2 never
 becomes the child's purpose or direction. This unstable format adapter is not a
 universal native-history parser or proof of copied fork-cutoff membership.
@@ -55,7 +55,7 @@ agent's activity. No witnessed engine is terminated. The Windows helper is
 hidden, finite and task-owned; macOS/remote attestation is not implemented.
 
 `scripts/opencode-plugin.mjs` is a dependency-free OpenCode v1.19.0-shaped V1
-default `{id, server}` entry. A local `.opencode/plugins/head-agent.js` shim can
+default `{id, server}` entry. A local `.opencode/plugins/lode-agent.js` shim can
 re-export that default; it is not auto-installed or added to user config.
 Only a config-proven local command for this packaged `scripts/mcp-server.mjs`
 and unambiguous sanitized alias is recognized. Actual event callbacks feed the
@@ -67,13 +67,13 @@ Experimental code-mode and OpenCode ancestry/P3 entry remain outside this path.
 Local source-shaped tests and owned OS helper tests do not establish installed
 Host event delivery, model tool choice, native long-compaction behavior or full
 activity coverage. Codex live conversation/turn state uses already exposed Host
-tools only when useful; see [runtime composition](../skills/head-agent-core/references/runtime-composition.md#native-observations-and-current-host-activity).
+tools only when useful; see [runtime composition](../skills/lode-agent-core/references/runtime-composition.md#native-observations-and-current-host-activity).
 
 ## Retained one-shot worker contracts
 
-Managed worker mutations use `node scripts/head.mjs managed <command> ...`
-or `head_tools_call` with `execution_mode: "managed"` and the discovered original
-schema. HEAD supplies this route without a user unlock. Raw managed names stay
+Managed worker mutations use `node scripts/lode.mjs managed <command> ...`
+or `lode_tools_call` with `execution_mode: "managed"` and the discovered original
+schema. Lode supplies this route without a user unlock. Raw managed names stay
 fenced on ordinary MCP, while the retained `managed-maintenance` CLI and separate
 stdio server remain compatible entries. Prepare/start/dispatch/execute/apply,
 reconcile, integration and wave mutations keep all authorization, lease, lineage
@@ -94,7 +94,7 @@ exact `sessionRequest` frozen in that authorization. No Run, WholePlan, contract
 or compulsory persisted Capsule is created. Typed MCP dispatch/status/wait use
 the same Core identity; managed execution uses its explicit route and original checks.
 Maintenance MCP start uses the trusted Host connection described below, not
-caller-supplied execution policy. HEAD consumes the bounded invocation result
+caller-supplied execution policy. Lode consumes the bounded invocation result
 as evidence. `worker-apply` and waves remain Run-only. Requested admission uses
 the same Host registry, request/ownership checks, at-most-once lease and cleanup
 proof; it is never silently skipped. Passive historical read/wait verifies
@@ -102,7 +102,7 @@ identity and integrity without demanding a currently active Run. Creation and
 execution still require current scope. Exact legacy Run dispatch replay reuses
 its immutable bytes rather than rewriting its protocol.
 
-Runtime-adapter contract `0.1.0` establishes the v0.6 provider-neutral boundary. Runtime-machine-discovery protocol `0.1.0` adds current-host read-only executable discovery, runtime-version-evidence protocol `0.1.0` adds a bounded non-session direct version invocation, runtime-protocol-evidence protocol `0.2.0` observes fixed provider-specific help surfaces and exact one-shot option sets, and runtime-project-binding protocol `0.1.0` binds those observations to canonical HEAD project and Session identities. Execution-authorization protocol `0.3.0` adds one envelope with `scope.kind: session | run` and an optional exact `provider/model` selection; execution-lease protocol `0.3.0` separates durable consumption/release evidence from operational owner state; process-supervisor protocol `0.1.0` and manifest `0.3.0` (schema `2`), event-envelope `0.1.0`, structured-result `0.1.0`, lifecycle-receipt `0.6.0`, and ResultPacket-draft `0.5.0` carry scope through the common lifecycle boundary. Claude Code, Codex, and OpenCode one-shot adapters share the same native descendant-tree supervisor and invocation-record core. All three pass deterministic Session/Run authorization, lifecycle, event, result, and provider-specific protocol-fixture conformance. Codex and OpenCode additionally retain completed live Session/Run evidence; Claude Code live model-call conformance is available through the same opt-in verifier but is not claimed until run. Fresh-process Codex-to-OpenCode artifact recovery also passes. HEAD supplies only the exact authorized model plus an ephemeral permission/privacy overlay; provider authentication and routing remain provider-owned. HEAD neither synthesizes provider packages nor rewrites configured endpoints. Ordinary delegation is Host-owned; optional exact endpoint attachment uses the current Host snapshot. Role mail and export delivery machinery have been removed. Provider-specific execution codecs stay behind the Host adapter boundary; effective OS/tool enforcement requires a trusted connected backend. Herdr-specific socket, pane and TUI integration remains outside Core. Provider resume and general runtime controls remain disabled.
+Runtime-adapter contract `0.1.0` establishes the v0.6 provider-neutral boundary. Runtime-machine-discovery protocol `0.1.0` adds current-host read-only executable discovery, runtime-version-evidence protocol `0.1.0` adds a bounded non-session direct version invocation, runtime-protocol-evidence protocol `0.2.0` observes fixed provider-specific help surfaces and exact one-shot option sets, and runtime-project-binding protocol `0.1.0` binds those observations to canonical Lode project and Session identities. Execution-authorization protocol `0.3.0` adds one envelope with `scope.kind: session | run` and an optional exact `provider/model` selection; execution-lease protocol `0.3.0` separates durable consumption/release evidence from operational owner state; process-supervisor protocol `0.1.0` and manifest `0.3.0` (schema `2`), event-envelope `0.1.0`, structured-result `0.1.0`, lifecycle-receipt `0.6.0`, and ResultPacket-draft `0.5.0` carry scope through the common lifecycle boundary. Claude Code, Codex, and OpenCode one-shot adapters share the same native descendant-tree supervisor and invocation-record core. All three pass deterministic Session/Run authorization, lifecycle, event, result, and provider-specific protocol-fixture conformance. Codex and OpenCode additionally retain completed live Session/Run evidence; Claude Code live model-call conformance is available through the same opt-in verifier but is not claimed until run. Fresh-process Codex-to-OpenCode artifact recovery also passes. Lode supplies only the exact authorized model plus an ephemeral permission/privacy overlay; provider authentication and routing remain provider-owned. Lode neither synthesizes provider packages nor rewrites configured endpoints. Ordinary delegation is Host-owned; optional exact endpoint attachment uses the current Host snapshot. Role mail and export delivery machinery have been removed. Provider-specific execution codecs stay behind the Host adapter boundary; effective OS/tool enforcement requires a trusted connected backend. Herdr-specific socket, pane and TUI integration remains outside Core. Provider resume and general runtime controls remain disabled.
 
 The supervisor manifest declares both process supervision and file-effect entry
 points. Its schema `2` / manifest `0.3.0` is distinct from the unchanged supervisor
@@ -114,7 +114,7 @@ mean the helper cannot physically write files. Core must bind authorized effects
 and runtime platform/target preflight must still verify support for each operation.
 
 ```text
-HEAD Core
+Lode Core
   -> AgentRuntimeAdapter
        -> Claude Code projection-only reference
        -> Codex projection-only reference
@@ -155,16 +155,16 @@ session control or broaden `ExecutionAuthorization`.
 
 Session continuation is narrower still. Core first rebuilds the exact P2
 `SessionRestoreProjection`; only afterward may an injected WorkspaceHost adapter
-fresh-verify an already-running HEAD endpoint. The returned P5
+fresh-verify an already-running Lode endpoint. The returned P5
 `ContinuationOutcome` is non-persisted and cannot alter the projection. Missing,
-stale, or unsupported attachment yields an explicit fresh logical HEAD fallback.
+stale, or unsupported attachment yields an explicit fresh logical Lode fallback.
 This is semantic recovery plus optional conversation continuity, not general
 provider `resume` or `stream`.
 
 Compaction lifecycle integration is another optional P5 Host composition. A
 `CompactionLifecycleHostAdapter` exposes journaled conversation-entry,
 provider-replacement, and pre/post-compaction events bound to the exact Project,
-HEAD Session, runtime, and trusted user-turn sequence. It retains the raw
+Lode Session, runtime, and trusted user-turn sequence. It retains the raw
 continuation token outside project Canon. Core performs read-only artifact entry
 restore automatically and restores P2 before verifying or consuming a reported
 successful compaction. `failed` aborts only the epoch; `uncertain` is never
@@ -178,7 +178,7 @@ and release are evidence, while operational lease ownership/process/wait state
 remains P5. One exact `ExecutionAuthorization` is still
 consumed at most once by the existing native supervisor. A completed actual-
 provider draft can become a ResultPacket only through the existing application
-gate, then requires Fresh HEAD review and explicit P2 integration. Dispatch and
+gate, then requires Fresh Lode review and explicit P2 integration. Dispatch and
 wait cannot write WholePlan, ReviewDecision, or checkpoint direction.
 
 A provider-neutral `BoundedWorkerWave` optionally groups 2-64 already-created
@@ -211,43 +211,43 @@ The protocol-evidence composition runs fixed help profiles through the same dire
 
 The current Windows execution observes the required non-interactive and machine-protocol surfaces for Claude Code, Codex, and OpenCode. This records `actualProviderProtocolObservationValidated: true`, but `actualProviderSessionControlValidated`, provider-session creation, and runtime control remain false.
 
-`RuntimeProjectBinding` then binds the version and protocol evidence identities to the canonical `.head/project.json` project ID and the selected logical HEAD Session ID (the legacy `current.json` remains default). The physical project root is reduced to a digest and no project content is sent during these probes. This is a capability-reference binding only: it proves which HEAD project and Session inspected the installed interfaces, not that a provider session was created or attached to that project.
+`RuntimeProjectBinding` then binds the version and protocol evidence identities to the canonical `.lode/project.json` project ID and the selected logical Lode Session ID (the legacy `current.json` remains default). The physical project root is reduced to a digest and no project content is sent during these probes. This is a capability-reference binding only: it proves which Lode project and Session inspected the installed interfaces, not that a provider session was created or attached to that project.
 
 ## Risk-proportional execution authorization
 
-`runtime-invocation-authorize` produces one immutable `ExecutionAuthorization` envelope. A `session` scope requires an idle HEAD Session, records the user-request digest and byte count, permits only local reversible `project.read` or `project.write`, forbids canon mutation and external effects, and may reference a ContextCapsule. It does not require WholePlan, ExecutionContract, Run, or Fresh HEAD review. A `run` scope requires the exact active Run and its digest-verified `WholePlanSnapshot`, `ExecutionContract`, and persisted `ContextCapsule`; the contract must explicitly include `runtime.invoke` and the selected workspace permission. Both scopes require an enabled runtime and an observed current-host protocol binding. Optional `runtimeSelection.model` must be a bounded `provider/model` identifier and becomes part of the authorization digest, so changing a model requires a new authorization rather than silently following a user-global default. The provider implementation, endpoint, and credential remain operational OpenCode settings rather than HEAD presets or semantic graph data.
+`runtime-invocation-authorize` produces one immutable `ExecutionAuthorization` envelope. A `session` scope requires an idle Lode Session, records the user-request digest and byte count, permits only local reversible `project.read` or `project.write`, forbids canon mutation and external effects, and may reference a ContextCapsule. It does not require WholePlan, ExecutionContract, Run, or Fresh Lode review. A `run` scope requires the exact active Run and its digest-verified `WholePlanSnapshot`, `ExecutionContract`, and persisted `ContextCapsule`; the contract must explicitly include `runtime.invoke` and the selected workspace permission. Both scopes require an enabled runtime and an observed current-host protocol binding. Optional `runtimeSelection.model` must be a bounded `provider/model` identifier and becomes part of the authorization digest, so changing a model requires a new authorization rather than silently following a user-global default. The provider implementation, endpoint, and credential remain operational OpenCode settings rather than Lode presets or semantic graph data.
 
-The envelope records only canonical HEAD identities, the selected scope, runtime, optional model selection, workspace mode, exact allowed-action requirements, project-root digest, capability-evidence identities, execution-input digest/byte count, and bounded time/input/output/event limits. Credentials and endpoints remain operational environment inputs and are not added to the authorization or project artifacts. The base `0.3.0` envelope does not retain raw Session requests or reconstructed Run input. Optional retained-worker `0.4.0`–`0.7.0` envelopes instead persist selected context, source bytes and the Session request in `workerInput` as P3 evidence (`rawContentPersisted: true`); `0.5.0` adds workspace binding, `0.6.0` write preimages, and distinct read-only `0.7.0` a proposal basis without worker write authority. This selected evidence is not a raw conversation transcript and cannot author P2 direction. Authorization does not itself start a provider.
+The envelope records only canonical Lode identities, the selected scope, runtime, optional model selection, workspace mode, exact allowed-action requirements, project-root digest, capability-evidence identities, execution-input digest/byte count, and bounded time/input/output/event limits. Credentials and endpoints remain operational environment inputs and are not added to the authorization or project artifacts. The base `0.3.0` envelope does not retain raw Session requests or reconstructed Run input. Optional retained-worker `0.4.0`–`0.7.0` envelopes instead persist selected context, source bytes and the Session request in `workerInput` as P3 evidence (`rawContentPersisted: true`); `0.5.0` adds workspace binding, `0.6.0` write preimages, and distinct read-only `0.7.0` a proposal basis without worker write authority. This selected evidence is not a raw conversation transcript and cannot author P2 direction. Authorization does not itself start a provider.
 
 ## Durable at-most-once execution lease
 
-The execution path first requires the exact digest-verified persisted authorization, then claims an authorization-specific `owner.lock` with an exact PID/token owner only for operational serialization. PID, token, and the owner lock live under a dedicated host-local operational root, never below the project tree. Windows defaults to `%LOCALAPPDATA%\head-agent-core\operational-state`; Unix-like hosts use `$XDG_STATE_HOME/head-agent-core` or `~/.local/state/head-agent-core`. A host may set the absolute `HEAD_AGENT_OPERATIONAL_STATE_ROOT` process configuration for isolated installations and tests, but execution requests and project files cannot select it. Root, project-local, project-containing, relative, symlinked, and escaping operational paths fail closed.
+The execution path first requires the exact digest-verified persisted authorization, then claims an authorization-specific `owner.lock` with an exact PID/token owner only for operational serialization. PID, token, and the owner lock live under a dedicated host-local operational root, never below the project tree. Windows defaults to `%LOCALAPPDATA%\lode-agent-core\operational-state`; Unix-like hosts use `$XDG_STATE_HOME/lode-agent-core` or `~/.local/state/lode-agent-core`. A host may set the absolute `LODE_AGENT_OPERATIONAL_STATE_ROOT` process configuration for isolated installations and tests, but execution requests and project files cannot select it. Root, project-local, project-containing, relative, symlinked, and escaping operational paths fail closed.
 
-Before any child starts, the plugin atomically creates an immutable `RuntimeExecutionLeaseConsumption` receipt below project lineage. That receipt binds the authorization hash, project, HEAD Session, scope kind, optional Run/ExecutionContract, runtime, caller-fence digest, claim/consumption deadline, and the explicit boundary `atMostOnce: true` / `replayAllowed: false`. A crash after consumption never makes the authorization reusable; recovery requires a new HEAD decision rather than silent replay.
+Before any child starts, the plugin atomically creates an immutable `RuntimeExecutionLeaseConsumption` receipt below project lineage. That receipt binds the authorization hash, project, Lode Session, scope kind, optional Run/ExecutionContract, runtime, caller-fence digest, claim/consumption deadline, and the explicit boundary `atMostOnce: true` / `replayAllowed: false`. A crash after consumption never makes the authorization reusable; recovery requires a new Lode decision rather than silent replay.
 
 After the exact child exits—or the operation throws—the owner lock and empty authorization/project operational directories are removed, while the shared host-local root remains. An immutable project-lineage `RuntimeExecutionLeaseRelease` records the operation status, optional lifecycle-receipt identity, and exact-owner cleanup. A pre-consumption dead owner can be recovered only when its PID is proven absent. A live or ambiguous owner remains busy even after its hold deadline; the plugin never kills an unknown process. PID, token, and the operational path are excluded from consumption, release, lifecycle, ResultPacket-draft, CLI, and MCP artifacts. Lease inspection discloses only `location: host-local-outside-project` plus boolean privacy facts.
 
-Provider-neutral `RuntimeEventEnvelope` records one JSONL event as its type, class, payload digest, byte count, and hashed operational provider-session references. Raw payloads and transcripts are not stored in these project-lineage envelopes. Bounded raw stdout/stderr may be retained in the separate Host-local P5 output spool for recovery; it is not Canon or recovery direction. `RuntimeInvocationLifecycleReceipt` binds those envelopes and the consumption receipt to exact project, Session, scope, optional Run/contract, caller-fence digest, child-fence digest, exit, timeout/cancellation, and cleanup facts without recording a PID or raw command. Receipt `0.6.0` adds only sorted allowlisted diagnostic codes for provider errors and internal event/supervisor boundaries; raw error text remains ephemeral. `RuntimeResultPacketDraft` `0.5.0` carries those codes as evidence-only Unknowns. Run results still require Fresh HEAD review; Session results explicitly do not, unless a later risk transition escalates the work into a Run.
+Provider-neutral `RuntimeEventEnvelope` records one JSONL event as its type, class, payload digest, byte count, and hashed operational provider-session references. Raw payloads and transcripts are not stored in these project-lineage envelopes. Bounded raw stdout/stderr may be retained in the separate Host-local P5 output spool for recovery; it is not Canon or recovery direction. `RuntimeInvocationLifecycleReceipt` binds those envelopes and the consumption receipt to exact project, Session, scope, optional Run/contract, caller-fence digest, child-fence digest, exit, timeout/cancellation, and cleanup facts without recording a PID or raw command. Receipt `0.6.0` adds only sorted allowlisted diagnostic codes for provider errors and internal event/supervisor boundaries; raw error text remains ephemeral. `RuntimeResultPacketDraft` `0.5.0` carries those codes as evidence-only Unknowns. Run results still require Fresh Lode review; Session results explicitly do not, unless a later risk transition escalates the work into a Run.
 
-`RuntimeRunResultApplication` protocol `0.1.0` is the narrow provider-neutral bridge from a verified actual-provider Run draft into canonical Execution Lineage. It accepts only a completed exit-zero actual-provider Run whose structured result, exact input, project fence, and native descendant-tree ownership all passed. The bridge maps the bounded provider result into one canonical `ResultPacket`, transitions the exact Run to `awaiting_review`, builds the deterministic Fresh HEAD context, and writes a content-derived application receipt beside the invocation record. It is idempotent and can recover only the same ResultPacket after an interrupted receipt write; a divergent or Session-scoped result fails closed. The receipt carries no transcript, provider session identity, PID, path, instruction authority, promotion authority, or Product Canon mutation.
+`RuntimeRunResultApplication` protocol `0.1.0` is the narrow provider-neutral bridge from a verified actual-provider Run draft into canonical Execution Lineage. It accepts only a completed exit-zero actual-provider Run whose structured result, exact input, project fence, and native descendant-tree ownership all passed. The bridge maps the bounded provider result into one canonical `ResultPacket`, transitions the exact Run to `awaiting_review`, builds the deterministic Fresh Lode context, and writes a content-derived application receipt beside the invocation record. It is idempotent and can recover only the same ResultPacket after an interrupted receipt write; a divergent or Session-scoped result fails closed. The receipt carries no transcript, provider session identity, PID, path, instruction authority, promotion authority, or Product Canon mutation.
 
 Application validation and Run completion share the session-recovery mutation
 lock. Before any missing-receipt recovery writes, the current Project, Session,
 Run, plan, contract, and Capsule must match the authorization exactly. An old
 result cannot finish a newer Run, even if it reuses the same contract. A complete
 historical application receipt remains readable without reopening that Run.
-The bridge neither approves the result nor creates a checkpoint; Fresh HEAD
+The bridge neither approves the result nor creates a checkpoint; Fresh Lode
 review and explicit integration remain separate.
 
 ## Bounded provider one-shot composition
 
 `runtime-invocation-execute` accepts a persisted Claude Code, Codex, or OpenCode `ExecutionAuthorization` and dispatches only the provider-specific launch/event codec over the shared authorization, lease, native supervisor, invocation-record, and result-application core. Each adapter rejects capability or project-binding drift before lease consumption and invokes the absolute native executable directly with no shell. Claude Code uses non-interactive `--print`, stream-json events, JSON Schema output, `--no-session-persistence`, no loaded setting sources or slash-command skills, strict empty MCP configuration, and an exact tool allowlist derived from workspace mode. Read-only permits only `Read`, `Glob`, and `Grep`; workspace-write adds `Edit` and `Write` while continuing to deny Bash, web, notebooks, tasks, plugins, and external effects. It never uses `--dangerously-skip-permissions`. Codex uses `codex exec` with JSONL output, ephemeral provider storage, the authorization's exact read-only or workspace-write sandbox, Git-repository independence, project-directory binding, deterministic color control, a host-local JSON Schema, optional authorized model selection, and the exact authorized execution input over stdin. OpenCode uses `opencode run --format json --pure`, exact project-directory binding, optional authorized model selection, a permission projection derived from workspace mode, and the same bounded stdin/result contract. Provider authentication and endpoint selection remain provider-owned. Provider codecs request their own permission/privacy restrictions; this is not a universal proof that settings, plugins or skills are disabled. The selected Codex branch adds `--ignore-user-config` and `--ignore-rules`, but its trusted backend must still establish effective instruction/tool isolation before execution. Provider-specific configuration does not enter Product Canon or graph identity.
 
-The common `RuntimeStructuredResult` carries bounded `outcome`, evidence statements, `planDelta`, `impactRadius`, verification statements, and explicit Unknowns. The Codex wire schema intentionally uses only the portable root-object, required-property, closed-object, scalar, enum, array, and item subset needed to shape the response; it omits a dialect declaration and type-specific length/item constraints. This keeps provider compatibility separate from product semantics. After decoding, the provider-neutral validator still enforces non-empty fields, 64-item list limits, per-field byte limits, the 128 KiB total result limit, and the Session rule that plan delta and impact radius remain empty. A separate per-JSONL-event limit defaults to 2 MiB, is capped by a smaller caller-selected total stdout limit, and remains independently bounded by the 8 MiB default total stdout budget. Raw JSONL and provider messages remain Host-local P5 output-spool data rather than project-lineage transcript artifacts; the provider-neutral invocation-record core stores only content-derived event envelopes, the lifecycle receipt, and a structured ResultPacket draft under the authorization-specific record. Recovery verifies the persisted authorization, runtime, project, HEAD Session, scope, receipt, event set, and draft as one lineage before returning it. The draft, receipt, and optional verified Run application are available through `runtime-invocation-result` and the read-only `head_runtime_invocation_result` MCP tool. `runtime-invocation-apply-run-result` is the single-provider-draft bridge into canonical Run lineage; combined results use [worker integration](worker-context-integration.md) and the same existing Run finish/review boundary. The single-draft bridge derives ResultPacket runtime evidence from the verified authorization and is reusable by a conforming runtime adapter. Absolute project or operational roots in the structured result fail the invocation boundary.
+The common `RuntimeStructuredResult` carries bounded `outcome`, evidence statements, `planDelta`, `impactRadius`, verification statements, and explicit Unknowns. The Codex wire schema intentionally uses only the portable root-object, required-property, closed-object, scalar, enum, array, and item subset needed to shape the response; it omits a dialect declaration and type-specific length/item constraints. This keeps provider compatibility separate from product semantics. After decoding, the provider-neutral validator still enforces non-empty fields, 64-item list limits, per-field byte limits, the 128 KiB total result limit, and the Session rule that plan delta and impact radius remain empty. A separate per-JSONL-event limit defaults to 2 MiB, is capped by a smaller caller-selected total stdout limit, and remains independently bounded by the 8 MiB default total stdout budget. Raw JSONL and provider messages remain Host-local P5 output-spool data rather than project-lineage transcript artifacts; the provider-neutral invocation-record core stores only content-derived event envelopes, the lifecycle receipt, and a structured ResultPacket draft under the authorization-specific record. Recovery verifies the persisted authorization, runtime, project, Lode Session, scope, receipt, event set, and draft as one lineage before returning it. The draft, receipt, and optional verified Run application are available through `runtime-invocation-result` and the read-only `lode_runtime_invocation_result` MCP tool. `runtime-invocation-apply-run-result` is the single-provider-draft bridge into canonical Run lineage; combined results use [worker integration](worker-context-integration.md) and the same existing Run finish/review boundary. The single-draft bridge derives ResultPacket runtime evidence from the verified authorization and is reusable by a conforming runtime adapter. Absolute project or operational roots in the structured result fail the invocation boundary.
 
-The deterministic lifecycle verifier proves invocation-surface drift rejection before lease consumption, model-selection digest binding, invalid selection rejection, legacy authorization compatibility, portable wire shape, retained semantic bounds, privacy-reduced provider diagnostics, and preservation of provider authority. Claude Code, Codex, and OpenCode protocol fixtures prove fixed arguments, authorized stdin, provider event decoding, immutable recording, CLI/MCP reads, and OS-enforced process-tree cleanup. The separate integrity-verified `head-agent-supervisor` assigns its provider subtree to a Windows Job Object with kill-on-close or to an isolated POSIX process group; only the native helper manifest digest and bounded cleanup facts enter durable evidence. Actual Codex and OpenCode Runs each created and reread the exact isolated file, preserved the protected fixture, verified native descendant cleanup, applied one canonical ResultPacket, and completed Fresh HEAD review. Claude Code has the same live verifier entry point but no live model-call claim is made until its explicit opt-in run completes. A separate recovery E2E completes Codex, starts a fresh process with only the project root and prior HEAD authorization ID, reconstructs the canonical Project/HEAD Session from artifacts, and completes an OpenCode fixture invocation without Git, GraphDB, or persisted provider-session identity. General provider resume, durable hidden-session restoration, stream, provider-session messaging, and TUI scraping remain unavailable. P2-first optional exact HEAD attachment, exact-owned-tree one-shot interrupt/close, and authority-free role coordination use the separate host boundary below.
+The deterministic lifecycle verifier proves invocation-surface drift rejection before lease consumption, model-selection digest binding, invalid selection rejection, legacy authorization compatibility, portable wire shape, retained semantic bounds, privacy-reduced provider diagnostics, and preservation of provider authority. Claude Code, Codex, and OpenCode protocol fixtures prove fixed arguments, authorized stdin, provider event decoding, immutable recording, CLI/MCP reads, and OS-enforced process-tree cleanup. The separate integrity-verified `lode-agent-supervisor` assigns its provider subtree to a Windows Job Object with kill-on-close or to an isolated POSIX process group; only the native helper manifest digest and bounded cleanup facts enter durable evidence. Actual Codex and OpenCode Runs each created and reread the exact isolated file, preserved the protected fixture, verified native descendant cleanup, applied one canonical ResultPacket, and completed Fresh Lode review. Claude Code has the same live verifier entry point but no live model-call claim is made until its explicit opt-in run completes. A separate recovery E2E completes Codex, starts a fresh process with only the project root and prior Lode authorization ID, reconstructs the canonical Project/Lode Session from artifacts, and completes an OpenCode fixture invocation without Git, GraphDB, or persisted provider-session identity. General provider resume, durable hidden-session restoration, stream, provider-session messaging, and TUI scraping remain unavailable. P2-first optional exact Lode attachment, exact-owned-tree one-shot interrupt/close, and authority-free role coordination use the separate host boundary below.
 
-The tracked lifecycle verifier uses deterministic capability fixtures and fixed Node execution fixtures, not provider model execution. It proves Session and Run scopes for all three runtime identities, provider-specific fixture-mode derivation from the authorization runtime, Session-request drift rejection, model binding, local reversible workspace-write authorization, pre-start consumption, sequential and in-flight replay rejection, tamper detection, release inspection, bounded stdin, JSONL validation, exact-child exit, timeout/caller-cancellation termination, Run contract action enforcement, and scope-correct review requirements. The separate provider-replacement verifier adds a fresh-process, artifact-only Codex-to-OpenCode recovery proof. Optional P2-first exact HEAD attachment is active; general provider resume/stream and broader runtime control remain disabled.
+The tracked lifecycle verifier uses deterministic capability fixtures and fixed Node execution fixtures, not provider model execution. It proves Session and Run scopes for all three runtime identities, provider-specific fixture-mode derivation from the authorization runtime, Session-request drift rejection, model binding, local reversible workspace-write authorization, pre-start consumption, sequential and in-flight replay rejection, tamper detection, release inspection, bounded stdin, JSONL validation, exact-child exit, timeout/caller-cancellation termination, Run contract action enforcement, and scope-correct review requirements. The separate provider-replacement verifier adds a fresh-process, artifact-only Codex-to-OpenCode recovery proof. Optional P2-first exact Lode attachment is active; general provider resume/stream and broader runtime control remain disabled.
 
 ## Selected Codex Host connection and optional fork
 
@@ -369,7 +369,7 @@ Users do not supply Host proofs or new JSON approvals. See [worker integration](
 
 `CodexNativePrefixPolicyPlan` defines a separate opt-in
 `native-prefix-patch-proposal` mode. It binds the unchanged fresh recipe and
-selected seed bytes, not an existing HEAD/provider session, caller proof or
+selected seed bytes, not an existing Lode/provider session, caller proof or
 arbitrary rollout path. The fixed constructor
 `createCodexNativePrefixProposalTransport` creates its own legacy source on the
 same owned connection. Goals and model-callable tools are disabled at process
@@ -396,7 +396,7 @@ IDs and raw history remain P5; a validated patch proposal is P3 evidence, never
 P2 direction, applied changes or review approval. General native policy 0.2 stays
 unavailable. Synthetic protocol/job tests and an actual-constructor capture
 stopped before spawn cover composition only: **no actual-provider E2E claim** is
-made for this mode. It adds no gate to ordinary direct HEAD work.
+made for this mode. It adds no gate to ordinary direct Lode work.
 
 Transport cleanup distinguishes request rejection, EOF delivery and observed
 process exit. Its existing P5 close event includes bounded monotonic cleanup
@@ -437,10 +437,10 @@ Authorization `0.7.0` retains selected input and a read-only `proposalBasis` wit
 exact target preimages/absence and no owned write paths. Structured result `0.2.0`
 adds a digest-bound `patchProposal`. The model proposes file contents as P3
 evidence; it does not apply files or prove that tests ran. Core reconstructs the
-candidate for HEAD to assess. Combined Run [worker integration](worker-context-integration.md)
-requires `project.write` in HEAD's exact current Run contract only for non-empty
+candidate for Lode to assess. Combined Run [worker integration](worker-context-integration.md)
+requires `project.write` in Lode's exact current Run contract only for non-empty
 file application. The single-provider-draft application bridge cannot bypass
-that step for a proposal. Session results remain ordinary HEAD evidence, without
+that step for a proposal. Session results remain ordinary Lode evidence, without
 a compulsory Run. Graph and P2 recovery authority are unchanged.
 
 `buildCodexFreshProposalPolicyPlan` freezes the model mapping, fixed instructions,
@@ -482,7 +482,7 @@ install or update a runtime cache.
 There is no new user JSON form or general Session gate, and failure of this
 optional mode never silently launches in the canonical workspace.
 
-`worker-prepare` / `head_bounded_worker_prepare` accepts HEAD-selected task,
+`worker-prepare` / `lode_bounded_worker_prepare` accepts Lode-selected task,
 model, member, context, source and proposal scope. It discovers the local fixed
 Codex backend, uses owned model-free feature/config/skill/version/help probes,
 and retains its exact P5 preparation outside the project. Identical preparation
@@ -498,7 +498,7 @@ stock Codex preparation has no-account/no-thread/no-model observation coverage.
 
 When selected source/preimages change before execution, the same member can be
 prepared against the new exact basis without renaming its task or clearing a
-cache. HEAD may explicitly reselect read-source paths, including a proposal
+cache. Lode may explicitly reselect read-source paths, including a proposal
 target that appeared since preparation, while preserving the task, model,
 proposal targets, limits and instruction scope. The new exact selection and
 bytes are bound to their own preparation; this is not automatic scope expansion.
@@ -514,13 +514,13 @@ or a source of P2 direction.
 ## Ordinary delegation and optional attachment
 
 Use current Host tasks/messages/progress for ordinary bounded delegation.
-There is no HEAD role-token, generation, inbox or append-only target chain.
+There is no Lode role-token, generation, inbox or append-only target chain.
 Messages and worker success are evidence, not execution permission or approval.
 See [ordinary Host delegation](role-coordination.md).
 
 `VerifiedWorkspaceHostAdapter` optionally attaches an exact current endpoint
-within the Project root and logical HEAD Session. P2 restoration precedes any
-Host inspection; unavailable attachment falls back to the same logical HEAD.
+within the Project root and logical Lode Session. P2 restoration precedes any
+Host inspection; unavailable attachment falls back to the same logical Lode.
 The portable `host-export` composition stores one current external snapshot.
 `workspace-host-export-mcp.mjs` takes only Host-provided project/caller/export
 configuration and process-ownership proof. It supports attachment only, not
@@ -534,7 +534,7 @@ fallback and unchanged P2 direction; new actual-provider E2E remains separate.
 
 Runtime capability never grants authorization. A future control operation must still be bounded by a valid Session or Run `ExecutionAuthorization`, exact project binding, caller identity, owned-process evidence, resource limits, and cleanup. Only Run scope requires accepted ExecutionContract and ResultPacket/ReviewDecision lineage.
 
-HEAD Session and Run IDs remain canonical project identities. Provider session IDs remain P5 operational references and never replace HEAD identities or enter core semantic identity. Recovery must work from verified HEAD artifacts even when the original provider process and provider session disappear. Probe, event and lifecycle projections omit raw provider session IDs, commands, endpoints, transcripts, credentials, output and live process identity. Retained worker authorizations deliberately preserve selected input and repository-relative source paths as P3 evidence; raw transport/history stays Host-local P5. Neither can become P2 direction.
+Lode Session and Run IDs remain canonical project identities. Provider session IDs remain P5 operational references and never replace Lode identities or enter core semantic identity. Recovery must work from verified Lode artifacts even when the original provider process and provider session disappear. Probe, event and lifecycle projections omit raw provider session IDs, commands, endpoints, transcripts, credentials, output and live process identity. Retained worker authorizations deliberately preserve selected input and repository-relative source paths as P3 evidence; raw transport/history stays Host-local P5. Neither can become P2 direction.
 
 All descriptors and probes require:
 
@@ -544,7 +544,7 @@ All descriptors and probes require:
 - `mutatesCanon: false`;
 - `tuiScraping: false` for runtime adapters.
 
-The static contract descriptors additionally require `capabilityAuthority: none`; the operational discovery, version, and protocol-evidence compositions instead declare `authority: operational-observation-only` and `capabilityDoesNotGrantAuthorization: true`. The project binding combines canonical HEAD references with operational evidence but has no instruction, promotion, control, or canon-mutation authority.
+The static contract descriptors additionally require `capabilityAuthority: none`; the operational discovery, version, and protocol-evidence compositions instead declare `authority: operational-observation-only` and `capabilityDoesNotGrantAuthorization: true`. The project binding combines canonical Lode references with operational evidence but has no instruction, promotion, control, or canon-mutation authority.
 
 A static reference descriptor or probe that advertises control, mutation, TUI scraping or a different session-identity rule fails validation instead of being treated as available. Separately connected operational adapters retain their own exact authorization boundaries.
 
@@ -553,23 +553,23 @@ A static reference descriptor or probe that advertises control, mutation, TUI sc
 The CLI command is read-only:
 
 ```text
-node scripts/head.mjs runtime-adapters <project>
+node scripts/lode.mjs runtime-adapters <project>
 ```
 
-The read-only MCP tool is `head_runtime_adapters`. Both use the runtimes selected in `.head/project.json`, return the deterministic three-platform/three-runtime contract matrix, current-host privacy-bounded discovery, bounded version and protocol evidence, and the canonical HEAD project/Session capability binding. They may start only the exact short-lived version and fixed-help children described above; they never create, resume, message, interrupt, or close a provider session.
+The read-only MCP tool is `lode_runtime_adapters`. Both use the runtimes selected in `.lode/project.json`, return the deterministic three-platform/three-runtime contract matrix, current-host privacy-bounded discovery, bounded version and protocol evidence, and the canonical Lode project/Session capability binding. They may start only the exact short-lived version and fixed-help children described above; they never create, resume, message, interrupt, or close a provider session.
 
 Authorization preparation itself does not execute a provider. Separate CLI operations prepare, inspect, explicitly execute and apply evidence for an idle Session or an active contract-bound Run:
 
 ```text
-node scripts/head.mjs runtime-invocation-authorize <project> --input <authorization.json>
-node scripts/head.mjs runtime-invocation-read <project> --authorization <execution-authorization-id>
-node scripts/head.mjs runtime-invocation-lease-status <project> --authorization <execution-authorization-id>
-node scripts/head.mjs runtime-invocation-execute <project> --authorization <execution-authorization-id> --input <execution.json>
-node scripts/head.mjs runtime-invocation-result <project> --authorization <execution-authorization-id>
-node scripts/head.mjs runtime-invocation-apply-run-result <project> --authorization <execution-authorization-id>
+node scripts/lode.mjs runtime-invocation-authorize <project> --input <authorization.json>
+node scripts/lode.mjs runtime-invocation-read <project> --authorization <execution-authorization-id>
+node scripts/lode.mjs runtime-invocation-lease-status <project> --authorization <execution-authorization-id>
+node scripts/lode.mjs runtime-invocation-execute <project> --authorization <execution-authorization-id> --input <execution.json>
+node scripts/lode.mjs runtime-invocation-result <project> --authorization <execution-authorization-id>
+node scripts/lode.mjs runtime-invocation-apply-run-result <project> --authorization <execution-authorization-id>
 ```
 
-The input contains `runtime`, `scope`, `workspaceMode`, and optional `limits`. Run scope is `{ "kind": "run" }`. Session scope is `{ "kind": "session", "request": "...", "contextCapsuleId": null }`; the request derives the bounded stdin payload and is retained only when optional retained-worker input is selected. The read-only MCP tools `head_runtime_invocation_authorization` and `head_runtime_invocation_lease_status` verify one persisted authorization and its available/claimed/consumed/released state. These read-only tools do not create, consume or release authorization. Optional `head_bounded_worker_start` delegates execution through its trusted Host connection and the existing lease; no public tool can replay a consumed authorization.
+The input contains `runtime`, `scope`, `workspaceMode`, and optional `limits`. Run scope is `{ "kind": "run" }`. Session scope is `{ "kind": "session", "request": "...", "contextCapsuleId": null }`; the request derives the bounded stdin payload and is retained only when optional retained-worker input is selected. The read-only MCP tools `lode_runtime_invocation_authorization` and `lode_runtime_invocation_lease_status` verify one persisted authorization and its available/claimed/consumed/released state. These read-only tools do not create, consume or release authorization. Optional `lode_bounded_worker_start` delegates execution through its trusted Host connection and the existing lease; no public tool can replay a consumed authorization.
 
 The tracked verifier is:
 
@@ -578,12 +578,12 @@ npm run verify:runtime-adapters
 npm run verify:runtime-lifecycle
 ```
 
-The explicit live verifier is intentionally separate from normal regression because it performs real provider model calls and one isolated workspace write. It requires a built, integrity-verified native supervisor and deliberate opt-in. It defaults to `run-only`, which skips the already conformed Session; `session-and-run` retains the fuller regression path. The mode selects coverage rather than imposing a product-level model-call quota. The legacy `HEAD_AGENT_LIVE_CODEX_E2E` names remain accepted for compatibility:
+The explicit live verifier is intentionally separate from normal regression because it performs real provider model calls and one isolated workspace write. It requires a built, integrity-verified native supervisor and deliberate opt-in. It defaults to `run-only`, which skips the already conformed Session; `session-and-run` retains the fuller regression path. The mode selects coverage rather than imposing a product-level model-call quota. The legacy `LODE_AGENT_LIVE_CODEX_E2E` names remain accepted for compatibility:
 
 ```text
-HEAD_AGENT_LIVE_RUNTIME_E2E=1 HEAD_AGENT_LIVE_RUNTIME=codex HEAD_AGENT_LIVE_RUNTIME_E2E_MODE=run-only npm run verify:live-runtime
-HEAD_AGENT_LIVE_RUNTIME_E2E=1 HEAD_AGENT_LIVE_RUNTIME=opencode HEAD_AGENT_LIVE_RUNTIME_MODEL=provider/model HEAD_AGENT_LIVE_RUNTIME_E2E_MODE=session-and-run npm run verify:live-runtime
-HEAD_AGENT_LIVE_RUNTIME_E2E=1 HEAD_AGENT_LIVE_RUNTIME=claude HEAD_AGENT_LIVE_RUNTIME_MODEL=anthropic/model-name HEAD_AGENT_LIVE_RUNTIME_E2E_MODE=session-and-run npm run verify:live-runtime
+LODE_AGENT_LIVE_RUNTIME_E2E=1 LODE_AGENT_LIVE_RUNTIME=codex LODE_AGENT_LIVE_RUNTIME_E2E_MODE=run-only npm run verify:live-runtime
+LODE_AGENT_LIVE_RUNTIME_E2E=1 LODE_AGENT_LIVE_RUNTIME=opencode LODE_AGENT_LIVE_RUNTIME_MODEL=provider/model LODE_AGENT_LIVE_RUNTIME_E2E_MODE=session-and-run npm run verify:live-runtime
+LODE_AGENT_LIVE_RUNTIME_E2E=1 LODE_AGENT_LIVE_RUNTIME=claude LODE_AGENT_LIVE_RUNTIME_MODEL=anthropic/model-name LODE_AGENT_LIVE_RUNTIME_E2E_MODE=session-and-run npm run verify:live-runtime
 ```
 
 Without the environment opt-in it fails before creating a provider invocation. An unsupported optional mode also fails closed. Passing deterministic fixtures or implementing the application bridge does not count as live provider conformance.
@@ -592,7 +592,7 @@ The adapter verifier proves deterministic contract identities, Claude Code/Codex
 
 ## Next activation gate
 
-Read-only path discovery, bounded non-session version invocation, provider-specific protocol/capability observation, canonical HEAD identity binding, optional exact-endpoint attachment and exact-owned one-shot interrupt/close are active. Historical live role-message conformance remains development evidence, not a current implementation claim. Before general static-adapter start, provider-session resume/stream or broader process-host control becomes active, the composition must verify:
+Read-only path discovery, bounded non-session version invocation, provider-specific protocol/capability observation, canonical Lode identity binding, optional exact-endpoint attachment and exact-owned one-shot interrupt/close are active. Historical live role-message conformance remains development evidence, not a current implementation claim. Before general static-adapter start, provider-session resume/stream or broader process-host control becomes active, the composition must verify:
 
 1. preserve the completed live Codex Session conformance evidence through the externalized operational-state root, exact authorization/lease/caller/project fences, and verified native descendant supervisor;
 2. validate the diagnosed large-event fix against evidence-led consequential live Codex Runs, including actual provider input, structured events, isolated file write, ResultPacket evidence, and provider-specific errors through the provider-neutral schemas;
@@ -633,7 +633,7 @@ verified process exit remain separate observations. Calls without the optional
 control retain their existing authorization and execution budgets.
 
 The local fixed-peer experiment may use total/concurrency/time limits of its
-own, but those limits and its test-only HEAD consumer are not public plugin
+own, but those limits and its test-only Lode consumer are not public plugin
 policy or a substitute for the durable worker-job integration workflow. Actual
 factory availability is not live-provider conformance; local verification must
 remain unable to start an actual provider by default.

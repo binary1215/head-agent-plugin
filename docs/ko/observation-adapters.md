@@ -4,11 +4,11 @@
 
 ## 작업 범위 소스 수집
 
-`head_source_context` / `head source-context`는 HEAD가 선택한 현재 소스를
+`lode_source_context` / `head source-context`는 Lode가 선택한 현재 소스를
 수집해 기존 Context Compiler에 넣습니다. 사용자는 작업을 대화로 설명하고,
-HEAD가 정확한 파일 경로와 함수 이름을 구성합니다. JSON·ID·해시를 직접 작성하거나
+Lode가 정확한 파일 경로와 함수 이름을 구성합니다. JSON·ID·해시를 직접 작성하거나
 전체 World 스캔, 재인덱싱, Product 온보딩, GraphDB를 요구하지 않습니다.
-작업만 전달하면 HEAD가 범위를 선택하는 단계로 이어지며 단어 매칭으로 의미를 추측하지 않습니다.
+작업만 전달하면 Lode가 범위를 선택하는 단계로 이어지며 단어 매칭으로 의미를 추측하지 않습니다.
 
 실제 수집기는 LSP가 아닌 **Python 표준 AST**입니다. Host PATH의 Python 3.8+
 또는 신뢰된 절대경로 `HEAD_PYTHON`을 사용합니다. 배포된 worker를 중립 디렉터리에서
@@ -23,7 +23,7 @@ dirty 파일을 포함해 실제 bytes를 digest로 묶고, 경로 이탈·심�
 비UTF8·BOM·단독 CR 입력은 조용히 변환하지 않습니다. AST의 UTF8 byte 좌표를
 CRLF·비BMP 문자를 포함한 UTF16 좌표로 변환합니다. 파일·원본 응답은 각각 기존 v0의
 1 MiB 한도를 따릅니다. 일반 소스 발췌는 생략 bytes를 공개하며 공통 Observation의
-64 KiB 문자열 계약을 지킵니다. 한 번에 HEAD가 선택한 need 32개까지 처리합니다.
+64 KiB 문자열 계약을 지킵니다. 한 번에 Lode가 선택한 need 32개까지 처리합니다.
 worker 기본 제한은 15초이며 Host가 최대 120초까지 지정할 수 있습니다.
 stdout/stderr 제한과 취소는 유한한 종료를 위한 운영 한도이지 충분성 판단이 아닙니다.
 
@@ -32,7 +32,7 @@ stdout/stderr 제한과 취소는 유한한 종료를 위한 운영 한도이지
 받지만 영속 복구를 주장하지 않습니다. 재시작 후 재사용은 현재 소스, 질의,
 Python/AST/tokenizer, worker·normalizer 식별자를 대조합니다. 실패는 확보한 원본
 응답을 보관하고 동일 소스·profile·질의·결과의 반복 기록은 합칩니다.
-`head_source_observation_read`로 결과에 자동 반환된 성공/실패 key를 조회합니다.
+`lode_source_observation_read`로 결과에 자동 반환된 성공/실패 key를 조회합니다.
 보관은 작업 내 증거 선택이지 추가 사용자 승인 단계가 아닙니다. 캐시·관측·결과·미리보기는
 Product Canon, ReviewDecision, P2 checkpoint나 방향을 변경하지 않습니다.
 
@@ -48,7 +48,7 @@ Product Canon, ReviewDecision, P2 checkpoint나 방향을 변경하지 않습니
 
 `pendingNeeds`는 그 증거에 의존하는 판단에만 적용됩니다. 독립 need는 계속 수집·컴파일하며,
 소스 텍스트가 CALLS 요구를 대신 충족하지 않습니다. `observed`는 선택된 관측의 포함을
-뜻하며 작업 완료·전체 호출 그래프 완전성·HEAD의 의미적 수락을 뜻하지 않습니다.
+뜻하며 작업 완료·전체 호출 그래프 완전성·Lode의 의미적 수락을 뜻하지 않습니다.
 CLI 중단 및 MCP 취소·연결 종료는 소유 worker가 종료된 후 정리됩니다.
 
 이 계약을 변경하기 전에 [아키텍처](architecture.md)와 [권한 평면](authority-plane-contract.md)을 읽으세요. 릴리스 전용 증거는 [Release observation](release-observation.md)에, 대상별 전달 이력은 [전달 상태 관측](delivery-observation.md)에, 작업별 정확한 포함 방식은 [Context Compiler](context-compiler.md)에 설명되어 있습니다.
@@ -69,7 +69,7 @@ Core는 같은 디렉터리의 atomic hard-link commit으로 각 create-only Obs
 
 Coverage는 complete, sampled, partial, unknown으로 명시됩니다. bounded enumeration이 query digest, 동일한 examined/source total과 omission 0을 제공할 때만 complete coverage를 받아들입니다. adapter가 sample을 complete라고 주장할 수 없습니다.
 
-재구축 가능한 공통 `ObservationStatusProjection`은 `CONFORMS_TO`, `EVIDENCED_BY`, `DERIVED_FROM`을 만듭니다. impact, motivation, measurement, ownership, success 또는 Feature link를 추론하지 않습니다. Delivery specialization은 정확히 보존된 World `FileRevision`을 검증한 뒤에만 `AT_REVISION`을 추가할 수 있고, declared revision 문자열에는 이 edge를 만들지 않습니다. 제품 해석은 HEAD가 작성한 `ProductHypothesis` 또는 기존 review-gated candidate flow가 담당합니다. `ProductSignal`은 원문 손실이 없는 사람/source 진술을 위해 유지되며 임의 payload field에서 만들어지지 않습니다.
+재구축 가능한 공통 `ObservationStatusProjection`은 `CONFORMS_TO`, `EVIDENCED_BY`, `DERIVED_FROM`을 만듭니다. impact, motivation, measurement, ownership, success 또는 Feature link를 추론하지 않습니다. Delivery specialization은 정확히 보존된 World `FileRevision`을 검증한 뒤에만 `AT_REVISION`을 추가할 수 있고, declared revision 문자열에는 이 edge를 만들지 않습니다. 제품 해석은 Lode가 작성한 `ProductHypothesis` 또는 기존 review-gated candidate flow가 담당합니다. `ProductSignal`은 원문 손실이 없는 사람/source 진술을 위해 유지되며 임의 payload field에서 만들어지지 않습니다.
 
 릴리스 증거는 엄격한 specialization이며 generic adapter로 대체되지 않습니다. `BranchStateObservation`, `DeploymentResultObservation`, `ReleaseObservation`은 정확한 Git reachability, approval, commit, ref와 lineage 검사를 유지합니다.
 
@@ -79,11 +79,11 @@ Coverage는 complete, sampled, partial, unknown으로 명시됩니다. bounded e
 
 ## Host adapter SDK와 reference file adapter
 
-`ObservationAdapterRegistry`는 process-local P5 Host registry입니다. adapter instance를 하나의 정확한 ready HEAD Project, `ObservationSourceBinding` 및 `ObservationTypeDescriptor`에 binding한 다음 structured Host input과 같은 Core verifier를 통해 collection을 위임합니다. 서로 다른 Project에서는 같은 source alias를 독립적으로 사용할 수 있지만 opaque source ID와 collection은 Project-bound입니다. registration에는 임의의 Core source-count gate가 없습니다. 비지속 P4 discovery view는 page당 최대 64개 source를 반환하며 exact type/adapter/availability filter와 현재 filtered registry projection에 binding된 opaque cursor를 제공합니다. source discovery에는 authority나 mutation effect가 없으므로 stale cursor는 명시적 resynchronization metadata와 함께 첫 page로 다시 시작하며 collection은 정확한 현재 Project와 source ID를 계속 재검증합니다. registry, source alias, source path, credential, cursor, provider identity와 polling state는 프로젝트에 기록되지 않습니다. Core는 project adapter code를 discover하거나 dynamically load하지 않으며, trusted Host composition만 adapter instance를 register할 수 있습니다.
+`ObservationAdapterRegistry`는 process-local P5 Host registry입니다. adapter instance를 하나의 정확한 ready Lode Project, `ObservationSourceBinding` 및 `ObservationTypeDescriptor`에 binding한 다음 structured Host input과 같은 Core verifier를 통해 collection을 위임합니다. 서로 다른 Project에서는 같은 source alias를 독립적으로 사용할 수 있지만 opaque source ID와 collection은 Project-bound입니다. registration에는 임의의 Core source-count gate가 없습니다. 비지속 P4 discovery view는 page당 최대 64개 source를 반환하며 exact type/adapter/availability filter와 현재 filtered registry projection에 binding된 opaque cursor를 제공합니다. source discovery에는 authority나 mutation effect가 없으므로 stale cursor는 명시적 resynchronization metadata와 함께 첫 page로 다시 시작하며 collection은 정확한 현재 Project와 source ID를 계속 재검증합니다. registry, source alias, source path, credential, cursor, provider identity와 polling state는 프로젝트에 기록되지 않습니다. Core는 project adapter code를 discover하거나 dynamically load하지 않으며, trusted Host composition만 adapter instance를 register할 수 있습니다.
 
 각 source projection은 bounded descriptor shape summary를 포함합니다. type/version, form, 최대 16개의 field key/type/required 조합과 omission count만 노출합니다. Host는 bounded operational availability state(`unknown`, `ready`, `auth-missing`, `rate-limited`, `unavailable`), timestamp, retry timestamp, stable reason code만 붙일 수 있습니다. 이 hint는 semantic authority가 false인 P5 operational evidence이며 product relevance ranking, freshness sufficiency 또는 instruction이 될 수 없습니다.
 
-제품별 adapter는 authentication, API query, pagination, rate limit, webhook acknowledgement와 cursor storage를 Core 외부에서 소유합니다. 하나의 bounded result를 공통 계약으로 normalize하고, Core는 검증된 P3 record와 receipt만 persist합니다. optional adapter가 없어도 HEAD는 막히지 않으며 adapter output은 제품 의미를 부여할 수 없습니다.
+제품별 adapter는 authentication, API query, pagination, rate limit, webhook acknowledgement와 cursor storage를 Core 외부에서 소유합니다. 하나의 bounded result를 공통 계약으로 normalize하고, Core는 검증된 P3 record와 receipt만 persist합니다. optional adapter가 없어도 Lode는 막히지 않으며 adapter output은 제품 의미를 부여할 수 없습니다.
 
 `JsonEventFileObservationAdapter`는 CI 또는 webhook spool integration을 위한 provider-neutral reference입니다. absolute Host path의 regular non-symlink JSON file 하나를 open하고, 열린 file identity를 검증하며, 512 KiB read bound를 적용한 뒤 collection 전에 raw event key와 전체 evidence를 hash합니다. source path, raw event key, source alias와 credential reference name은 persist되지 않습니다. event file에는 product-shaped event만 들어갑니다.
 
@@ -139,27 +139,27 @@ Coverage는 complete, sampled, partial, unknown으로 명시됩니다. bounded e
 
 ## 대화형 configured-source 흐름
 
-trusted Host composition은 Project-bound registry를 `serveMcp`에 전달합니다. provider HEAD가 필요한 exact `typeKey` 하나를 선택한 뒤 `head_observation_prepare`가 read-only reuse-first flow를 수행합니다. 현재 exact Observation ID를 먼저 query하고 source를 선택하거나 collect하지 않은 채 일치하는 configured source ID를 반환합니다. 기존 evidence가 의미적으로 충분하지 않고 durable current evidence가 실제로 필요할 때만 HEAD가 필요에 따라 `head_observation_sources`를 page/filter하고 선택한 ID로 `head_observation_collect_source`를 호출합니다.
+trusted Host composition은 Project-bound registry를 `serveMcp`에 전달합니다. provider Lode가 필요한 exact `typeKey` 하나를 선택한 뒤 `lode_observation_prepare`가 read-only reuse-first flow를 수행합니다. 현재 exact Observation ID를 먼저 query하고 source를 선택하거나 collect하지 않은 채 일치하는 configured source ID를 반환합니다. 기존 evidence가 의미적으로 충분하지 않고 durable current evidence가 실제로 필요할 때만 Lode가 필요에 따라 `lode_observation_sources`를 page/filter하고 선택한 ID로 `lode_observation_collect_source`를 호출합니다.
 
 ```text
 trusted Host configuration
-  -> head_observation_prepare(exact HEAD-selected typeKey)
+  -> lode_observation_prepare(exact Lode-selected typeKey)
   -> existing exact Observation IDs first
-  -> head_observation_sources only for paging or diagnosis
+  -> lode_observation_sources only for paging or diagnosis
   -> opaque Project-bound sourceId
-  -> head_observation_collect_source
+  -> lode_observation_collect_source
   -> verified P3 ObservationRecord + ObservationCollectionReceipt
 ```
 
-preparation projection은 semantic sufficiency를 판단하거나 lexical overlap으로 relevance를 추론하거나 source를 선택하거나 어떤 것도 persist하지 않습니다. provider HEAD가 conversation 안에서 그 판단을 수행합니다. 이 경로에서 model과 user는 file path, credential reference, binding, descriptor, digest, coverage claim, provider identity 또는 source alias를 제공하지 않습니다. Core는 adapter가 source에 접근하기 전에 Project readiness를 검증합니다. Host composition이 없으면 optional adapter unavailable 상태를 명시하며 user-authored provenance로 fallback하거나 공통 계약을 약화하지 않습니다. embedding Host는 고급 CLI composition에서도 같은 injected registry를 사용할 수 있지만 일반 standalone CLI는 adapter code나 configuration을 dynamically load하지 않습니다.
+preparation projection은 semantic sufficiency를 판단하거나 lexical overlap으로 relevance를 추론하거나 source를 선택하거나 어떤 것도 persist하지 않습니다. provider Lode가 conversation 안에서 그 판단을 수행합니다. 이 경로에서 model과 user는 file path, credential reference, binding, descriptor, digest, coverage claim, provider identity 또는 source alias를 제공하지 않습니다. Core는 adapter가 source에 접근하기 전에 Project readiness를 검증합니다. Host composition이 없으면 optional adapter unavailable 상태를 명시하며 user-authored provenance로 fallback하거나 공통 계약을 약화하지 않습니다. embedding Host는 고급 CLI composition에서도 같은 injected registry를 사용할 수 있지만 일반 standalone CLI는 adapter code나 configuration을 dynamically load하지 않습니다.
 
 ## Metric evidence workflow
 
-Metric workflow는 공통 계약을 얇게 사용하는 provider-neutral 경로이며 두 번째 analytics store가 아닙니다. `head_metric_define`은 unit과 desired direction을 포함한 versioned metric shape를 등록합니다. 정확한 replay는 idempotent하며, 동일 metric key와 version 아래에서 shape가 충돌하면 이후 lookup을 모호하게 만들지 않고 새 version을 사용하도록 요청하며 실패합니다.
+Metric workflow는 공통 계약을 얇게 사용하는 provider-neutral 경로이며 두 번째 analytics store가 아닙니다. `lode_metric_define`은 unit과 desired direction을 포함한 versioned metric shape를 등록합니다. 정확한 replay는 idempotent하며, 동일 metric key와 version 아래에서 shape가 충돌하면 이후 lookup을 모호하게 만들지 않고 새 version을 사용하도록 요청하며 실패합니다.
 
-`head_metric_observe`는 정확한 subject, value, time scope, source scope, 알려진 경우 sample size, coverage 및 collection-adapter identity를 기록합니다. Host가 observation time을 다시 제공하지 않고 같은 event를 retry하면 Core는 durable event time을 재사용하며, 같은 source event 아래에서 content가 달라지면 계속 fail closed됩니다. `head_metric_compare`는 정확히 같은 descriptor, subject, unit 및 direction에 대해서만 numeric difference를 허용합니다. Adapter key, adapter version, adapter descriptor digest, source scope, snapshot/aggregate form, period duration, sample size 또는 coverage state가 달라도 approval gate를 추가하지 않습니다. Numeric comparison은 계속 사용할 수 있지만 결과는 조건을 same, different, unknown으로 표시하고 normalization이 적용되지 않았음을 밝히며, like-for-like result로 보이지 않도록 derived coverage를 낮춥니다.
+`lode_metric_observe`는 정확한 subject, value, time scope, source scope, 알려진 경우 sample size, coverage 및 collection-adapter identity를 기록합니다. Host가 observation time을 다시 제공하지 않고 같은 event를 retry하면 Core는 durable event time을 재사용하며, 같은 source event 아래에서 content가 달라지면 계속 fail closed됩니다. `lode_metric_compare`는 정확히 같은 descriptor, subject, unit 및 direction에 대해서만 numeric difference를 허용합니다. Adapter key, adapter version, adapter descriptor digest, source scope, snapshot/aggregate form, period duration, sample size 또는 coverage state가 달라도 approval gate를 추가하지 않습니다. Numeric comparison은 계속 사용할 수 있지만 결과는 조건을 same, different, unknown으로 표시하고 normalization이 적용되지 않았음을 밝히며, like-for-like result로 보이지 않도록 derived coverage를 낮춥니다.
 
-`head_metric_assess`는 P3 ProductHypothesis만 기록하고 causality가 성립하지 않았음을 항상 명시합니다. 후속 제안은 별도 metric 형식화 호출 없이 정확한 평가 hypothesis ID를 인용해 `head_product_initiative_propose`로 만듭니다. Product Initiative candidate일 뿐이며 승인에는 기존의 명시적 user review가 필요합니다. `head_metric_status`와 `head_metric_trace`는 bounded read-only P4 view입니다. 어떤 operation도 Product Canon, ReviewDecision, Conformance disposition 또는 P2 recovery direction을 쓰지 않습니다.
+`lode_metric_assess`는 P3 ProductHypothesis만 기록하고 causality가 성립하지 않았음을 항상 명시합니다. 후속 제안은 별도 metric 형식화 호출 없이 정확한 평가 hypothesis ID를 인용해 `lode_product_initiative_propose`로 만듭니다. Product Initiative candidate일 뿐이며 승인에는 기존의 명시적 user review가 필요합니다. `lode_metric_status`와 `lode_metric_trace`는 bounded read-only P4 view입니다. 어떤 operation도 Product Canon, ReviewDecision, Conformance disposition 또는 P2 recovery direction을 쓰지 않습니다.
 
 ## Context와 사용법
 
@@ -179,11 +179,11 @@ permission·원본 게시 오류와 observation/receipt 또는 descriptor/compar
 
 ### 선택적인 Python 선언 조회
 
-사용자는 작업을 한 번 요청하고, HEAD가 JSON·digest·ID·파서·예산 선택을 사용자에게
+사용자는 작업을 한 번 요청하고, Lode가 JSON·digest·ID·파서·예산 선택을 사용자에게
 요구하지 않고 조회 방법을 판단합니다. 일반 파일 읽기나 이미 최신인 World 범위
 읽기로 충분하면 그대로 진행합니다. Python 파일이거나 선언 이름을 안다는 이유만으로
 Context 작업 흐름을 추가하지 않습니다. 좁은 증거, 정확한 선언 경계, 과제별 Context
-편입이 유용할 때 HEAD가 selected-source를 선택할 수 있으며, 매번 벤치마크·이유서·
+편입이 유용할 때 Lode가 selected-source를 선택할 수 있으며, 매번 벤치마크·이유서·
 승인을 요구하지 않습니다. 선택했다면 아는 유일한 선언은 바로 읽고 목록은 선택
 사항으로 둡니다. 이 작업 흐름 안의 `source`는 파일 텍스트를 Context에 넣는 기능으로,
 작은 파일이나 전체 파일 문맥에 적합하지만 일반 파일 읽기와 같지는 않습니다.
@@ -192,7 +192,7 @@ Context 작업 흐름을 추가하지 않습니다. 좁은 증거, 정확한 선
 있으며 Context Capsule을 만들지 않습니다. 출력 차이를 보편적 성능 우위로 해석하지
 않습니다.
 
-파서를 사용할 수 없거나 파싱 실패·증거 변경이 발생하면 HEAD는 재조회하거나 일반
+파서를 사용할 수 없거나 파싱 실패·증거 변경이 발생하면 Lode는 재조회하거나 일반
 읽기를 계속할 수 있습니다. 이를 정확한 선언 경계나 Context 포함을 검증한 것처럼
 표현하거나 오래된 선택 좌표를 재사용하지 않습니다. 독립 작업은 계속하고, 해소하지
 못한 사용자 의도 모호성이나 기존 권한 경계만 질문합니다. 매번 내부 상태나 조회
@@ -207,11 +207,11 @@ dispatch 직렬화 크기는 stdio 전송량이나 설치 Host 비용이 아닙�
 토큰·과금·프롬프트 캐시 절감은 미확인입니다. 이 측정은 선택 사항이지 사용·배포
 관문이 아닙니다.
 
-기존 `head_source_context`에서 `declarations`는 제한된 정적 선언 목록을,
+기존 `lode_source_context`에서 `declarations`는 제한된 정적 선언 목록을,
 `selected-source`는 알려진 정규화된 선언 이름의 원문을 조회합니다. 원문 조회 전에
 목록을 읽을 필요는 없습니다. CLI는 `--kind`로 선택하며, 단독 `--symbol`은 기존
-호출 관계 조회 의미를 유지합니다. 동명 선언은 HEAD가 응답의 정확한 선택 객체를
-typed MCP 또는 고급 CLI `--input`에 전달합니다. 일반 대화에서는 HEAD가 구조를
+호출 관계 조회 의미를 유지합니다. 동명 선언은 Lode가 응답의 정확한 선택 객체를
+typed MCP 또는 고급 CLI `--input`에 전달합니다. 일반 대화에서는 Lode가 구조를
 작성하며 사용자가 고급 API/CLI를 명시적으로 요청한 경우도 계속 지원합니다.
 
 새 선언 Context 상세에는 비보존 상태에서도 작은 `collectionProfile`을 포함합니다.
@@ -237,11 +237,11 @@ typed MCP 또는 고급 CLI `--input`에 전달합니다. 일반 대화에서는
 기본값은 비보존이며 이 선택적 읽기는 Canon, World, ReviewDecision 또는 복구
 방향을 생성하지 않습니다.
 
-Context compilation은 기본적으로 공통 observation을 제외합니다. HEAD가 semantic analysis를 수행하고 kind가 `observation`이며 `observationIds`에 불변 현재 ID가 들어 있는 EvidenceNeed로 정확한 identity를 요청합니다. Core는 포함 증명 gate, lexical eligibility 규칙, semantic promotion 또는 sufficiency judgment 없이 선택 근거, 제외 정보와 불확실성을 보존합니다.
+Context compilation은 기본적으로 공통 observation을 제외합니다. Lode가 semantic analysis를 수행하고 kind가 `observation`이며 `observationIds`에 불변 현재 ID가 들어 있는 EvidenceNeed로 정확한 identity를 요청합니다. Core는 포함 증명 gate, lexical eligibility 규칙, semantic promotion 또는 sufficiency judgment 없이 선택 근거, 제외 정보와 불확실성을 보존합니다.
 
-일상적인 inspection은 ephemeral하게 유지합니다. cross-Run, rebuttal/audit, handoff, context-loss evidence가 필요할 때만 Observation을 persist합니다. 사용자가 아니라 Host adapter가 정확한 source binding, descriptor, digest, coverage, provenance confirmation을 구성합니다. `observation-ingest`와 `head_observation_ingest`는 이미 bounded된 input을 위한 고급 Host/CI surface입니다. 중복 collect 호환 별칭은 제거했습니다. `observation-source-collect`와 `head_observation_collect_source`는 설정된 Host 소스에서 자료를 수집하는 별도 surface로 유지되며, 이미 bounded된 input을 수신하는 ingestion의 별칭이 아닙니다.
+일상적인 inspection은 ephemeral하게 유지합니다. cross-Run, rebuttal/audit, handoff, context-loss evidence가 필요할 때만 Observation을 persist합니다. 사용자가 아니라 Host adapter가 정확한 source binding, descriptor, digest, coverage, provenance confirmation을 구성합니다. `observation-ingest`와 `lode_observation_ingest`는 이미 bounded된 input을 위한 고급 Host/CI surface입니다. 중복 collect 호환 별칭은 제거했습니다. `observation-source-collect`와 `lode_observation_collect_source`는 설정된 Host 소스에서 자료를 수집하는 별도 surface로 유지되며, 이미 bounded된 input을 수신하는 ingestion의 별칭이 아닙니다.
 
-`observation-query`와 `head_observation_query`는 전체 payload node 없이 전체 보존 자료의 개수·graph policy인 `inventorySummary`와 필터된 페이지를 함께 반환합니다. 별도 status 호출은 없습니다. `inventorySummary`는 필터된 match count가 아니며 빈 페이지가 보존 자료의 부재를 뜻하지 않습니다. 조회는 type, subject, source, time, observed/derived kind로 정확한 현재 identity를 필터링하며 최대 page는 100입니다. cursor continuation은 정확한 현재 `ObservationStatusProjection`에 binding되고 drift 시 fail closed합니다. query result에는 payload body 대신 payload digest가 들어갑니다. exact read surface는 선택한 record, descriptor, bounded receipt 또는 derivation lineage를 반환합니다. query는 discovery일 뿐 semantic selection, Context eligibility, sufficiency judgment가 아닙니다.
+`observation-query`와 `lode_observation_query`는 전체 payload node 없이 전체 보존 자료의 개수·graph policy인 `inventorySummary`와 필터된 페이지를 함께 반환합니다. 별도 status 호출은 없습니다. `inventorySummary`는 필터된 match count가 아니며 빈 페이지가 보존 자료의 부재를 뜻하지 않습니다. 조회는 type, subject, source, time, observed/derived kind로 정확한 현재 identity를 필터링하며 최대 page는 100입니다. cursor continuation은 정확한 현재 `ObservationStatusProjection`에 binding되고 drift 시 fail closed합니다. query result에는 payload body 대신 payload digest가 들어갑니다. exact read surface는 선택한 record, descriptor, bounded receipt 또는 derivation lineage를 반환합니다. query는 discovery일 뿐 semantic selection, Context eligibility, sufficiency judgment가 아닙니다.
 
 ## 수락 속성
 
@@ -253,7 +253,7 @@ Context compilation은 기본적으로 공통 observation을 제외합니다. HE
 - false completeness, schema drift, authority drift와 divergent replay는 fail closed됩니다.
 - status와 query output은 bounded 상태를 유지하고 discovery를 semantic selection으로 바꾸지 않습니다.
 - lexical overlap이 있어도 기본 Capsule compilation에는 common observation이 포함되지 않습니다.
-- 정확한 HEAD EvidenceNeed는 이름으로 지정한 immutable record만 포함합니다.
+- 정확한 Lode EvidenceNeed는 이름으로 지정한 immutable record만 포함합니다.
 - derived record와 projection은 semantic graph relation을 추가할 수 없습니다.
 - hypothesis는 정확한 observation을 참조해도 non-authoritative 상태를 유지합니다.
 - CLI와 MCP는 같은 Core identity를 반환합니다.
@@ -263,7 +263,7 @@ Context compilation은 기본적으로 공통 observation을 제외합니다. HE
 - stale source cursor는 사용자에게 recovery ritual을 요구하지 않고 non-authoritative resynchronization을 명시하며 다시 시작합니다.
 - source shape 및 availability summary는 bounded, non-semantic, non-instructional, non-persisted입니다.
 - reuse-first preparation은 matching configured source보다 기존 exact Observation ID를 먼저 반환하며 sufficiency를 판단하거나 자동 collect하지 않습니다.
-- 등록된 모든 source ID는 하나의 정확한 HEAD Project에 binding되며 다른 Project로 collect할 수 없습니다.
+- 등록된 모든 source ID는 하나의 정확한 Lode Project에 binding되며 다른 Project로 collect할 수 없습니다.
 - external adapter collection 전에 Project readiness를 검증합니다.
 - conversational source flow는 opaque configured source ID만 받고 user에게 provenance structure를 요구하지 않습니다.
 - reference event-file adapter는 Host path, raw event key, source alias 또는 credential reference를 persist하지 않으면서 서로 무관한 product schema를 받아들입니다.

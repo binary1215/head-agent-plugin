@@ -5,9 +5,9 @@ import path from "node:path";
 import test from "node:test";
 
 const pluginRoot = path.resolve(import.meta.dirname, "..");
-const skillRoot = path.join(pluginRoot, "skills", "head-agent-core");
+const skillRoot = path.join(pluginRoot, "skills", "lode-agent-core");
 const files = ["SKILL.md", "references/runtime-composition.md", "references/conversation-ux.md", "references/authority-and-roles.md",
-  "references/project-discovery.md", "references/context-workflow.md", "references/recovery-workflow.md"];
+  "references/project-discovery.md", "references/context-workflow.md", "references/recovery-workflow.md", "references/context-compiler.md"];
 
 // This checks this Skill's inline Markdown links and ATX heading anchors, not
 // model behavior or every CommonMark extension. Ignore examples in code fences.
@@ -55,23 +55,29 @@ function verifyLinks(file, root) {
 }
 
 function fixture(t) {
-  const parent = fs.realpathSync(process.env.HEAD_AGENT_TEST_TMP || os.tmpdir());
-  const root = fs.mkdtempSync(path.join(parent, "head-skill-links-"));
+  const parent = fs.realpathSync(process.env.LODE_AGENT_TEST_TMP || process.env.HEAD_AGENT_TEST_TMP || os.tmpdir());
+  const root = fs.mkdtempSync(path.join(parent, "lode-skill-links-"));
   t.after(() => { assert.equal(path.dirname(root), parent); fs.rmSync(root, { recursive: true }); });
   const source = path.join(root, "SKILL.md"), reference = path.join(root, "reference.md");
   fs.writeFileSync(reference, "# Follow-up handoffs\n## Follow-up handoffs\n\n```md\n## Not a heading\n```\n");
   return { root, source, reference };
 }
 
-test("HEAD Skill and changed references route to existing files and anchors", () => {
+test("Lode Skills and all Core references route to existing files and anchors", () => {
   const checked = new Map(files.map((relative) => [relative, verifyLinks(path.join(skillRoot, relative), pluginRoot)]));
   for (const target of ["references/runtime-composition.md", "references/runtime-composition.md#follow-up-handoffs", "references/conversation-ux.md"]) {
     assert(checked.get("SKILL.md").includes(target), `Missing discoverable Markdown route: ${target}`);
   }
   assert(checked.get("references/runtime-composition.md").includes("conversation-ux.md#recovery-presentation"));
-  assert(checked.get("SKILL.md").includes("../head-conversation/SKILL.md"));
-  assert(checked.get("references/conversation-ux.md").includes("../../head-conversation/SKILL.md"));
-  verifyLinks(path.join(pluginRoot, "skills/head-conversation/SKILL.md"), pluginRoot);
+  assert(checked.get("SKILL.md").includes("../lode-conversation/SKILL.md"));
+  assert(checked.get("references/conversation-ux.md").includes("../../lode-conversation/SKILL.md"));
+  verifyLinks(path.join(pluginRoot, "skills/lode-conversation/SKILL.md"), pluginRoot);
+  const onboarding = verifyLinks(path.join(pluginRoot, "skills/lode-agent-onboarding/SKILL.md"), pluginRoot);
+  assert(onboarding.includes("../lode-agent-core/SKILL.md"), "Onboarding must route ordinary adoption to the actual Core Skill");
+  for (const name of ["lode-agent-core", "lode-agent-onboarding", "lode-conversation"]) {
+    const source = fs.readFileSync(path.join(pluginRoot, "skills", name, "SKILL.md"), "utf8");
+    assert.match(source, new RegExp(`^---\\r?\\nname: ${name}\\r?\\n`));
+  }
 });
 
 test("link checker accepts local, same-page and duplicate-heading fragments", (t) => {

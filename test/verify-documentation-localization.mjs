@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -85,6 +86,33 @@ function assertLinksExist(filePath, markdown) {
   }
 }
 
+function htmlImages(markdown) {
+  return [...markdown.matchAll(/<img\b([^>]+)>/gi)].map(([, body]) => {
+    const attributes = {};
+    for (const [, name, , value] of body.matchAll(/([a-z][\w-]*)\s*=\s*(["'])(.*?)\2/gi)) {
+      const key = name.toLowerCase();
+      assert(!Object.hasOwn(attributes, key), `Duplicate image attribute: ${key}`);
+      attributes[key] = value;
+    }
+    return attributes;
+  });
+}
+
+function assertHtmlImages(filePath, markdown) {
+  const images = htmlImages(markdown);
+  for (const image of images) {
+    assert(typeof image.src === "string" && image.src.length > 0, "HTML image requires a relative src");
+    const source = decodeURIComponent(image.src);
+    assert(!/^[a-z][a-z0-9+.-]*:|^[\\/]|[\\?#]/i.test(source), "HTML image src must be a local relative path");
+    const target = path.resolve(path.dirname(filePath), source), relative = path.relative(root, target);
+    assert(relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative), "HTML image escapes documentation root");
+    assert(fs.statSync(target, { throwIfNoEntry: false })?.isFile(), `Missing HTML image: ${image.src}`);
+    assert(image.alt?.trim(), "HTML image requires readable alt text");
+    assert(/^[1-9][0-9]*$/.test(image.width || ""), "HTML image requires a positive proportional width");
+  }
+  return images;
+}
+
 function expectedKoreanTarget(sourcePath, target) {
   if (isExternal(target) || !withoutFragment(target)) return target;
   const suffix = target.slice(withoutFragment(target).length);
@@ -124,7 +152,7 @@ for (const name of englishFiles) {
   assert.deepEqual(koreanFences, sourceFences, `${name} must preserve fenced code blocks byte-for-byte apart from line endings`);
   assert.deepEqual(inlineCode(koreanComparable).sort(), inlineCode(source).sort(), `${name} must preserve the inline code token multiset`);
 
-  if (name !== "HEAD-Agent_GraphDB_Brief_v4.md") {
+  if (name !== "Lode_GraphDB_Brief_v4.md") {
     const prose = korean.replace(/```[\s\S]*?```|~~~[\s\S]*?~~~/g, "");
     assert.ok((prose.match(/[가-힣]/g) ?? []).length >= 40, `${name} does not contain enough Korean prose`);
   }
@@ -157,7 +185,21 @@ for (const readmeName of ["README.md", "README.ko.md"]) {
   const readme = fs.readFileSync(path.join(root, readmeName), "utf8");
   assert.match(readme, /docs\/README\.md/, `${readmeName} must link the English documentation index`);
   assert.match(readme, /docs\/ko\/README\.md/, `${readmeName} must link the Korean documentation index`);
+  assertLinksExist(path.join(root, readmeName), readme);
+  const firstImage = assertHtmlImages(path.join(root, readmeName), readme)[0];
+  assert.deepEqual(firstImage, { src: "docs/assets/branding/lode-readme-wordmark.png", alt: "Lode Agent Core", width: "720" }, `${readmeName} must retain the accepted wordmark attributes`);
 }
+
+for (const [relative, expected] of [
+  ["docs/assets/branding/lode-readme-wordmark.png", "23045a8fdb4cde11f0ca0f5cdea4feb19c0057b4a6c60d126f5f133d4d5ee78a"],
+  ["docs/assets/branding/lode-repository-icon.png", "742b3cca51efa3b0d1d16dd647fbc050de115df84caac6beb1357171630baffa"],
+]) assert.equal(crypto.createHash("sha256").update(fs.readFileSync(path.join(root, relative))).digest("hex"), expected, `Approved image pixels/bytes changed: ${relative}`);
+
+const imageFixtureBase = path.join(root, "README.md");
+assert.throws(() => assertHtmlImages(imageFixtureBase, '<img src="docs/assets/branding/missing.png" alt="Missing" width="720">'), /Missing HTML image/);
+assert.throws(() => assertHtmlImages(imageFixtureBase, '<img src="../outside.png" alt="Escape" width="720">'), /escapes documentation root/);
+assert.throws(() => assertHtmlImages(imageFixtureBase, '<img src="https://example.invalid/image.png" alt="External" width="720">'), /local relative path/);
+assert.throws(() => htmlImages('<img src="one.png" src="two.png">'), /Duplicate image attribute/);
 
 const koreanReadme = fs.readFileSync(path.join(root, "README.ko.md"), "utf8");
 const englishReadme = fs.readFileSync(path.join(root, "README.md"), "utf8");

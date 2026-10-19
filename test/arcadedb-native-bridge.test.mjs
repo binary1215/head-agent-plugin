@@ -17,11 +17,11 @@ import { ArcadeDbHttpTransport, buildArcadeDbBridgeEnvironment } from "../script
 const javascriptBridge = fileURLToPath(new URL("../scripts/lib/arcadedb-http-bridge.mjs", import.meta.url));
 
 const targets = {
-  "darwin-arm64": { directory: "darwin-arm64", executable: "head-agent-arcadedb-bridge" },
-  "darwin-x64": { directory: "darwin-x64", executable: "head-agent-arcadedb-bridge" },
-  "linux-arm64": { directory: "linux-arm64", executable: "head-agent-arcadedb-bridge" },
-  "linux-x64": { directory: "linux-x64", executable: "head-agent-arcadedb-bridge" },
-  "win32-x64": { directory: "windows-x64", executable: "head-agent-arcadedb-bridge.exe" },
+  "darwin-arm64": { directory: "darwin-arm64", executable: "lode-agent-arcadedb-bridge" },
+  "darwin-x64": { directory: "darwin-x64", executable: "lode-agent-arcadedb-bridge" },
+  "linux-arm64": { directory: "linux-arm64", executable: "lode-agent-arcadedb-bridge" },
+  "linux-x64": { directory: "linux-x64", executable: "lode-agent-arcadedb-bridge" },
+  "win32-x64": { directory: "windows-x64", executable: "lode-agent-arcadedb-bridge.exe" },
 };
 
 test("pins the read-only ArcadeDB native bridge to one target binary and authority contract", () => {

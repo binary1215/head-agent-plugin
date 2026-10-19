@@ -59,8 +59,8 @@ An adapter that claims project canon, instruction, promotion, or unique authorit
 The default local adapter stores:
 
 ```text
-.head/graph-projection/current.json
-.head/graph-projection/snapshots/graph-snapshot-*.json
+.lode/graph-projection/current.json
+.lode/graph-projection/snapshots/graph-snapshot-*.json
 ```
 
 The snapshot is immutable and byte-semantically equivalent under canonical JSON to the verified graph embedded in the current World Model. The pointer is content-addressed and records the project, GraphSnapshot, GraphSnapshot hash, and SourceSnapshot identities plus the non-authoritative projection flags.
@@ -69,7 +69,7 @@ World Model indexing writes and verifies the immutable World Model snapshot, mat
 
 ## Query and fallback behavior
 
-Temporal traversal protocol `0.2.0` first computes the deterministic reference contract from the embedded recoverable GraphSnapshot. Lexical discovery and exact HEAD-proposed anchors are mutually exclusive. Exact mode binds one to 32 eligible node IDs to the current GraphSnapshot and cannot widen the caller's relation, authority, freshness, confidence, depth, node, edge, or candidate policy. A current adapter query must return the exact same canonical `TemporalTraversalResult`, including GraphSnapshot, query, result identities, ordering, bounds, inclusion, and exclusion reasons.
+Temporal traversal protocol `0.2.0` first computes the deterministic reference contract from the embedded recoverable GraphSnapshot. Lexical discovery and exact Lode-proposed anchors are mutually exclusive. Exact mode binds one to 32 eligible node IDs to the current GraphSnapshot and cannot widen the caller's relation, authority, freshness, confidence, depth, node, edge, or candidate policy. A current adapter query must return the exact same canonical `TemporalTraversalResult`, including GraphSnapshot, query, result identities, ordering, bounds, inclusion, and exclusion reasons.
 
 - current adapter: query through the adapter and reject any semantic mismatch;
 - no materialized adapter pointer: use the embedded graph and disclose `GRAPH_PROJECTION_NOT_MATERIALIZED`;
@@ -84,19 +84,19 @@ The reference comparison intentionally favors correctness over acceleration. `Pr
 Onboarding persists only the ArcadeDB endpoint, database, and environment-style username/password reference names. Selection alone is pending configuration and does not activate remote I/O. With both referenced environment variables available, activation is explicit:
 
 ```powershell
-node scripts/head.mjs world-graph-remote-database-status C:\path\to\project
-node scripts/head.mjs world-graph-remote-database-initialize C:\path\to\project
-node scripts/head.mjs world-graph-remote-activate C:\path\to\project
-node scripts/head.mjs world-graph-remote-status C:\path\to\project
+node scripts/lode.mjs world-graph-remote-database-status C:\path\to\project
+node scripts/lode.mjs world-graph-remote-database-initialize C:\path\to\project
+node scripts/lode.mjs world-graph-remote-activate C:\path\to\project
+node scripts/lode.mjs world-graph-remote-status C:\path\to\project
 ```
 
-Database status is read-only and reports a content-derived compatibility audit without endpoint, database name, credential value, or record identity. Initialization creates a missing selected database. Existing unrelated types do not block activation and are never a reset reason. The nine `HeadAgentGraph*` reserved types are checked for kind, properties, exact UNIQUE keys and relevant write constraints. Observed keys and constraints are bound into the audit hash. Missing types/properties/indexes are a compatible partial schema, not proof of activation readiness. Unavailable metadata is unverified, not permission to reset. A proven incompatible reserved contract permits an explicit whole-database reset only with both `--reset-incompatible true` and an exact `--confirm-database` match; inspection and non-destructive repair remain alternatives. Reset invalidates mutable pointers, retaining immutable receipts and the local graph mirror. Activation verifies the provisioned reserved schema before graph writes. This is not a generic migration engine or a version-wide gate.
+Database status is read-only and reports a content-derived compatibility audit without endpoint, database name, credential value, or record identity. Initialization creates a missing selected database. Existing unrelated types do not block activation and are never a reset reason. The nine `LodeAgentGraph*` reserved types are checked for kind, properties, exact UNIQUE keys and relevant write constraints. Observed keys and constraints are bound into the audit hash. Missing types/properties/indexes are a compatible partial schema, not proof of activation readiness. Unavailable metadata is unverified, not permission to reset. A proven incompatible reserved contract permits an explicit whole-database reset only with both `--reset-incompatible true` and an exact `--confirm-database` match; inspection and non-destructive repair remain alternatives. Reset invalidates mutable pointers, retaining immutable receipts and the local graph mirror. Activation verifies the provisioned reserved schema before graph writes. This is not a generic migration engine or a version-wide gate.
 
 Activation provisions the projection, topology and sync schema, compares current and target graphs, and writes a content-addressed delta manifest. Batches default to at most 50 records, with a maximum of 200. Exact records use semantic identity; snapshot-only changes use compact rebase records, while new or changed content uses full canonical JSON. Every call reads actual batch content, even if a checkpoint exists. Exact content needs no repeated batch write; foreign content is preserved as conflict, and partial or unverified effects remain unknown. Missing checkpoints are not evidence that a write never ran. New batch writes use create-only records and required UNIQUE keys, not node UPSERT; a competing insert cannot be overwritten. Response loss is reconciled by exact read-back, never an unconditional batch/SQL retry. These adapter guarantees are required of alternative transports as well.
 
 Header/body transport failure on the first read can use an exact verified local mirror only before any remote observation, including a null result. Authentication, malformed or empty successful query responses, integrity errors, and size limits do not trigger that fallback. JS and Go read bridges reject empty success bodies. Write response loss is a potentially applied effect and remains unknown unless exact read-back proves it; neither local fallback nor read failure authorizes a write replay. These are operational boundaries, not new Core-only workflow gates. Local fixtures do not establish live ArcadeDB conformance.
 
-After all batches are complete, activation writes and verifies the complete topology plus a small topology-backed GraphSnapshot envelope instead of duplicating the full graph JSON remotely. Baseline adapter equivalence and prepared server-traversal conformance use a staged target pointer, so neither pass can make the candidate current. Only after both passes and the local recovery snapshot succeed does a single conditional pointer update advance an existing pointer from the exact observed predecessor; an initial pointer uses the project-unique index as its compare-and-insert fence. The result is re-read, a different predecessor fails closed, and an already installed identical target is accepted idempotently. The local pointer then mirrors it atomically. `.head/graph-projection/arcadedb/sync/receipts` records a content-derived receipt binding manifest, checkpoint set, prior/final pointers, full snapshot/topology verification, local recovery, and the atomic transition. Credential values, endpoints, target names, server record identities, and timing remain excluded.
+After all batches are complete, activation writes and verifies the complete topology plus a small topology-backed GraphSnapshot envelope instead of duplicating the full graph JSON remotely. Baseline adapter equivalence and prepared server-traversal conformance use a staged target pointer, so neither pass can make the candidate current. Only after both passes and the local recovery snapshot succeed does a single conditional pointer update advance an existing pointer from the exact observed predecessor; an initial pointer uses the project-unique index as its compare-and-insert fence. The result is re-read, a different predecessor fails closed, and an already installed identical target is accepted idempotently. The local pointer then mirrors it atomically. `.lode/graph-projection/arcadedb/sync/receipts` records a content-derived receipt binding manifest, checkpoint set, prior/final pointers, full snapshot/topology verification, local recovery, and the atomic transition. Credential values, endpoints, target names, server record identities, and timing remain excluded.
 
 The local canonical GraphSnapshot remains the independent recovery source. The remote topology-backed envelope reconstructs that exact graph from snapshot-scoped vertices and edges and rejects count, set-digest, topology, byte-length, or full-content mismatch. Every vertex stores the exact semantic node JSON and every edge stores the exact semantic edge JSON while ArcadeDB record IDs remain operational details. The topology manifest binds the project, GraphSnapshot, SourceSnapshot, sorted node and edge set digests, counts, and non-authority flags to a content-derived identity. Unique indexes bind vertices and edges to `(projectId, graphSnapshotId, semanticId)` without making those database indexes semantic identity.
 
@@ -146,8 +146,8 @@ After activation, the default adapter mirrors every successful remote snapshot a
 - `world-graph-status`: read and verify projection state;
 - `world-graph-remote-activate` and `world-graph-remote-status`: explicit activation and read-only remote status;
 - `world-graph-remote-database-status` and `world-graph-remote-database-initialize`: read-only compatibility audit and explicit exact-target provisioning/reset boundary;
-- `head_graph_projection_status`: read-only MCP equivalent;
-- `head_graphdb_projection_status` and `head_graphdb_database_status`: read-only MCP activation and compatibility status equivalents;
+- `lode_graph_projection_status`: read-only MCP equivalent;
+- `lode_graphdb_projection_status` and `lode_graphdb_database_status`: read-only MCP activation and compatibility status equivalents;
 - `world-temporal`, MCP temporal traversal, and Context Compiler temporal expansion use the adapter boundary while preserving result identity.
 - the separate [`DocumentProjectionAdapter`](document-projection-adapter.md) consumes the verified GraphSnapshot for deterministic Markdown without changing graph identity.
 
@@ -164,7 +164,7 @@ After activation, the default adapter mirrors every successful remote snapshot a
 Automated tests use an in-memory transport and do not require or mutate a user GraphDB. Database initialization and graph activation are the only explicit remote mutation surfaces; neither accepts credential values as arguments.
 
 The optional ArcadeDB native read bridge is a separate exact child, not the Go
-computation worker. `HEAD_AGENT_ARCADEDB_NATIVE_MODE=auto|off|required` selects
+computation worker. `LODE_AGENT_ARCADEDB_NATIVE_MODE=auto|off|required` selects
 its runtime availability policy. Missing native capability may use the
 JavaScript reference exact child only in `auto`; selected binary or manifest
 integrity drift fails closed in every mode. Both exact children receive only the

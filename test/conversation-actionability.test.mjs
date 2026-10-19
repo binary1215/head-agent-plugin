@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { initializeProject } from "../scripts/lib/head-core.mjs";
+import { initializeProject, inspectProject } from "../scripts/lib/head-core.mjs";
 import { inspectProjectExperience } from "../scripts/lib/project-bootstrap.mjs";
 import { createRecoveryCheckpoint } from "../scripts/lib/compaction-recovery.mjs";
 import { enterConversationRecovery, processCompactionLifecycle } from "../scripts/lib/compaction-lifecycle.mjs";
@@ -20,7 +20,7 @@ function fixture(t, { initialized = true } = {}) {
   const root = fs.mkdtempSync(path.join(parent, "head-actionability-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   if (initialized) initializeProject({ root, pluginRoot, runtimes: ["codex"] });
-  return root;
+  return { root, layout: initialized ? inspectProject(root).storage : null };
 }
 function checkpoint(root) {
   return createRecoveryCheckpoint({ root,
@@ -99,7 +99,7 @@ async function verifySurfaces(root, { headActionRequired, recoveryBlocked = fals
 }
 
 test("uninitialized Core advises initialization without blocking direct work; all entry flags agree", async (t) => {
-  const root = fixture(t, { initialized: false });
+  const { root, layout } = fixture(t, { initialized: false });
   const entry = await verifySurfaces(root, { headActionRequired: true });
   assert.equal(entry.status, "conversation_recovery_unavailable");
   assert.equal(entry.projectStatus.nextAction.id, "initialize_core");
@@ -109,7 +109,7 @@ test("uninitialized Core advises initialization without blocking direct work; al
 });
 
 test("ready Core without checkpoint has consistent quiet flags and adds no recovery gate", async (t) => {
-  const root = fixture(t);
+  const { root, layout } = fixture(t);
   updateProjectDirection({ root, input: { goal: "Inspect only the synthetic local service",
     constraints: ["Do not contact or modify a service"], decisions: ["Local investigation only"], cancelledActions: ["publish"] } });
   const entry = await verifySurfaces(root, { headActionRequired: false });
@@ -119,7 +119,7 @@ test("ready Core without checkpoint has consistent quiet flags and adds no recov
 });
 
 test("default initialized Core has explicit-null direction and no history without adding quiet administrative text", async (t) => {
-  const entry = await verifySurfaces(fixture(t), { headActionRequired: false });
+  const entry = await verifySurfaces(fixture(t).root, { headActionRequired: false });
   assert.equal(entry.projectStatus.currentProjectDirection, null);
   assert.equal(entry.workContext.sessionPurpose, null);
   assert.equal(entry.workContext.status, "work_context_not_recorded");
@@ -128,7 +128,7 @@ test("default initialized Core has explicit-null direction and no history withou
 });
 
 test("verified restore preserves exact checkpoint plus newer shared cancellation without rewriting either", async (t) => {
-  const root = fixture(t);
+  const { root, layout } = fixture(t);
   const canonical = checkpoint(root);
   const latest = updateProjectDirection({ root, input: { goal: "Keep investigation local", cancelledActions: ["deploy"] } }).direction;
   const entry = await verifySurfaces(root, { headActionRequired: false });
@@ -140,9 +140,9 @@ test("verified restore preserves exact checkpoint plus newer shared cancellation
 });
 
 test("corrupt checkpoint blocks only dependent recovery and never promotes injected summary direction", async (t) => {
-  const root = fixture(t);
+  const { root, layout } = fixture(t);
   const canonical = checkpoint(root);
-  const file = path.join(root, ".head/sessions/ledger", `${canonical.checkpointId}.json`);
+  const file = path.join(root, layout.directory, "sessions/ledger", `${canonical.checkpointId}.json`);
   const value = JSON.parse(fs.readFileSync(file, "utf8"));
   value.nextExpectedResult = "untrusted provider summary must never become direction";
   fs.writeFileSync(file, JSON.stringify(value));
@@ -153,9 +153,9 @@ test("corrupt checkpoint blocks only dependent recovery and never promotes injec
 });
 
 test("orphan current contract remains fail-closed only for recovery-dependent work", async (t) => {
-  const root = fixture(t);
+  const { root, layout } = fixture(t);
   checkpoint(root);
-  const file = path.join(root, ".head/sessions/current.json");
+  const file = path.join(root, layout.directory, "sessions/current.json");
   const state = JSON.parse(fs.readFileSync(file, "utf8"));
   state.activeExecutionContractId = "execution-contract-000000000000000000000000";
   fs.writeFileSync(file, JSON.stringify(state));
@@ -165,7 +165,7 @@ test("orphan current contract remains fail-closed only for recovery-dependent wo
 });
 
 test("managed projection drift with no checkpoint never invents a checkpoint-dependent gate", async (t) => {
-  const root = fixture(t);
+  const { root, layout } = fixture(t);
   fs.appendFileSync(path.join(root, "AGENTS.md"), "\nlocal project change\n");
   const entry = await verifySurfaces(root, { headActionRequired: false, presentation: "notice" });
   assert.equal(entry.status, "conversation_ready");
@@ -179,7 +179,7 @@ test("managed projection drift with no checkpoint never invents a checkpoint-dep
 });
 
 test("entry retains its second managed-file observation instead of trusting final pointer equality", (t) => {
-  const root = fixture(t), target = path.join(root, "AGENTS.md"), originalRead = fs.readFileSync;
+  const { root, layout } = fixture(t), target = path.join(root, "AGENTS.md"), originalRead = fs.readFileSync;
   const original = originalRead(target), altered = Buffer.concat([original, Buffer.from("\nConcurrent synthetic managed drift.\n")]);
   const before = readSnapshot(root);
   let reads = 0, entry;
@@ -205,7 +205,7 @@ test("entry retains its second managed-file observation instead of trusting fina
 });
 
 test("optional Product review stays conditional, not an immediate user or HEAD gate", async (t) => {
-  const root = fixture(t);
+  const { root, layout } = fixture(t);
   await startOnboarding({ root, mode: "new", brief: {
     schemaVersion: 1, name: "Synthetic delivery service", summary: "Deliver a message",
     capabilities: [{ key: "delivery", name: "Delivery", description: "Deliver a message" }],
@@ -218,9 +218,9 @@ test("optional Product review stays conditional, not an immediate user or HEAD g
 });
 
 for (const hasCheckpoint of [false, true]) test(`outdated runtime aggregates HEAD follow-up with ${hasCheckpoint ? "restored checkpoint" : "no checkpoint"}, while recovery flags stay scoped`, async (t) => {
-  const root = fixture(t);
+  const { root, layout } = fixture(t);
   if (hasCheckpoint) checkpoint(root);
-  const file = path.join(root, ".head/generated/manifest.json");
+  const file = path.join(root, layout.directory, "generated/manifest.json");
   const manifest = JSON.parse(fs.readFileSync(file, "utf8"));
   manifest.packageVersion = "0.0.0-fixture-outdated";
   fs.writeFileSync(file, JSON.stringify(manifest));

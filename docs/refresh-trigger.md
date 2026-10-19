@@ -66,7 +66,7 @@ Batch construction:
 - records bounded overflow as `event-limit-exceeded` and forces a full rescan;
 - excludes timer duration, arrival timestamps, backend record IDs, and process identity from semantic batch identity.
 
-Events under `.head`, `.git`, dependency/vendor trees, build outputs, and caches do not schedule a refresh by themselves. This prevents the trigger artifacts written under `.head` from recursively triggering the watcher. If excluded events arrive beside a real project event, their dropped count remains visible in the batch evidence.
+Events under `.lode`, `.git`, dependency/vendor trees, build outputs, and caches do not schedule a refresh by themselves. This prevents the trigger artifacts written under `.lode` from recursively triggering the watcher. If excluded events arrive beside a real project event, their dropped count remains visible in the batch evidence.
 
 The queue serializes deliveries in arrival-batch order. A second batch may accumulate while the first scan runs, but two deliveries from one queue never execute concurrently.
 
@@ -95,10 +95,10 @@ If another process owns the World Model writer lease, only `REFRESH_WRITER_BUSY`
 The local reference stores:
 
 ```text
-.head/refresh/triggers/batches/refresh-trigger-batch-*.json
-.head/refresh/triggers/deliveries/refresh-trigger-delivery-*.json
-.head/refresh/triggers/current.json
-.head/document-projection/post-refresh/receipts/post-refresh-projection-receipt-*.json
+.lode/refresh/triggers/batches/refresh-trigger-batch-*.json
+.lode/refresh/triggers/deliveries/refresh-trigger-delivery-*.json
+.lode/refresh/triggers/current.json
+.lode/document-projection/post-refresh/receipts/post-refresh-projection-receipt-*.json
 ```
 
 Batch and delivery files are immutable and content-derived. `current.json` is a replaceable digest-verified pointer.
@@ -108,7 +108,7 @@ Batch and delivery files are immutable and content-derived. `current.json` is a 
 Every persistent World Model build, including explicit indexing plus manual, filesystem, and CI refresh, acquires the same project-scoped lease:
 
 ```text
-.head/refresh/writer.lock/owner.json
+.lode/refresh/writer.lock/owner.json
 ```
 
 Directory creation is the cross-process exclusive operation. The owner document is operational metadata only and contains process ID, random token, start time, and false authority flags. A nested trigger delivery may reuse only a verified lease owned by the same process and project. This makes all core World Model pointer writers mutually exclusive; triggered refresh additionally verifies that the current pointer still matches its preview base.
@@ -135,10 +135,10 @@ Structured CI ingestion uses an input file:
 ```
 
 ```powershell
-node scripts/head.mjs world-refresh-events <project> --input refresh-events.json
-node scripts/head.mjs world-refresh-watch <project> --debounce-ms 350 --max-events 1024
-node scripts/head.mjs world-refresh-trigger-status <project>
-node scripts/head.mjs world-refresh-trigger-read <project> --delivery refresh-trigger-delivery-<24-hex>
+node scripts/lode.mjs world-refresh-events <project> --input refresh-events.json
+node scripts/lode.mjs world-refresh-watch <project> --debounce-ms 350 --max-events 1024
+node scripts/lode.mjs world-refresh-trigger-status <project>
+node scripts/lode.mjs world-refresh-trigger-read <project> --delivery refresh-trigger-delivery-<24-hex>
 ```
 
 `world-refresh-watch` intentionally runs in the foreground. `SIGINT` or `SIGTERM` closes the filesystem watcher, flushes a pending real project batch, waits for the serialized delivery, releases the writer lease, and returns a bounded shutdown summary. Service installation and background daemon ownership remain deferred.
@@ -149,8 +149,8 @@ The event-ingestion command accepts only `sourceKind`, `events`, and optional `m
 
 MCP exposes only verification:
 
-- `head_refresh_trigger_status`;
-- `head_refresh_trigger_delivery`.
+- `lode_refresh_trigger_status`;
+- `lode_refresh_trigger_delivery`.
 
 MCP cannot start a watcher, ingest CI events, acquire mutation authority, or initiate refresh.
 

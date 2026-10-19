@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { setTimeout as delay } from "node:timers/promises";
+import { resolveProjectStorage, formatForVerifiedOwner, assertProjectStorageUnchanged } from "./project-storage-format.mjs";
 
 // Local P5 serialization only. These transient files never supply project
 // direction, survive as Canon, or lock ordinary read-only work.
@@ -19,10 +20,10 @@ function fail(message, code = "PROJECT_MUTATION_BUSY") {
   throw Object.assign(new Error(message), { code });
 }
 
-function lockFor(root, scope) {
+function lockFor(root, scope, storage) {
   if (!/^[a-z][a-z0-9-]{0,63}$/.test(scope)) fail("Invalid mutation scope.", "INVALID_PROJECT_MUTATION_SCOPE");
   const canonicalRoot = fs.realpathSync(path.resolve(root));
-  const headRoot = path.join(canonicalRoot, ".head");
+  const headRoot = path.join(canonicalRoot, formatForVerifiedOwner(storage).directory);
   if (!fs.existsSync(headRoot)) fail("HEAD Agent Core is not initialized.", "NOT_INITIALIZED");
   retryLockRead(() => safeDirectory(headRoot));
   return path.join(headRoot, ".operations", `${scope}.lock`);
@@ -159,8 +160,12 @@ function nestedOwner(directory) {
   return null;
 }
 
-export function withProjectMutation({ root = ".", scope }, operation) {
-  const directory = lockFor(root, scope);
+export function withProjectMutation({ root = ".", scope, storage }, operation) {
+  if (!/^[a-z][a-z0-9-]{0,63}$/.test(scope)) fail("Invalid mutation scope.", "INVALID_PROJECT_MUTATION_SCOPE");
+  storage ??= resolveProjectStorage(root);
+  const recheck = () => { if (storage?.projectFile) assertProjectStorageUnchanged(storage); };
+  recheck();
+  const directory = lockFor(root, scope, storage);
   if (nestedOwner(directory)) return operation();
   cleanInterruptedStaging(directory);
   const deadline = Date.now() + WAIT_MS;
@@ -180,6 +185,7 @@ export function withProjectMutation({ root = ".", scope }, operation) {
     Atomics.wait(pause, 0, 0, 10);
   }
   try {
+    recheck();
     const active = new Map(context.getStore() || []);
     active.set(directory, owner);
     const result = context.run(active, operation);
@@ -188,8 +194,12 @@ export function withProjectMutation({ root = ".", scope }, operation) {
   } finally { release(owner); }
 }
 
-export async function withProjectMutationAsync({ root = ".", scope }, operation) {
-  const directory = lockFor(root, scope);
+export async function withProjectMutationAsync({ root = ".", scope, storage }, operation) {
+  if (!/^[a-z][a-z0-9-]{0,63}$/.test(scope)) fail("Invalid mutation scope.", "INVALID_PROJECT_MUTATION_SCOPE");
+  storage ??= resolveProjectStorage(root);
+  const recheck = () => { if (storage?.projectFile) assertProjectStorageUnchanged(storage); };
+  recheck();
+  const directory = lockFor(root, scope, storage);
   if (nestedOwner(directory)) return operation();
   cleanInterruptedStaging(directory);
   const deadline = Date.now() + WAIT_MS;
@@ -199,6 +209,7 @@ export async function withProjectMutationAsync({ root = ".", scope }, operation)
     await delay(10);
   }
   try {
+    recheck();
     const active = new Map(context.getStore() || []);
     active.set(directory, owner);
     return await context.run(active, operation);

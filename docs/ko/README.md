@@ -1,4 +1,4 @@
-# HEAD Agent Core 한국어 문서
+# Lode Agent Core 한국어 문서
 
 [English documentation](../README.md)
 
@@ -11,7 +11,7 @@
 - [복구 의미·Session 선택·World 도메인](recovery-state-separation.md)
 
 - [아키텍처 결정](architecture.md)
-- [공급자 중립 HEAD 헌법](head-constitution.md)
+- [공급자 중립 Lode 헌법](lode-constitution.md)
 - [권한 평면과 Graph/기록 경계](authority-plane-contract.md)
 - [프로젝트 온보딩](onboarding.md)
 - [독립 실행 legacy 온보딩 migrator 경계](onboarding-migrator.md)
@@ -23,7 +23,7 @@
 ## 컨텍스트, 월드 모델, 검색
 
 - [그래프 우선 탐색과 독립 Session](graph-discovery.md)
-- [HEAD Context Compiler 설계](context-compiler.md)
+- [Lode Context Compiler 설계](context-compiler.md)
 - [저장소 World Model 의미론](world-model.md)
 - [시간 출처 GraphSnapshot](temporal-provenance.md)
 - [검토 게이트 Feature 매핑](feature-mapping.md)
@@ -42,7 +42,7 @@
 - [Session 작업 맥락과 Host 연속성](session-work-context.md)
 - [일반 Host 위임과 선택적 연결](role-coordination.md)
 - [공급자 중립 bounded worker launch wave](bounded-worker-wave.md)
-- [Worker 컨텍스트와 HEAD 통합](worker-context-integration.md)
+- [Worker 컨텍스트와 Lode 통합](worker-context-integration.md)
 - [선택적 provider-neutral Worker Admission](worker-admission.md)
 - [외부 런타임 상태 증거](runtime-state.md)
 
@@ -69,5 +69,5 @@
 다음 문서는 이전 설계 비교나 감사를 설명합니다. 위의 현재 실행 가능 계약보다
 우선하지 않습니다.
 
-- [원본 HEAD Core 비교](original-head-core-comparison.md)
-- [HEAD-Agent GraphDB Brief v4 요약 및 설계 검토](HEAD-Agent_GraphDB_Brief_v4.md)
+- [원본 Lode Core 비교](original-head-core-comparison.md)
+- [Lode-Agent GraphDB Brief v4 요약 및 설계 검토](Lode_GraphDB_Brief_v4.md)

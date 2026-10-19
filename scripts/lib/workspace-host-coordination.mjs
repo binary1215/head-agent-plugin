@@ -1,3 +1,5 @@
+import { formatForVerifiedOwner, familyFormatForOriginal } from "./project-storage-format.mjs";
+const lineageFormat = record => familyFormatForOriginal({ sessionIdentity: true }, record);
 import fs from "node:fs";
 import path from "node:path";
 import { buildWorkspaceHostProbe, validateWorkspaceHostAdapter, verifiedWorkspaceHostDescriptor } from "./runtime-adapter.mjs";
@@ -31,7 +33,9 @@ const directory = (value, { optionalAvailability = false } = {}) => {
 };
 function boundary(value) {
   if (!value || !/^[a-z][a-z0-9-]{0,63}$/u.test(value.role || "")) fail("Host role is invalid.", "INVALID_WORKSPACE_HOST_BOUNDARY");
-  return { projectId: requiredId(value.projectId), headSessionId: requiredId(value.headSessionId), role: value.role, projectRoot: directory(value.projectRoot) };
+  const format = lineageFormat(value);
+  if (!format) fail("Host identity is invalid.", "INVALID_WORKSPACE_HOST_IDENTITY");
+  return { projectId: requiredId(value.projectId), [format.sessionIdField]: requiredId(value[format.sessionIdField]), role: value.role, projectRoot: directory(value.projectRoot) };
 }
 function endpoint(value) {
   if (!value || !RUNTIMES.has(value.runtime) || typeof value.cwd !== "string" || !path.isAbsolute(value.cwd)) fail("Host endpoint is invalid.", "INVALID_WORKSPACE_HOST_SNAPSHOT");
@@ -40,8 +44,10 @@ function endpoint(value) {
 }
 const sameEndpoint = (left, right) => ["workspaceId", "tabId", "endpointId", "terminalId", "cwd", "runtime", "ownershipId"].every(key => left[key] === right[key]);
 function attachment(value, scope) {
+  const format = lineageFormat(scope);
   if (!value || value.kind !== "WorkspaceHostAttachmentEvidence"
-    || ["projectId", "headSessionId", "role"].some(key => value[key] !== scope[key])
+    || !lineageFormat(value) || lineageFormat(value).dialect !== format.dialect
+    || ["projectId", format.sessionIdField, "role"].some(key => value[key] !== scope[key])
     || value.instructionAuthority !== false || value.mutatesCanon !== false || value.providerSessionIdentityPersisted !== false) {
     fail("Host attachment belongs to another Project/Session or role.", "STALE_WORKSPACE_HOST_ATTACHMENT");
   }
@@ -62,18 +68,19 @@ export class VerifiedWorkspaceHostAdapter {
   constructor({ driver } = {}) {
     if (!driver || ["describe", "snapshot", "send"].some(key => typeof driver[key] !== "function")) fail("A describe/snapshot/send Host driver is required.", "INVALID_WORKSPACE_HOST_DRIVER");
     const description = driver.describe();
+    const format = familyFormatForOriginal("head-agent-core-workspace-host-driver", description);
     if (description?.kind !== "WorkspaceHostDriverDescriptor" || description.providerNeutral !== true || description.tuiScraping !== false || description.providerSessionIdentityPersisted !== false
-      || description.protocol?.name !== "head-agent-core-workspace-host-driver" || description.protocol?.version !== WORKSPACE_HOST_COORDINATION_VERSION) fail("Invalid Host driver.", "INVALID_WORKSPACE_HOST_DRIVER");
+      || !format || description.protocol?.name !== format.protocol("head-agent-core-workspace-host-driver") || description.protocol?.version !== WORKSPACE_HOST_COORDINATION_VERSION) fail("Invalid Host driver.", "INVALID_WORKSPACE_HOST_DRIVER");
     requiredId(description.hostKind); requiredId(description.transport);
-    this.driver = driver; this.driverDescriptor = description;
+    this.driver = driver; this.driverDescriptor = description; this.format = format;
     this.detachedAttachments = new WeakSet();
     validateWorkspaceHostAdapter(this);
   }
   describe() { return verifiedWorkspaceHostDescriptor({ deliverySupported: this.driverDescriptor.deliverySupported !== false }); }
-  probe() { return buildWorkspaceHostProbe(this.describe()); }
+  probe() { return buildWorkspaceHostProbe(this.describe(), this.format); }
   snapshot() {
     const snapshot = this.driver.snapshot();
-    if (snapshot?.kind !== "WorkspaceHostSnapshot" || snapshot.protocol?.name !== "head-agent-core-workspace-host-snapshot"
+    if (snapshot?.kind !== "WorkspaceHostSnapshot" || snapshot.protocol?.name !== this.format.protocol("head-agent-core-workspace-host-snapshot")
       || snapshot.protocol?.version !== WORKSPACE_HOST_COORDINATION_VERSION || snapshot.hostKind !== this.driverDescriptor.hostKind || snapshot.transport !== this.driverDescriptor.transport || !Array.isArray(snapshot.endpoints)) fail("Invalid Host snapshot.", "INVALID_WORKSPACE_HOST_SNAPSHOT");
     requiredId(snapshot.hostInstanceId); requiredId(snapshot.snapshotSequence);
     const endpoints = snapshot.endpoints.map(endpoint);
@@ -92,13 +99,14 @@ export class VerifiedWorkspaceHostAdapter {
     const selected = snapshot.endpoints.filter(item => ["workspaceId", "tabId", "endpointId"].every(key => item[key] === caller[key]));
     if (selected.length !== 1) fail("Host caller is not one exact live endpoint.", "STALE_WORKSPACE_HOST_CALLER");
     if (!within(scope.projectRoot, directory(selected[0].cwd))) fail("Host endpoint is outside the project.", "WORKSPACE_HOST_PROJECT_MISMATCH");
-    return { kind: "WorkspaceHostAttachmentEvidence", projectId: scope.projectId, headSessionId: scope.headSessionId, role: scope.role,
+    return { kind: "WorkspaceHostAttachmentEvidence", projectId: scope.projectId, [lineageFormat(scope).sessionIdField]: scope[lineageFormat(scope).sessionIdField], role: scope.role,
       hostInstanceId: snapshot.hostInstanceId, ...selected[0], providerSessionIdentityPersisted: false, instructionAuthority: false, mutatesCanon: false };
   }
   send({ attachment: value, boundary: rawScope, message } = {}) {
     if (this.driverDescriptor.deliverySupported === false) return { status: "unsupported", reason: "host-attachment-only" };
     const scope = boundary(rawScope); attachment(value, scope);
-    if (!message || message.projectId !== scope.projectId || message.headSessionId !== scope.headSessionId || message.toRole !== scope.role
+    if (!message || message.projectId !== scope.projectId || !lineageFormat(message) || lineageFormat(message).dialect !== lineageFormat(scope).dialect
+      || message[lineageFormat(scope).sessionIdField] !== scope[lineageFormat(scope).sessionIdField] || message.toRole !== scope.role
       || typeof message.content !== "string" || !message.content.trim() || Buffer.byteLength(message.content) > 8192 || message.instructionAuthority !== false || message.mutatesCanon !== false) fail("Host message is invalid or outside the current scope.", "INVALID_WORKSPACE_HOST_MESSAGE");
     requiredId(message.messageId);
     if (!attachmentAvailable(value, scope)) return { status: "unavailable", endpointId: value.endpointId };

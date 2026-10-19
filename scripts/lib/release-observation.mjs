@@ -1,14 +1,15 @@
+import { formatForVerifiedOwner, relativeProjectArtifact } from "./project-storage-format.mjs";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { inspectProject, SCHEMA_VERSION } from "./head-core.mjs";
+import { inspectProject, SCHEMA_VERSION } from "./lode-core.mjs";
 import { readChangeSet, readVcsEvidence } from "./change-set.mjs";
 import { VCS_EVIDENCE_VERSION, verifyGitCommitObservation } from "./change-set-projection.mjs";
 import { withRefreshWriterLease } from "./refresh-writer-lease.mjs";
 import {
   RELEASE_OBSERVATION_VERSION, releaseObservationCanonicalJson, releaseObservationDigest,
   verifyBranchStateObservation, verifyDeploymentResultObservation, verifyReleaseObservation,
-  loadReleaseObservationProjection, DIRECTORIES, DEPLOYMENT_STATUSES, REF_KINDS,
+  loadReleaseObservationProjection, DEPLOYMENT_STATUSES, REF_KINDS,
   fail, requiredText, stableKey, safeDirectory,
 } from "./release-observation-projection.mjs";
 
@@ -71,11 +72,11 @@ function persistImmutable(projectRoot, relative, id, document) {
   return { status: "recorded", file };
 }
 
-function gitCommitObservation(commit) {
+function gitCommitObservation(commit, storage) {
   const payload = {
     schemaVersion: SCHEMA_VERSION,
     kind: "GitCommitObservation",
-    protocol: { name: "head-agent-core-git-commit-observation", version: VCS_EVIDENCE_VERSION },
+    protocol: { name: formatForVerifiedOwner(storage).protocol("head-agent-core-git-commit-observation"), version: VCS_EVIDENCE_VERSION },
     vcsKind: "git",
     objectId: commit.commit,
     parents: [...commit.parents].sort(),
@@ -93,14 +94,14 @@ function gitCommitObservation(commit) {
     promotionAuthority: false,
   };
   const hash = releaseObservationDigest(releaseObservationCanonicalJson(payload));
-  return verifyGitCommitObservation({ ...payload, gitCommitObservationId: `git-commit-observation-${hash.slice(0, 24)}`, gitCommitObservationHash: hash });
+  return verifyGitCommitObservation({ ...payload, gitCommitObservationId: `git-commit-observation-${hash.slice(0, 24)}`, gitCommitObservationHash: hash }, storage);
 }
 
-function branchState(projectId, reference, referencesDigest, commitObservation) {
+function branchState(projectId, reference, referencesDigest, commitObservation, storage) {
   const payload = {
     schemaVersion: SCHEMA_VERSION,
     kind: "BranchStateObservation",
-    protocol: { name: "head-agent-core-release-observation", version: RELEASE_OBSERVATION_VERSION },
+    protocol: { name: formatForVerifiedOwner(storage).protocol("head-agent-core-release-observation"), version: RELEASE_OBSERVATION_VERSION },
     projectId,
     vcsKind: "git",
     ref: reference.ref,
@@ -115,7 +116,7 @@ function branchState(projectId, reference, referencesDigest, commitObservation) 
     mutatesCanon: false,
     recoveryAuthority: false,
   };
-  return verifyBranchStateObservation(identity(payload, "branch-state-observation", "branchStateObservationId", "branchStateObservationHash"), projectId);
+  return verifyBranchStateObservation(identity(payload, "branch-state-observation", "branchStateObservationId", "branchStateObservationHash"), projectId, storage);
 }
 
 function normalizeDeploymentInput(input) {
@@ -157,11 +158,11 @@ export function assertDeploymentResultAdapter(adapter) {
   return adapter;
 }
 
-function deploymentResult(projectId, normalized) {
+function deploymentResult(projectId, normalized, storage) {
   const payload = {
     schemaVersion: SCHEMA_VERSION,
     kind: "DeploymentResultObservation",
-    protocol: { name: "head-agent-core-release-observation", version: RELEASE_OBSERVATION_VERSION },
+    protocol: { name: formatForVerifiedOwner(storage).protocol("head-agent-core-release-observation"), version: RELEASE_OBSERVATION_VERSION },
     projectId,
     ...normalized,
     epistemicClass: "observed-fact",
@@ -171,14 +172,14 @@ function deploymentResult(projectId, normalized) {
     mutatesCanon: false,
     recoveryAuthority: false,
   };
-  return verifyDeploymentResultObservation(identity(payload, "deployment-result-observation", "deploymentResultObservationId", "deploymentResultObservationHash"), projectId);
+  return verifyDeploymentResultObservation(identity(payload, "deployment-result-observation", "deploymentResultObservationId", "deploymentResultObservationHash"), projectId, storage);
 }
 
-function releaseObservation(projectId, deployment, branchStates) {
+function releaseObservation(projectId, deployment, branchStates, storage) {
   const payload = {
     schemaVersion: SCHEMA_VERSION,
     kind: "ReleaseObservation",
-    protocol: { name: "head-agent-core-release-observation", version: RELEASE_OBSERVATION_VERSION },
+    protocol: { name: formatForVerifiedOwner(storage).protocol("head-agent-core-release-observation"), version: RELEASE_OBSERVATION_VERSION },
     projectId,
     environmentKey: deployment.environmentKey,
     commit: deployment.commit,
@@ -193,7 +194,7 @@ function releaseObservation(projectId, deployment, branchStates) {
     mutatesCanon: false,
     recoveryAuthority: false,
   };
-  return verifyReleaseObservation(identity(payload, "release-observation", "releaseObservationId", "releaseObservationHash"), projectId);
+  return verifyReleaseObservation(identity(payload, "release-observation", "releaseObservationId", "releaseObservationHash"), projectId, storage);
 }
 
 function readyProject(root) {
@@ -204,38 +205,40 @@ function readyProject(root) {
 
 export async function observeReleaseState({ root = ".", input = null, adapter = null } = {}) {
   const inspected = readyProject(root);
-  return withRefreshWriterLease({ projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId }, async (writerLease) => {
+  const storage = inspected.storage;
+  const directories = { branchStates: relativeProjectArtifact(storage, "release-observations", "branch-states"), deploymentResults: relativeProjectArtifact(storage, "release-observations", "deployment-results"), releases: relativeProjectArtifact(storage, "release-observations", "releases") };
+  return withRefreshWriterLease({ projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId, storage }, async (writerLease) => {
   const selected = assertDeploymentResultAdapter(adapter || new StructuredDeploymentResultAdapter({ input }));
   const normalized = await selected.readResult({ projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId });
   const verifiedInput = normalizeDeploymentInput(normalized);
   const { buildWorldModel } = await import("./world-model.mjs");
-  const before = await buildWorldModel({ root: inspected.project.projectRoot, persist: true, writerLease });
+  const before = await buildWorldModel({ root: inspected.project.projectRoot, persist: true, writerLease, storage });
   const history = before.snapshot.gitDecisionHistory;
   if (history.status !== "available") fail("Verified Git history is unavailable for release observation.", "RELEASE_GIT_HISTORY_UNAVAILABLE");
   const commit = history.commits.find((item) => item.commit === verifiedInput.commit);
   if (!commit) fail("Deployment commit is absent from verified reachable Git history.", "RELEASE_COMMIT_NOT_FOUND");
-  const commitObservation = gitCommitObservation(commit);
+  const commitObservation = gitCommitObservation(commit, storage);
   const references = (before.snapshot.git.references || []).filter((item) => item.commit === verifiedInput.commit && REF_KINDS.has(item.kind));
-  const branchStates = references.map((reference) => branchState(inspected.project.projectId, reference, before.snapshot.git.referencesDigest, commitObservation));
-  for (const branch of branchStates) persistImmutable(inspected.project.projectRoot, DIRECTORIES.branchStates, branch.branchStateObservationId, branch);
-  const deployment = deploymentResult(inspected.project.projectId, verifiedInput);
-  const currentProjection = loadReleaseObservationProjection({ projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId });
+  const branchStates = references.map((reference) => branchState(inspected.project.projectId, reference, before.snapshot.git.referencesDigest, commitObservation, storage));
+  for (const branch of branchStates) persistImmutable(inspected.project.projectRoot, directories.branchStates, branch.branchStateObservationId, branch);
+  const deployment = deploymentResult(inspected.project.projectId, verifiedInput, storage);
+  const currentProjection = loadReleaseObservationProjection({ projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId, storage: inspected.storage });
   const conflicting = currentProjection.deploymentResults.find((item) => item.sourceEventKeyDigest === deployment.sourceEventKeyDigest && item.deploymentResultObservationId !== deployment.deploymentResultObservationId);
   if (conflicting) fail("Deployment source event was replayed with divergent content.", "DIVERGENT_DEPLOYMENT_RESULT_REPLAY");
-  persistImmutable(inspected.project.projectRoot, DIRECTORIES.deploymentResults, deployment.deploymentResultObservationId, deployment);
+  persistImmutable(inspected.project.projectRoot, directories.deploymentResults, deployment.deploymentResultObservationId, deployment);
   let release = null;
   let releaseStatus = deployment.status === "succeeded" && deployment.approved ? "awaiting_matching_product_ref" : "not_release_eligible";
   if (deployment.status === "succeeded" && deployment.approved && branchStates.length) {
     if (deployment.changeSetId) {
-      const changeSet = readChangeSet({ root: inspected.project.projectRoot, changeSetId: deployment.changeSetId }).changeSet;
-      const vcsEvidence = readVcsEvidence({ root: inspected.project.projectRoot, vcsEvidenceId: deployment.vcsEvidenceId }).vcsEvidence;
+      const changeSet = readChangeSet({ root: inspected.project.projectRoot, changeSetId: deployment.changeSetId, storage }).changeSet;
+      const vcsEvidence = readVcsEvidence({ root: inspected.project.projectRoot, vcsEvidenceId: deployment.vcsEvidenceId, storage }).vcsEvidence;
       if (vcsEvidence.changeSetId !== changeSet.changeSetId || !vcsEvidence.commitObservations.some((item) => item.objectId === deployment.commit)) fail("Release ChangeSet/VCS evidence does not contain the deployed commit.", "RELEASE_VCS_EVIDENCE_MISMATCH");
     }
-    release = releaseObservation(inspected.project.projectId, deployment, branchStates);
-    persistImmutable(inspected.project.projectRoot, DIRECTORIES.releases, release.releaseObservationId, release);
+    release = releaseObservation(inspected.project.projectId, deployment, branchStates, storage);
+    persistImmutable(inspected.project.projectRoot, directories.releases, release.releaseObservationId, release);
     releaseStatus = "release_observed";
   }
-  const after = await buildWorldModel({ root: inspected.project.projectRoot, persist: true, writerLease });
+  const after = await buildWorldModel({ root: inspected.project.projectRoot, persist: true, writerLease, storage });
   return {
     status: releaseStatus,
     branchStates,
@@ -250,7 +253,7 @@ export async function observeReleaseState({ root = ".", input = null, adapter = 
 
 export function inspectReleaseObservations({ root = "." } = {}) {
   const inspected = readyProject(root);
-  const projection = loadReleaseObservationProjection({ projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId });
+  const projection = loadReleaseObservationProjection({ projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId, storage: inspected.storage });
   return {
     status: projection.branchStates.length || projection.deploymentResults.length || projection.releases.length ? "active" : "not_started",
     projectId: inspected.project.projectId,

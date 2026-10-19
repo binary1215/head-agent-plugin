@@ -1,7 +1,13 @@
+import { formatForVerifiedOwner, familyFormatForOriginal } from "./project-storage-format.mjs";
+const sessionIdOf = record => {
+  const format = familyFormatForOriginal({ sessionIdentity: true }, record);
+  return format ? record?.[format.sessionIdField] : undefined;
+};
+const originalFormat = record => familyFormatForOriginal({ kind: record?.kind }, record);
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { inspectProject } from "./head-core.mjs";
+import { inspectProject } from "./lode-core.mjs";
 import { readBoundedWorkerDispatch } from "./bounded-worker-dispatch.mjs";
 import {
   createRuntimePreConsumeGateCapability,
@@ -695,7 +701,7 @@ function currentTarget(root, authorizationId, dispatchId) {
   const { authorization } = readRuntimeInvocationAuthorization({ root: inspected.project.projectRoot, authorizationId });
   const { dispatch } = readBoundedWorkerDispatch({ root: inspected.project.projectRoot, authorizationId });
   if (dispatch.dispatchId !== dispatchId
-    || authorization.projectId !== inspected.project.projectId || authorization.headSessionId !== inspected.state.sessionId
+    || authorization.projectId !== inspected.project.projectId || sessionIdOf(authorization) !== inspected.state.sessionId
     || (authorization.scope.kind === "run"
       ? authorization.scope.runId !== inspected.state.activeRunId || authorization.scope.executionContractId !== inspected.state.activeExecutionContractId
       : authorization.scope.kind !== "session" || inspected.state.mode !== "session" || inspected.state.activeRunId || inspected.state.activeExecutionContractId || inspected.state.pendingReview)
@@ -780,6 +786,7 @@ function queuedRequest(request) {
 function inspectAdmissionLease(target) {
   return inspectRuntimeExecutionLease({
     projectRoot: target.inspected.project.projectRoot,
+    storage: target.inspected.storage,
     projectId: target.authorization.projectId,
     authorizationId: target.authorization.authorizationId,
   });
@@ -892,10 +899,10 @@ function publicReservation(state, request, gate, finalize) {
   });
 }
 
-function requireDefinitiveExecutionCleanup(root, authorizationId) {
+function requireDefinitiveExecutionCleanup(root, authorizationId, storage) {
   let result;
   try {
-    result = readRuntimeInvocationResult({ root, authorizationId });
+    result = readRuntimeInvocationResult({ root, authorizationId, storage });
   } catch (error) {
     if (error.code === "RUNTIME_INVOCATION_RESULT_NOT_FOUND") {
       fail("Consumed admission capacity requires a verified runtime result.", "WORKER_ADMISSION_RELEASE_EVIDENCE_MISSING");
@@ -1145,12 +1152,12 @@ export async function enqueueWorkerAdmission({ host, root = ".", authorizationId
         return { status: "existing-terminal", requestId, outcomeCode: request.outcomeCode };
       }
       if (!new Set(["reserved", "start-committed"]).has(request.state)) fail("Worker admission cannot finalize from its current state.", "WORKER_ADMISSION_STALE_FINALIZE");
-      const lease = inspectRuntimeExecutionLease({ projectRoot: path.resolve(root), projectId: target.authorization.projectId, authorizationId });
+      const lease = inspectRuntimeExecutionLease({ projectRoot: path.resolve(root), projectId: target.authorization.projectId, authorizationId, storage: target.inspected.storage });
       if (request.state === "start-committed" && lease.status !== "consumed-released") {
         fail("Consumed admission capacity cannot be released without definitive lease cleanup evidence.", "WORKER_ADMISSION_RELEASE_EVIDENCE_MISSING");
       }
       if (request.state === "start-committed") {
-        requireDefinitiveExecutionCleanup(path.resolve(root), authorizationId);
+        requireDefinitiveExecutionCleanup(path.resolve(root), authorizationId, originalFormat(target.authorization));
       }
       if (request.state === "reserved" && lease.singleUseConsumed) {
         fail("Admission start evidence is missing for a consumed authorization.", "WORKER_ADMISSION_JOURNAL_UNAVAILABLE");
@@ -1170,10 +1177,10 @@ function publicAdmissionState(request) {
   return request.state;
 }
 
-function readExecutionEvidence({ root, projectId, authorizationId }) {
+function readExecutionEvidence({ root, projectId, authorizationId, storage }) {
   let lease;
   try {
-    lease = inspectRuntimeExecutionLease({ projectRoot: root, projectId, authorizationId });
+    lease = inspectRuntimeExecutionLease({ projectRoot: root, projectId, authorizationId, storage });
   } catch (error) {
     return {
       availability: "unavailable",
@@ -1187,7 +1194,7 @@ function readExecutionEvidence({ root, projectId, authorizationId }) {
   }
   let result = null;
   try {
-    result = readRuntimeInvocationResult({ root, authorizationId });
+    result = readRuntimeInvocationResult({ root, authorizationId, storage });
   } catch (error) {
     if (error.code !== "RUNTIME_INVOCATION_RESULT_NOT_FOUND") {
       return {
@@ -1233,6 +1240,7 @@ export function readWorkerAdmissionProjection({ host, root = ".", authorizationI
     const executionEvidence = readExecutionEvidence({
       root: target.inspected.project.projectRoot,
       projectId: target.authorization.projectId,
+      storage: target.inspected.storage,
       authorizationId,
     });
     return {

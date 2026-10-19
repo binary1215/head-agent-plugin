@@ -13,6 +13,7 @@ import { acquireVerifiedNativeArtifact, assembleVerifiedNativeBundle, verifyNati
 import { installDistribution, inspectDistribution, uninstallDistribution } from "./lib/distribution-lifecycle.mjs";
 import { buildCodexMarketplaceSnapshot, verifyCodexMarketplaceSnapshot } from "./lib/codex-marketplace.mjs";
 import { buildClaudeMarketplaceSnapshot, verifyClaudeMarketplaceSnapshot } from "./lib/claude-marketplace.mjs";
+import { ARTIFACT_COMPOSITION } from "./lib/lode-artifact-composition.mjs";
 
 const sourceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const version = JSON.parse(fs.readFileSync(path.join(sourceRoot, "package.json"), "utf8")).version;
@@ -20,11 +21,11 @@ const goNotices = fs.readFileSync(path.join(sourceRoot, "native", "GO-NOTICES.tx
 const scratchRoot = path.join(os.tmpdir(), `head-native-delivery-e2e-${process.pid}`);
 const fixtureRoot = path.join(scratchRoot, "fixture");
 const targetMap = {
-  "darwin-arm64": { platform: "darwin", arch: "arm64", package: "head-agent-worker-darwin-arm64", directory: "darwin-arm64", goos: "darwin", goarch: "arm64", worker: "head-agent-worker", supervisor: "head-agent-supervisor", bridge: "head-agent-arcadedb-bridge" },
-  "darwin-x64": { platform: "darwin", arch: "x64", package: "head-agent-worker-darwin-amd64", directory: "darwin-x64", goos: "darwin", goarch: "amd64", worker: "head-agent-worker", supervisor: "head-agent-supervisor", bridge: "head-agent-arcadedb-bridge" },
-  "linux-arm64": { platform: "linux", arch: "arm64", package: "head-agent-worker-linux-arm64", directory: "linux-arm64", goos: "linux", goarch: "arm64", worker: "head-agent-worker", supervisor: "head-agent-supervisor", bridge: "head-agent-arcadedb-bridge" },
-  "linux-x64": { platform: "linux", arch: "x64", package: "head-agent-worker-linux-amd64", directory: "linux-x64", goos: "linux", goarch: "amd64", worker: "head-agent-worker", supervisor: "head-agent-supervisor", bridge: "head-agent-arcadedb-bridge" },
-  "win32-x64": { platform: "win32", arch: "x64", package: "head-agent-worker-windows-amd64", directory: "windows-x64", goos: "windows", goarch: "amd64", worker: "head-agent-worker.exe", supervisor: "head-agent-supervisor.exe", bridge: "head-agent-arcadedb-bridge.exe" },
+  "darwin-arm64": { platform: "darwin", arch: "arm64", package: "lode-agent-worker-darwin-arm64", directory: "darwin-arm64", goos: "darwin", goarch: "arm64", worker: "lode-agent-worker", supervisor: "lode-agent-supervisor", bridge: "lode-agent-arcadedb-bridge" },
+  "darwin-x64": { platform: "darwin", arch: "x64", package: "lode-agent-worker-darwin-amd64", directory: "darwin-x64", goos: "darwin", goarch: "amd64", worker: "lode-agent-worker", supervisor: "lode-agent-supervisor", bridge: "lode-agent-arcadedb-bridge" },
+  "linux-arm64": { platform: "linux", arch: "arm64", package: "lode-agent-worker-linux-arm64", directory: "linux-arm64", goos: "linux", goarch: "arm64", worker: "lode-agent-worker", supervisor: "lode-agent-supervisor", bridge: "lode-agent-arcadedb-bridge" },
+  "linux-x64": { platform: "linux", arch: "x64", package: "lode-agent-worker-linux-amd64", directory: "linux-x64", goos: "linux", goarch: "amd64", worker: "lode-agent-worker", supervisor: "lode-agent-supervisor", bridge: "lode-agent-arcadedb-bridge" },
+  "win32-x64": { platform: "win32", arch: "x64", package: "lode-agent-worker-windows-amd64", directory: "windows-x64", goos: "windows", goarch: "amd64", worker: "lode-agent-worker.exe", supervisor: "lode-agent-supervisor.exe", bridge: "lode-agent-arcadedb-bridge.exe" },
 };
 const target = targetMap[`${process.platform}-${process.arch}`];
 assert(target, `Native delivery fixture does not support ${process.platform}-${process.arch}.`);
@@ -220,7 +221,7 @@ try {
   assert.equal(claudeMarketplace.nativeTargetCount, 5);
   assert.equal(verifyClaudeMarketplaceSnapshot({ root: claudeMarketplaceRoot, requireNativeBundle: true }).nativeBundleId, assembled.nativeBundleId);
   for (const marketplaceRoot of [codexMarketplaceRoot, claudeMarketplaceRoot]) {
-    const pluginRoot = path.join(marketplaceRoot, "plugins", "head-agent-core");
+    const pluginRoot = path.join(marketplaceRoot, "plugins", ARTIFACT_COMPOSITION.pluginName);
     assert.deepEqual(fs.readFileSync(path.join(pluginRoot, "native", "GO-NOTICES.txt")), goNotices);
     for (const fixtureTarget of Object.values(targetMap)) {
       assert.deepEqual(fs.readFileSync(path.join(pluginRoot, "dist", fixtureTarget.directory, "GO-NOTICES.txt")), goNotices);

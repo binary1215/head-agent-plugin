@@ -68,7 +68,7 @@ World Model은 여전히 적격 파일의 완전한 탐색, 원시 바이트 읽
 - 범위가 제한된 오버플로를 `event-limit-exceeded`로 기록하고 전체 재스캔을 강제합니다.
 - 타이머 지속 시간, 도착 타임스탬프, 백엔드 레코드 ID 및 프로세스 ID를 의미적 배치 ID에서 제외합니다.
 
-`.head`, `.git`, 의존성/벤더 트리, 빌드 출력 및 캐시 아래 이벤트는 그 자체만으로 새로 고침을 예약하지 않습니다. 이렇게 하면 `.head` 아래에 기록되는 트리거 아티팩트가 감시자를 재귀적으로 촉발하지 않습니다. 실제 프로젝트 이벤트와 함께 제외된 이벤트가 도착하면, 그 폐기 개수는 배치 증거에 계속 표시됩니다.
+`.lode`, `.git`, 의존성/벤더 트리, 빌드 출력 및 캐시 아래 이벤트는 그 자체만으로 새로 고침을 예약하지 않습니다. 이렇게 하면 `.lode` 아래에 기록되는 트리거 아티팩트가 감시자를 재귀적으로 촉발하지 않습니다. 실제 프로젝트 이벤트와 함께 제외된 이벤트가 도착하면, 그 폐기 개수는 배치 증거에 계속 표시됩니다.
 
 큐는 전달을 도착 배치 순서로 직렬화합니다. 첫 번째 스캔이 실행되는 동안 두 번째 배치가 누적될 수 있지만, 한 큐의 두 전달이 동시에 실행되지는 않습니다.
 
@@ -97,10 +97,10 @@ World Model은 여전히 적격 파일의 완전한 탐색, 원시 바이트 읽
 로컬 참조 구현은 다음 위치에 저장합니다.
 
 ```text
-.head/refresh/triggers/batches/refresh-trigger-batch-*.json
-.head/refresh/triggers/deliveries/refresh-trigger-delivery-*.json
-.head/refresh/triggers/current.json
-.head/document-projection/post-refresh/receipts/post-refresh-projection-receipt-*.json
+.lode/refresh/triggers/batches/refresh-trigger-batch-*.json
+.lode/refresh/triggers/deliveries/refresh-trigger-delivery-*.json
+.lode/refresh/triggers/current.json
+.lode/document-projection/post-refresh/receipts/post-refresh-projection-receipt-*.json
 ```
 
 배치 및 전달 파일은 불변이며 콘텐츠로부터 파생됩니다. `current.json`은 교체 가능한 다이제스트 검증 포인터입니다.
@@ -110,7 +110,7 @@ World Model은 여전히 적격 파일의 완전한 탐색, 원시 바이트 읽
 명시적 인덱싱과 수동, 파일시스템 및 CI 새로 고침을 포함한 모든 영속적 World Model 빌드는 동일한 프로젝트 범위 리스를 획득합니다.
 
 ```text
-.head/refresh/writer.lock/owner.json
+.lode/refresh/writer.lock/owner.json
 ```
 
 디렉터리 생성이 프로세스 간 배타 연산입니다. 소유자 문서는 운영 메타데이터일 뿐이며 프로세스 ID, 임의 토큰, 시작 시간 및 거짓 권한 플래그를 포함합니다. 중첩된 트리거 전달은 동일한 프로세스와 프로젝트가 소유한 것으로 검증된 리스만 재사용할 수 있습니다. 이로써 모든 핵심 World Model 포인터 작성자는 상호 배타적이 됩니다. 트리거된 새로 고침은 현재 포인터가 여전히 미리보기 기준과 일치하는지도 추가로 검증합니다.
@@ -137,10 +137,10 @@ World Model은 여전히 적격 파일의 완전한 탐색, 원시 바이트 읽
 ```
 
 ```powershell
-node scripts/head.mjs world-refresh-events <project> --input refresh-events.json
-node scripts/head.mjs world-refresh-watch <project> --debounce-ms 350 --max-events 1024
-node scripts/head.mjs world-refresh-trigger-status <project>
-node scripts/head.mjs world-refresh-trigger-read <project> --delivery refresh-trigger-delivery-<24-hex>
+node scripts/lode.mjs world-refresh-events <project> --input refresh-events.json
+node scripts/lode.mjs world-refresh-watch <project> --debounce-ms 350 --max-events 1024
+node scripts/lode.mjs world-refresh-trigger-status <project>
+node scripts/lode.mjs world-refresh-trigger-read <project> --delivery refresh-trigger-delivery-<24-hex>
 ```
 
 `world-refresh-watch`는 의도적으로 포그라운드에서 실행됩니다. `SIGINT` 또는 `SIGTERM`은 파일시스템 감시자를 닫고, 대기 중인 실제 프로젝트 배치를 플러시하고, 직렬화된 전달을 기다린 뒤, 작성자 리스를 해제하고 범위가 제한된 종료 요약을 반환합니다. 서비스 설치 및 백그라운드 데몬 소유권은 계속 유보됩니다.
@@ -151,8 +151,8 @@ node scripts/head.mjs world-refresh-trigger-read <project> --delivery refresh-tr
 
 MCP는 검증 기능만 노출합니다.
 
-- `head_refresh_trigger_status`;
-- `head_refresh_trigger_delivery`.
+- `lode_refresh_trigger_status`;
+- `lode_refresh_trigger_delivery`.
 
 MCP는 감시자를 시작하거나, CI 이벤트를 수집하거나, 변경 권한을 획득하거나, 새로 고침을 시작할 수 없습니다.
 

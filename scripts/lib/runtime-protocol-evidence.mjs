@@ -1,3 +1,9 @@
+import { formatForVerifiedOwner, familyFormatForOriginal } from "./project-storage-format.mjs";
+const sessionIdOf = record => {
+  const format = familyFormatForOriginal({ sessionIdentity: true }, record);
+  return format ? record?.[format.sessionIdField] : undefined;
+};
+const originalFormat = record => familyFormatForOriginal({ kind: record?.kind }, record);
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -753,7 +759,9 @@ export function buildRuntimeProjectBinding({
   projectStatus,
   versionEvidence,
   protocolEvidence,
+  storage,
 } = {}) {
+  const format = formatForVerifiedOwner(storage);
   const version = verifyRuntimeVersionEvidence(versionEvidence);
   const protocol = verifyRuntimeProtocolEvidence(protocolEvidence);
   if (protocol.versionEvidenceId !== version.evidenceId
@@ -777,17 +785,17 @@ export function buildRuntimeProjectBinding({
     kind: "RuntimeProjectBinding",
     protocolVersion: RUNTIME_PROJECT_BINDING_VERSION,
     projectId,
-    headSessionId,
+    [format.sessionIdField]: headSessionId,
     projectRootDigest: digest(fs.realpathSync(path.resolve(projectRoot))),
     projectStatus,
     selectedRuntimes: [...protocol.selectedRuntimes],
     versionEvidenceId: version.evidenceId,
     protocolEvidenceId: protocol.evidenceId,
     bindings,
-    status: bindingVerified ? "verified-head-project-session-capability-binding" : "partial-head-project-session-capability-binding",
+    status: bindingVerified ? (format?.value("verified-head-project-session-capability-binding") || "verified-head-project-session-capability-binding") : (format?.value("partial-head-project-session-capability-binding") || "partial-head-project-session-capability-binding"),
     bindingBoundary: {
-      headProjectIdentityCanonical: true,
-      headSessionIdentityCanonical: true,
+      [format?.value("headProjectIdentityCanonical") || "headProjectIdentityCanonical"]: true,
+      [format?.value("headSessionIdentityCanonical") || "headSessionIdentityCanonical"]: true,
       providerSessionIdentityCanonical: false,
       providerSessionCreated: false,
       projectContentPassed: false,
@@ -796,7 +804,7 @@ export function buildRuntimeProjectBinding({
       executionContractRequiredForControl: true,
       callerAndChildOwnershipRequiredForControl: true,
     },
-    authority: "canonical-head-reference-with-operational-capability-evidence",
+    authority: (format?.value("canonical-head-reference-with-operational-capability-evidence") || "canonical-head-reference-with-operational-capability-evidence"),
     instructionAuthority: false,
     promotionAuthority: false,
     controlAuthority: false,
@@ -806,13 +814,14 @@ export function buildRuntimeProjectBinding({
 }
 
 export function verifyRuntimeProjectBinding(document) {
+  const format = originalFormat(document);
   assertFields(document, [
-    "schemaVersion", "kind", "protocolVersion", "projectId", "headSessionId", "projectRootDigest", "projectStatus",
+    "schemaVersion", "kind", "protocolVersion", "projectId", (format?.sessionIdField || "headSessionId"), "projectRootDigest", "projectStatus",
     "selectedRuntimes", "versionEvidenceId", "protocolEvidenceId", "bindings", "status", "bindingBoundary", "authority",
     "instructionAuthority", "promotionAuthority", "controlAuthority", "mutatesCanon", "bindingId", "bindingHash",
   ], "Runtime project binding");
   assertFields(document.bindingBoundary, [
-    "headProjectIdentityCanonical", "headSessionIdentityCanonical", "providerSessionIdentityCanonical",
+    (format?.value("headProjectIdentityCanonical") || "headProjectIdentityCanonical"), (format?.value("headSessionIdentityCanonical") || "headSessionIdentityCanonical"), "providerSessionIdentityCanonical",
     "providerSessionCreated", "projectContentPassed", "actualProviderSessionBindingValidated", "runtimeControlEnabled",
     "executionContractRequiredForControl", "callerAndChildOwnershipRequiredForControl",
   ], "Runtime project binding boundary");
@@ -835,8 +844,8 @@ export function verifyRuntimeProjectBinding(document) {
   }
   const fullyObserved = document.projectStatus === "ready" && document.bindings.every((item) => item.capabilityStatus === "observed");
   const expectedBoundary = {
-    headProjectIdentityCanonical: true,
-    headSessionIdentityCanonical: true,
+    [format?.value("headProjectIdentityCanonical") || "headProjectIdentityCanonical"]: true,
+    [format?.value("headSessionIdentityCanonical") || "headSessionIdentityCanonical"]: true,
     providerSessionIdentityCanonical: false,
     providerSessionCreated: false,
     projectContentPassed: false,
@@ -847,15 +856,15 @@ export function verifyRuntimeProjectBinding(document) {
   };
   if (document.schemaVersion !== 1 || document.kind !== "RuntimeProjectBinding"
     || document.protocolVersion !== RUNTIME_PROJECT_BINDING_VERSION
-    || !/^head-[a-f0-9]{20}$/.test(document.projectId || "")
-    || !/^session-[A-Fa-f0-9-]{36}$/.test(document.headSessionId || "")
+    || (!format || !new RegExp(`^${format.projectPrefix}[a-f0-9]{20}$`).test(document.projectId || ""))
+    || !/^session-[A-Fa-f0-9-]{36}$/.test(sessionIdOf(document) || "")
     || !/^[a-f0-9]{64}$/.test(document.projectRootDigest || "")
     || !["ready", "drifted"].includes(document.projectStatus)
     || !/^runtime-version-evidence-[a-f0-9]{24}$/.test(document.versionEvidenceId || "")
     || !/^runtime-protocol-evidence-[a-f0-9]{24}$/.test(document.protocolEvidenceId || "")
-    || document.status !== (fullyObserved ? "verified-head-project-session-capability-binding" : "partial-head-project-session-capability-binding")
+    || document.status !== (fullyObserved ? (format?.value("verified-head-project-session-capability-binding") || "verified-head-project-session-capability-binding") : (format?.value("partial-head-project-session-capability-binding") || "partial-head-project-session-capability-binding"))
     || canonicalJson(document.bindingBoundary) !== canonicalJson(expectedBoundary)
-    || document.authority !== "canonical-head-reference-with-operational-capability-evidence"
+    || document.authority !== (format?.value("canonical-head-reference-with-operational-capability-evidence") || "canonical-head-reference-with-operational-capability-evidence")
     || document.instructionAuthority !== false || document.promotionAuthority !== false
     || document.controlAuthority !== false || document.mutatesCanon !== false) {
     fail("Runtime project binding is invalid.", "INVALID_RUNTIME_PROJECT_BINDING");

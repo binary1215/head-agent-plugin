@@ -2,7 +2,7 @@
 
 ## Review the outcome, not just the contract
 
-Fresh HEAD review asks whether the result serves the user's intended outcome and
+Fresh Lode review asks whether the result serves the user's intended outcome and
 its next actual consumer, which evidence supports that claim, and what remains
 unverified. The existing review dispositions and authorization boundaries are
 unchanged. A source-only fix may use source and focused regression evidence;
@@ -30,11 +30,11 @@ Session
 
 Managed Runs require a persisted, digest-verified `ExecutionContract` bound to
 one `WholePlanSnapshot` and one persisted `ContextCapsule`. Ordinary direct work
-and Host delegation do not require this lifecycle. The contract records HEAD's
+and Host delegation do not require this lifecycle. The contract records Lode's
 task-local acceptance of the selected context; there is no EvidenceNeed-set or
-Compiler coverage-proof digest gate. HEAD judges semantic sufficiency.
+Compiler coverage-proof digest gate. Lode judges semantic sufficiency.
 
-A Run cannot finish with only a success string. Completion creates a `ResultPacket` containing evidence and verification. The project enters Review mode and blocks the next Run until HEAD records a `ReviewDecision`.
+A Run cannot finish with only a success string. Completion creates a `ResultPacket` containing evidence and verification. The project enters Review mode and blocks the next Run until Lode records a `ReviewDecision`.
 
 Finish and review bind the exact validated request to the existing Run before
 publishing its artifact, terminal Run state, and Session pointer. If interrupted,
@@ -43,7 +43,7 @@ still independently verify; an intent is not a result or an approval. Affected S
 checkpoint updates do not become transition conflicts. Completed response-loss
 replay is read-only, and changed inputs fail only that transition. No checkpoint,
 new review gate, or separate per-retry journal is created. Normal status reads do
-not repair state; explicit checkpoint integration remains a separate HEAD action.
+not repair state; explicit checkpoint integration remains a separate Lode action.
 
 The active lineage protocol is `0.4.0`. Each current lineage artifact embeds its
 verified [`AuthorityPlaneContract`](authority-plane-contract.md) boundary:
@@ -52,7 +52,7 @@ ResultPacket is P3 evidence with false recovery, Canon-mutation, and review
 authority, and ReviewDecision is a P1 normative record. A ResultPacket can support
 a decision but cannot create one or become the only recovery source.
 
-The current implementation builds a deterministic Fresh HEAD review projection and can run an authorized Codex or OpenCode one-shot invocation through the common supervised runtime path. A fail-closed application bridge converts only a completed, verified, transcript-free Run draft into the canonical `ResultPacket` and Fresh HEAD projection. Provider-session resume or hydration is not required for meaning or recovery, and no runtime result manufactures a `ReviewDecision`; the calling HEAD must consume the verified projection and provide that decision.
+The current implementation builds a deterministic Fresh Lode review projection and can run an authorized Codex or OpenCode one-shot invocation through the common supervised runtime path. A fail-closed application bridge converts only a completed, verified, transcript-free Run draft into the canonical `ResultPacket` and Fresh Lode projection. Provider-session resume or hydration is not required for meaning or recovery, and no runtime result manufactures a `ReviewDecision`; the calling Lode must consume the verified projection and provide that decision.
 
 ## Explicit mutation commands
 
@@ -61,7 +61,7 @@ Mutation commands accept JSON input files so structured authority and evidence a
 Create a Whole-plan snapshot:
 
 ```text
-node scripts/head.mjs lineage-plan <project> --input <whole-plan.json>
+node scripts/lode.mjs lineage-plan <project> --input <whole-plan.json>
 ```
 
 ```json
@@ -72,15 +72,15 @@ node scripts/head.mjs lineage-plan <project> --input <whole-plan.json>
     { "id": "verification", "outcome": "Direct proof" }
   ],
   "invariants": ["Project canon outranks derived context"],
-  "sources": [{ "uri": ".head/instructions/project.md", "role": "verified-project-direction" }]
+  "sources": [{ "uri": ".lode/instructions/project.md", "role": "verified-project-direction" }]
 }
 ```
 
 Compile and persist the task Context Capsule, then create an Execution Contract:
 
 ```text
-node scripts/head.mjs context-compile <project> --task "bounded task" --budget 32768
-node scripts/head.mjs lineage-contract <project> --input <execution-contract.json>
+node scripts/lode.mjs context-compile <project> --task "bounded task" --budget 32768
+node scripts/lode.mjs lineage-contract <project> --input <execution-contract.json>
 ```
 
 ```json
@@ -102,13 +102,13 @@ node scripts/head.mjs lineage-contract <project> --input <execution-contract.jso
 Start the Run:
 
 ```text
-node scripts/head.mjs run-start <project> --contract execution-contract-<24 hex>
+node scripts/lode.mjs run-start <project> --contract execution-contract-<24 hex>
 ```
 
 Finish through a Result Packet:
 
 ```text
-node scripts/head.mjs run-finish <project> --input <result.json>
+node scripts/lode.mjs run-finish <project> --input <result.json>
 ```
 
 ```json
@@ -126,10 +126,10 @@ node scripts/head.mjs run-finish <project> --input <result.json>
 }
 ```
 
-Build the Fresh HEAD review projection:
+Build the Fresh Lode review projection:
 
 ```text
-node scripts/head.mjs run-review-context <project>
+node scripts/lode.mjs run-review-context <project>
 ```
 
 The projection returns a content-derived `reviewContextId`. It contains the verified WholePlanSnapshot, ExecutionContract, ResultPacket, Capsule reference, authority, and review protocol. Executor transcript, raw failure logs, provider session state, and unpromoted repository instructions are explicitly excluded.
@@ -137,7 +137,7 @@ The projection returns a content-derived `reviewContextId`. It contains the veri
 Review the pending result using that exact projection:
 
 ```text
-node scripts/head.mjs run-review <project> --input <review.json>
+node scripts/lode.mjs run-review <project> --input <review.json>
 ```
 
 ```json
@@ -154,7 +154,7 @@ Allowed dispositions are `accept`, `revise`, `expand`, `rollback`, and `escalate
 `revise` and `expand` set a next-plan gate. Create a new generation linked to that ReviewDecision:
 
 ```text
-node scripts/head.mjs lineage-next-plan <project> --input <next-whole-plan.json>
+node scripts/lode.mjs lineage-next-plan <project> --input <next-whole-plan.json>
 ```
 
 ```json
@@ -176,7 +176,7 @@ Result Packets may contain candidate knowledge:
 }
 ```
 
-Fresh HEAD may return recommendations inside the ReviewDecision:
+Fresh Lode may return recommendations inside the ReviewDecision:
 
 ```json
 {
@@ -195,10 +195,10 @@ Allowed recommendations are `recommend-promotion`, `reject`, and `defer`. They n
 ## Read and verification surfaces
 
 ```text
-node scripts/head.mjs lineage-read <project> --artifact <lineage-artifact-id>
+node scripts/lode.mjs lineage-read <project> --artifact <lineage-artifact-id>
 ```
 
-The read-only MCP tool `head_lineage_artifact` exposes the same digest verification. Neither read surface promotes evidence, changes authority, or advances a Run.
+The read-only MCP tool `lode_lineage_artifact` exposes the same digest verification. Neither read surface promotes evidence, changes authority, or advances a Run.
 
 ## Failure boundaries
 
@@ -207,7 +207,7 @@ The read-only MCP tool `head_lineage_artifact` exposes the same digest verificat
 - unfinished prior review: the next Run is rejected;
 - Result Packet without evidence or verification: Run finish is rejected;
 - result and whole-plan mismatch: ReviewDecision creation is rejected;
-- missing or stale Fresh HEAD review context id: ReviewDecision creation is rejected;
+- missing or stale Fresh Lode review context id: ReviewDecision creation is rejected;
 - revise/expand followed by an old or unrelated plan: the next Run is rejected;
 - rollback/escalate without explicit user direction: the next Run is rejected;
 - knowledge proposal or recommendation: remains authority-free and does not mutate canon;

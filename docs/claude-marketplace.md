@@ -12,7 +12,7 @@ contract suite and native build matrix pass. The source repository remains the
 directly runnable Core; Claude-specific catalog and cache-path details do not
 enter `.head/`, Product Canon, Session/Run lineage, or runtime authorization.
 
-The generated branch contains exactly:
+The generated existing-address compatibility carrier contains exactly:
 
 ```text
 .claude-plugin/marketplace.json
@@ -59,12 +59,12 @@ escape, source-file drift, projection drift, and identity mismatch.
 Requirements: Claude Code and a current Node.js LTS release.
 
 ```powershell
-claude plugin marketplace add binary1215/head-agent-plugin@claude-marketplace
+claude plugin marketplace add binary1215/lode@claude-marketplace
 claude plugin install head-agent-core@head-agent-plugin
 ```
 
 Start a new Claude Code session after installation. Normal use begins through
-the bundled `head-agent-onboarding` Skill and typed `head_core` MCP operations.
+the bundled `head-agent-core` Skill and typed `head_core` MCP operations.
 Installation alone does not create `.head/`, modify a project, contact GraphDB,
 choose a provider/model, approve Product Canon, or create a ReviewDecision.
 
@@ -86,7 +86,7 @@ claude plugin uninstall head-agent-core@head-agent-plugin
 claude plugin marketplace remove head-agent-plugin
 ```
 
-Removing the plugin does not delete project-owned or HEAD-managed project state.
+Removing the plugin does not delete project-owned or Lode-managed project state.
 Project `.head/` removal remains a separate explicit user action.
 
 ## Publication ownership
@@ -118,3 +118,19 @@ cache, and plugin state outside the user's normal Claude configuration.
 
 This repository is not an official Anthropic marketplace. It is a Git-hosted
 third-party Claude Code marketplace distributed under the [MIT License](../LICENSE).
+
+## Canonical and compatibility compositions
+
+The canonical source artifact advertises plugin `lode-agent-core`, server `lode_core`,
+tools `lode_*`, and Skills `lode-agent-core`, `lode-agent-onboarding` and
+`lode-conversation`. The existing remote-address examples above describe the generated
+compatibility carrier: plugin `head-agent-core@head-agent-plugin`, server `head_core`,
+tools `head_*`, and Skills `head-agent-core`, `head-agent-onboarding` and
+`head-conversation`. Both use the same Lode implementation and guards; an artifact
+advertises only its own single vocabulary. Source packaging does not prove publication,
+installation or loaded Host behavior.
+
+Fresh initialization uses `.lode/`. Existing `.head/` Projects preserve their root,
+identity, records, selected Session and operational ownership; no manual conversion
+or second canonical store is required.
+

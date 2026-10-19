@@ -1,3 +1,4 @@
+import { relativeProjectArtifact } from "../scripts/lib/project-storage-format.mjs";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
@@ -46,8 +47,8 @@ const report = f => ({ action: "prepare-result", integrationId: f.integrationId,
   verification: [{ check: "exact paired public surfaces", status: "passed" }], unknowns: ["No real provider or native file effect in this fixture"] });
 
 test("two integration tools describe exact actions and separate file effects from authority", () => {
-  const integration = tools.find(value => value.name === "head_worker_integration");
-  const status = tools.find(value => value.name === "head_worker_integration_status");
+  const integration = tools.find(value => value.name === "lode_worker_integration");
+  const status = tools.find(value => value.name === "lode_worker_integration_status");
   assert.ok(integration && status);
   assert.deepEqual(integration.inputSchema.properties.action.enum, ["prepare", "apply", "reconcile", "settle-incomplete", "prepare-result", "publish-result"]);
   assert.equal(integration.annotations.readOnlyHint, false);
@@ -66,8 +67,8 @@ test("two integration tools describe exact actions and separate file effects fro
   }
   assert.match(integration.description, /HEAD supplies/);
   assert.match(integration.description, /never creates ReviewDecision, Product Canon or checkpoint/);
-  assert.ok(usage({ all: true, surface: "managed-maintenance" }).commands.some(line => line.startsWith("head managed-maintenance worker-integrate ")));
-  assert.equal(usage({ all: true }).commands.some(line => line.startsWith("head worker-integrate ")), false);
+  assert.ok(usage({ all: true, surface: "managed-maintenance" }).commands.some(line => line.startsWith("lode managed-maintenance worker-integrate ")));
+  assert.equal(usage({ all: true }).commands.some(line => line.startsWith("lode worker-integrate ")), false);
   assert.ok(usage({ all: true }).commands.some(line => line.startsWith("head worker-integration-status ")));
 });
 
@@ -196,12 +197,12 @@ test("typed and CLI no-effect integration publishes one whole result and still r
   const state = inspectProject(f.root).state;
   assert.equal(state.pendingReview.resultPacketId, result.resultPacket.resultPacketId);
   assert.equal(state.lastReviewDecisionId, null);
-  assert.equal(fs.readdirSync(path.join(f.root, ".head/lineage/result-packets")).length, 1);
+  assert.equal(fs.readdirSync(path.join(f.root, relativeProjectArtifact(f.storage, "lineage", "result-packets"))).length, 1);
   assert.equal(result.resultPacket.evidence[0].memberProvenance.length, 2);
   const beforeRead = snapshot(f.root);
   assert.deepEqual(cliStatus(f), await tool(f.root, { integrationId: f.integrationId }, true));
   assert.equal(cliStatus(f).result.status, "published");
-  assert.equal(cliStatus(f).result.resultPacket.read.tool, "head_lineage_artifact");
+  assert.equal(cliStatus(f).result.resultPacket.read.tool, "lode_lineage_artifact");
   assert.equal(cliStatus(f).result.resultPacket.resultPacketId, result.resultPacket.resultPacketId);
   assert.equal(Object.hasOwn(cliStatus(f).result.verification, "headReport"), false);
   assert.equal(Object.hasOwn(cliStatus(f).result.verification, "wholeResultPacket"), false);

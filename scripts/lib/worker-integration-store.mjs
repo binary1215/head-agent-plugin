@@ -1,3 +1,4 @@
+import { formatForVerifiedOwner, familyFormatForOriginal } from "./project-storage-format.mjs";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -10,9 +11,9 @@ export const integrationJson = value => JSON.stringify(canonical(value));
 
 // No arbitrary caller path: integration evidence lives beneath the exact project.
 // These checks are tamper observations, not an OS security sandbox or atomic CAS.
-export function workerIntegrationDirectory(root, create = false) {
+export function workerIntegrationDirectory(root, create = false, storage) {
   let directory = fs.realpathSync(root);
-  for (const part of [".head", "runtime", "worker-integrations"]) {
+  for (const part of [formatForVerifiedOwner(storage).directory, "runtime", "worker-integrations"]) {
     directory = path.join(directory, part);
     if (create) {
       try { fs.mkdirSync(directory, { mode: 0o700 }); }

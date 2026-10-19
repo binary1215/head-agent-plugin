@@ -1,6 +1,10 @@
 <div align="center">
 
-# HEAD Agent Core Plugin
+# Lode
+
+<p>
+  <img src="docs/assets/branding/lode-readme-wordmark.png" alt="Lode Agent Core" width="720">
+</p>
 
 [English](README.md) | [한국어](README.ko.md) | [Documentation](docs/README.md) | [한국어 문서](docs/ko/README.md)
 
@@ -12,7 +16,7 @@ even when the tool, agent, or conversation changes.**
 Recover safely after compaction. Give each task only the context it needs.
 Keep the reason behind every accepted change.
 
-[![Build](https://github.com/binary1215/head-agent-plugin/actions/workflows/go-worker-build-release.yml/badge.svg)](https://github.com/binary1215/head-agent-plugin/actions/workflows/go-worker-build-release.yml)
+[![Build](https://github.com/binary1215/lode/actions/workflows/go-worker-build-release.yml/badge.svg)](https://github.com/binary1215/lode/actions/workflows/go-worker-build-release.yml)
 ![Status](https://img.shields.io/badge/status-beta-blue)
 ![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-blue)
 ![Runtime](https://img.shields.io/badge/runtime-Node.js%20%2B%20Go-00ADD8)
@@ -29,9 +33,9 @@ Keep the reason behind every accepted change.
 
 </div>
 
-## What HEAD Agent Core does
+## What Lode Agent Core does
 
-HEAD Agent Core keeps the direction and evidence of AI-assisted development with
+Lode Agent Core keeps the direction and evidence of AI-assisted development with
 the project instead of trapping them inside one model conversation. Across
 Claude Code, Codex, and OpenCode, it connects:
 
@@ -52,7 +56,7 @@ The benefits become more valuable as a project outlives one conversation.
 ### Continue after compaction or session loss
 
 Conversation compaction is lossy, and provider summaries can omit a constraint
-or quietly change the next step. For recovery-sensitive work, HEAD checkpoints
+or quietly change the next step. For recovery-sensitive work, Lode checkpoints
 the exact purpose, approved decisions, current position, and next expected
 result. After compaction it verifies that the project direction did not drift
 before continuing. On conversation entry, provider replacement, or a Host-
@@ -61,7 +65,7 @@ about the task and does not supply checkpoint IDs, turn counters, tokens, or
 recovery JSON. A newer real user request always wins over an older prepared
 continuation.
 
-When durable direction really changes, HEAD handles checkpoint publication too:
+When durable direction really changes, Lode handles checkpoint publication too:
 it reads an exact current basis, derives direction in the conversation, and asks
 Core to create or reuse the checkpoint under one lock. Identical retries write
 nothing; stale direction cannot overwrite newer work. This runs only at useful
@@ -91,11 +95,11 @@ supported paths, omissions and installation/model verification limits.
 ### Give each task bounded, reviewable context
 
 More context is not always better. The user can state the task in ordinary
-language; the provider-neutral HEAD performs semantic task analysis and authors
+language; the provider-neutral Lode performs semantic task analysis and authors
 task-local EvidenceNeeds in the conversation. It can name exact repository
 paths, Product entities, and current graph node anchors without asking the user
 to write JSON, choose a graph ID, or manage a token tier. Status, preparation,
-repository inspection, and preview are internal HEAD steps rather than a setup
+repository inspection, and preview are internal Lode steps rather than a setup
 wizard the user must operate. The Context Compiler provides selected sources, exclusions and uncertainty
 under the requested budget. It does not certify inclusion or semantic sufficiency. Lexical overlap remains fallback
 discovery/ranking only; Core no longer chooses a semantic graph anchor from the
@@ -109,14 +113,14 @@ review, and avoids treating the whole repository as prompt context. See
 
 ### Review why a change happened
 
-Git can show which bytes changed. HEAD also preserves the reviewed reasoning
+Git can show which bytes changed. Lode also preserves the reviewed reasoning
 around the change:
 
 ```text
 whole plan
   -> execution scope + task context
   -> agent result + verification evidence
-  -> Fresh HEAD review + explicit decision
+  -> Fresh Lode review + explicit decision
   -> ChangeSet + next checkpoint
 ```
 
@@ -129,7 +133,7 @@ from a transcript or commit message. See
 
 ### Connect product intent to code and tests
 
-HEAD can propose evidence-linked relationships from reviewed Features and
+Lode can propose evidence-linked relationships from reviewed Features and
 Capabilities to Files, Symbols, and Tests. It can then derive reviewable change-
 impact candidates from exact before/after revisions. Inference remains a
 candidate until explicit review, so a heuristic match never silently becomes a
@@ -137,22 +141,22 @@ product decision. See [Feature mapping](docs/feature-mapping.md).
 
 ### Additional benefits
 
-| Common AI-development problem | What HEAD provides |
+| Common AI-development problem | What Lode provides |
 | --- | --- |
-| Agents and runtimes build different interpretations | Claude Code, Codex, OpenCode, HEAD, and bounded workers use the same project-scoped `.head/` identities. |
+| Agents and runtimes build different interpretations | Claude Code, Codex, OpenCode, Lode, and bounded workers use the same project-scoped `.lode/` identities. |
 | Model inference quietly becomes a decision | Inferred concepts and impacts remain reviewable candidates until an explicit user decision accepts them. |
 | A handoff loses the current position | Provider-independent checkpoints preserve the exact work direction for another session, tool, or teammate. |
 | A graph or generated document becomes hidden authority | GraphSnapshot, GraphDB, Markdown, and continuity remain rebuildable views over verified records. |
 | A large repository overwhelms the prompt | Source Scope and bounded compilation keep unrelated generated, vendored, or copied material out of normal task context. |
-| Several agents blur responsibility | Bounded execution, result evidence, and independent review stay distinct while HEAD integrates them into one outcome. |
+| Several agents blur responsibility | Bounded execution, result evidence, and independent review stay distinct while Lode integrates them into one outcome. |
 | Existing managed parallel work is hard to inspect | Retained wave diagnostics show requested, started, returned, waiting, succeeded, and failed workers without merging their authorizations or treating wave completion as approval. Ordinary Host delegation does not create a wave. |
 | Git and deployment history must be typed by hand | Provider-neutral observations turn current product refs and host-reported deployment results into immutable P3 evidence, while only an approved successful exact-commit/ref match becomes a non-authoritative ReleaseObservation. |
-| Every product exposes different operational data | A Project-bound Host registry lets HEAD collect a configured source by opaque ID, while product-specific adapters normalize it into one evidence-only contract and Core proves coverage and replay. |
-| Code and reviewed policy drift apart between releases | Provider HEAD proposes evidence-linked Conformance Findings into a non-blocking queue; Core verifies exact anchors and replay while only the user can disposition or accept a fresh resolution. Missing Graph or connector data remains a disclosure, not a gate on ordinary work. |
+| Every product exposes different operational data | A Project-bound Host registry lets Lode collect a configured source by opaque ID, while product-specific adapters normalize it into one evidence-only contract and Core proves coverage and replay. |
+| Code and reviewed policy drift apart between releases | Provider Lode proposes evidence-linked Conformance Findings into a non-blocking queue; Core verifies exact anchors and replay while only the user can disposition or accept a fresh resolution. Missing Graph or connector data remains a disclosure, not a gate on ordinary work. |
 | A product rule silently spreads through a hierarchy | Policy applies only to the exact Feature or FeatureGroup named in an immutable proposal and may cite exact Requirement, Constraint, or Decision keys. The user reviews one compact decision; group membership never creates hidden inheritance. Later evidence drift is shown without silently invalidating the decision. |
-| Before/after metrics look comparable when collection changed | HEAD keeps the numeric comparison available but shows adapter revision, source scope, form, duration, sample size, and coverage as same, different, or unknown. It never silently normalizes or claims causality. |
+| Before/after metrics look comparable when collection changed | Lode keeps the numeric comparison available but shows adapter revision, source scope, form, duration, sample size, and coverage as same, different, or unknown. It never silently normalizes or claims causality. |
 
-> A conventional coding agent optimizes the current task. HEAD Agent Core
+> A conventional coding agent optimizes the current task. Lode Agent Core
 > optimizes for many tasks to accumulate into the same reviewed product
 > direction.
 
@@ -160,7 +164,7 @@ These benefits reinforce one another:
 
 ```text
 reviewed direction + current repository evidence
-  -> bounded Context Capsule + HEAD sufficiency judgment
+  -> bounded Context Capsule + Lode sufficiency judgment
   -> bounded execution and explicit review
   -> decision and change history
   -> exact checkpoint for handoff, session loss, or compaction
@@ -168,10 +172,10 @@ reviewed direction + current repository evidence
 
 ## Who it is for
 
-HEAD Agent Core is for people who must keep an AI-assisted product coherent
+Lode Agent Core is for people who must keep an AI-assisted product coherent
 across more than one prompt, task, agent, or runtime.
 
-| You are... | HEAD helps you... |
+| You are... | Lode helps you... |
 | --- | --- |
 | A solo developer building a product over many AI sessions | Continue from the approved direction without re-explaining the project from scratch. |
 | A technical lead coordinating several agents or bounded workers | Separate planning, implementation, and review while integrating results into one whole outcome. |
@@ -189,32 +193,32 @@ expected to become the unquestioned source of project meaning.
 
 ### Separate conversations, shared direction
 
-Tell HEAD what to do. It can route independent work to separate logical Sessions
+Tell Lode what to do. It can route independent work to separate logical Sessions
 while preserving the common Project goal and constraints. Each Session keeps its
 own progress and recovery; a new conversation does not replace another's work.
 A common deployment cancellation stays current even when an earlier Session is
-restored. HEAD handles the routing and current-direction updates from your request;
+restored. Lode handles the routing and current-direction updates from your request;
 you do not maintain IDs or fill a direction form. See
 [Graph discovery and independent Sessions](docs/graph-discovery.md).
 
 
-Install HEAD Agent Core once, open your project in Codex, Claude Code, or a
+Install Lode Agent Core once, open your project in Codex, Claude Code, or a
 configured OpenCode workspace, and describe your work in ordinary language.
-You do not have to operate HEAD as a separate application.
+You do not have to operate Lode as a separate application.
 
 The first request can include the real task. You do not need a separate setup
 turn:
 
 ```text
-Use HEAD Agent Core for this project. Resume its existing state if one exists;
+Use Lode Agent Core for this project. Resume its existing state if one exists;
 otherwise initialize the Core. Then find the cause of this login failure and fix it.
 ```
 
-HEAD keeps that original task and continues it after initialization, status, and
+Lode keeps that original task and continues it after initialization, status, and
 any verified recovery step. After that, keep asking for work as you normally
 would:
 
-After compaction or provider replacement, the HEAD Skill runs the read-only
+After compaction or provider replacement, the Lode Skill runs the read-only
 conversation-entry recovery automatically. You do not need to announce that
 compaction happened, request recovery, or provide a checkpoint ID. When the
 Host exposes no trustworthy lifecycle hook, the next conversation entry still
@@ -229,35 +233,35 @@ Prepare only the code and decision evidence needed for this change, then proceed
 Keep one overall plan and use parallel workers only for the independent parts.
 ```
 
-HEAD normally works directly. When delegation helps, it uses the current Host's
+Lode normally works directly. When delegation helps, it uses the current Host's
 available fork/spawn and wait/cancel tools, gives each worker a short brief and
 ownership boundary, then checks and combines the results. If the Host cannot
-delegate, HEAD continues directly or sequentially. Forked context must fit your
-input scope; otherwise HEAD uses supported fresh context. You do not configure
+delegate, Lode continues directly or sequentially. Forked context must fit your
+input scope; otherwise Lode uses supported fresh context. You do not configure
 a worker registry or supply IDs.
 
-Delegation can also help HEAD keep the context needed to judge your goal,
+Delegation can also help Lode keep the context needed to judge your goal,
 constraints and acceptance criteria. Before deep execution or detailed review,
-HEAD considers whether that detail may crowd out the overall task and separates
+Lode considers whether that detail may crowd out the overall task and separates
 the work when useful—even for a sequential task with no parallel speedup. It asks
 for goal-related findings, important new facts, uncertainty and checkable evidence,
 then checks the needed evidence and judges whether the result meets your goal.
 Simple work stays direct. This adds no score, token threshold, required fork or
 approval step, and no particular conversation becomes the sole recovery source.
 
-If a delegate fails, HEAD keeps completed work and continues only the unfinished
+If a delegate fails, Lode keeps completed work and continues only the unfinished
 part after checking whether anything is still running or already applied. It
 preserves your edits and checks uncertain overlapping effects before replacement;
 independent work can continue. No extra worker setup or approval ceremony is added.
 
 Managed jobs keep their history, status and exact cancellation tools.
-Choose [explicit managed execution](skills/head-agent-core/references/runtime-composition.md#explicit-managed-execution)
+Choose [explicit managed execution](skills/lode-agent-core/references/runtime-composition.md#explicit-managed-execution)
 for new or retained work when interruption recovery, durable ownership or unknown
 and duplicate effects need tracking. Original authorization/effect checks apply;
 file edits, worker count and ordinary failure alone do not require it. A Run describes risk and recovery needs, not a
 requirement that every helper use a managed launcher.
 
-HEAD checks or resumes the project, chooses the lightest safe operating lane,
+Lode checks or resumes the project, chooses the lightest safe operating lane,
 and prepares durable context or recovery artifacts only when the task needs
 them. It first queries nearby graph relations or reuses sufficient same-basis
 results, then reads original sources when needed. Product governance, full World
@@ -266,7 +270,7 @@ construction, databases and durable Runs remain optional rather than setup requi
 You do **not** need to write structured JSON, choose a token budget, find graph
 or session IDs, operate GraphDB, select an Observe/Session/Run lane, or decide
 which CLI or MCP operation to call. Those are internal or advanced interfaces.
-HEAD asks for a decision only when the authority really belongs to you—for
+Lode asks for a decision only when the authority really belongs to you—for
 example, approving Product meaning, resolving an ambiguous scope, or allowing
 an external, consequential, or destructive change.
 
@@ -276,17 +280,31 @@ diagnosis, CI, and recovery; they are not prerequisites for normal conversation.
 
 ## Install
 
+The canonical source package uses `lode-agent-core`, `lode_core`, `lode_*` and
+the Lode Skill names. The existing marketplace addresses below use the generated
+compatibility carrier: `head-agent-core@head-agent-plugin`, `head_core`, `head_*`
+and matching legacy Skill names, backed by the same Lode implementation. Each
+artifact advertises one server/tool/Skill vocabulary. A new Project uses `.lode/`;
+an existing `.head/` Project keeps its exact records, IDs and selected Session.
+These source and packaging contracts do not establish a published or loaded Host
+update, and do not require manual record conversion or rebinding.
+
 Choose one installation path. The Codex and Claude Code marketplace paths
 install the conversation Skill, typed MCP server, and verified native bundle for
 all supported hosts. Only the exact current-host binary can be selected at
-runtime. The user-scoped path also provides the global `head-agent` command for
+runtime. The user-scoped path also provides the global `lode-agent` command for
 automation and recovery and obtains its native package from the matching GitHub
 Release.
 
 ### Codex Git marketplace
 
+The repository is now `binary1215/lode`. Existing installations keep the
+`head-agent-plugin` marketplace and `head-agent-core` plugin identities, with
+Lode branding and the same implementation. The former repository URL redirects;
+no reinstall, carrier selection, or project-record migration is required.
+
 ```powershell
-codex plugin marketplace add binary1215/head-agent-plugin --ref codex-marketplace
+codex plugin marketplace add binary1215/lode --ref codex-marketplace
 codex plugin add head-agent-core@head-agent-plugin
 ```
 
@@ -294,7 +312,7 @@ Restart Codex after installation, start a new task so the installed Skill and
 MCP server are loaded, then ask:
 
 ```text
-Initialize or resume the small HEAD Core for this project and report readiness.
+Initialize or resume the small Lode Core for this project and report readiness.
 ```
 
 The marketplace install does not initialize a project, contact GraphDB, choose
@@ -304,7 +322,7 @@ Core boundary and, where consequential, explicit user review.
 ### Claude Code Git marketplace
 
 ```powershell
-claude plugin marketplace add binary1215/head-agent-plugin@claude-marketplace
+claude plugin marketplace add binary1215/lode@claude-marketplace
 claude plugin install head-agent-core@head-agent-plugin
 ```
 
@@ -312,12 +330,12 @@ Restart Claude Code after installation so the installed Skill and `head_core`
 MCP server are loaded, then ask:
 
 ```text
-Initialize or resume the small HEAD Core for this project and report readiness.
+Initialize or resume the small Lode Core for this project and report readiness.
 ```
 
 Claude Code copies the plugin into its versioned cache. The generated Claude
 distribution therefore projects its MCP entry through `${CLAUDE_PLUGIN_ROOT}`;
-the source Core and `.head/` identities remain unchanged. Installation does not
+the source Core and existing Project identities remain unchanged. Installation does not
 authorize project mutation, Product Canon review, GraphDB access, or a model
 choice.
 
@@ -325,16 +343,16 @@ choice.
 
 When using the user-scoped installation below, initialize the project with
 `--runtime claude,codex,opencode`. Marketplace-installed Claude Code users can
-request the same initialization through the bundled Skill. HEAD creates
+request the same initialization through the bundled Skill. Lode creates
 `CLAUDE.md` plus `.mcp.json` for Claude Code, `AGENTS.md` for Codex, and
 `opencode.json` for OpenCode only when those project files are absent. Existing
 files are preserved and generated manual-integration projections remain under
-`.head/generated/`.
+`.lode/generated/`.
 
 After initialization, start `claude` or `opencode` in the project. Claude Code
-asks for project MCP approval before using the shared `head_core` server. The
-runtime-native instruction/config files are projections; `.head/` remains the
-only canonical HEAD state.
+asks for project MCP approval before using the shared `lode_core` server. The
+runtime-native instruction/config files are projections; the selected `.lode/`
+or existing `.head/` remains the single canonical Project root.
 
 ### User-scoped CLI
 
@@ -345,23 +363,23 @@ runtime are optional.
 Windows PowerShell:
 
 ```powershell
-git clone https://github.com/binary1215/head-agent-plugin.git
-Set-Location .\head-agent-plugin
+git clone https://github.com/binary1215/lode.git lode-agent-plugin
+Set-Location .\lode-agent-plugin
 .\scripts\install.ps1 --native auto --project C:\path\to\project --runtime claude,codex,opencode
 
-head-agent --version
-head-agent doctor C:\path\to\project
+lode-agent --version
+lode-agent doctor C:\path\to\project
 ```
 
 macOS or Linux:
 
 ```bash
-git clone https://github.com/binary1215/head-agent-plugin.git
-cd head-agent-plugin
+git clone https://github.com/binary1215/lode.git lode-agent-plugin
+cd lode-agent-plugin
 ./scripts/install.sh --native auto --project /path/to/project --runtime claude,codex,opencode
 
-head-agent --version
-head-agent doctor /path/to/project
+lode-agent --version
+lode-agent doctor /path/to/project
 ```
 
 The installer stages a content-verified release in the current user's data
@@ -375,11 +393,11 @@ The normal path is the conversation-first flow above. Use the following CLI
 surface when a script, CI job, offline recovery procedure, or host integration
 needs the same deterministic Core behavior without a guided conversation.
 
-The default path initializes only the provider-neutral HEAD constitution and its
+The default path initializes only the provider-neutral Lode constitution and its
 fixed Project/Session recovery anchors:
 
 ```powershell
-head-agent init C:\path\to\project --runtime claude,codex,opencode
+lode-agent init C:\path\to\project --runtime claude,codex,opencode
 ```
 
 It returns `core_ready`, preserving identities and updating the lightweight
@@ -388,7 +406,7 @@ construction and document governance remain optional. The same bounded status is
 at any time:
 
 ```powershell
-head-agent status C:\path\to\project
+lode-agent status C:\path\to\project
 ```
 
 Successful human-readable status is intentionally one line. Exceptions name
@@ -414,19 +432,19 @@ state remains visible under `readiness.product.onboardingStatus`.
 
 In conversation, describe the task once. Ordinary reading and editing use the
 needed files directly. Only when reproducible selected-context handoff, a durable
-Run or recovery actually needs a Capsule does the HEAD Skill call
-`head_context_prepare`, perform semantic repository inspection, author any
-task-required `EvidenceNeed[]`, and call `head_context_preview` without asking
+Run or recovery actually needs a Capsule does the Lode Skill call
+`lode_context_prepare`, perform semantic repository inspection, author any
+task-required `EvidenceNeed[]`, and call `lode_context_preview` without asking
 the user to operate those steps. Missing or stale optional World evidence does
 not block direct work, and justified budget expansion is automatic.
 The final preview includes one explanation card with included evidence by kind,
 intentional omissions by reason, and remaining uncertainty. It does not add a
 new gate: mechanical coverage still belongs to Core and semantic sufficiency
-still belongs to HEAD.
+still belongs to Lode.
 
 The default MCP list stays focused on Core work, recovery and retained-work
-status/cancellation. HEAD can find optional Product, Graph, Observation or Context
-schemas with `head_tools_discover`, then use the returned read-only or effectful
+status/cancellation. Lode can find optional Product, Graph, Observation or Context
+schemas with `lode_tools_discover`, then use the returned read-only or effectful
 route. You do not need to unlock capabilities, select a profile on every request
 or type JSON. Discovery adds no authority; existing operation checks still apply.
 
@@ -434,12 +452,12 @@ The same Core operations remain available from the CLI for automation and
 diagnosis:
 
 ```powershell
-head-agent context-prepare C:\path\to\project --task "<task>"
+lode-agent context-prepare C:\path\to\project --task "<task>"
 ```
 
 This task-only, non-persisted P4 projection returns the current Project,
 World Model, and GraphSnapshot binding plus bounded lexical discovery material
-and exact node identities. The user does not write `EvidenceNeed[]`. HEAD uses
+and exact node identities. The user does not write `EvidenceNeed[]`. Lode uses
 ordinary semantic reasoning and repository inspection to author the structured
 proposal, then gives that proposal to the existing preview verifier. Core does
 not select evidence kinds or anchors, and absence from the lexical candidate
@@ -447,15 +465,15 @@ view never means irrelevance.
 
 If Product/World has not been activated, preparation still returns
 `ready_for_head_semantic_assessment`, discloses missing repository metadata and
-provides available curated context. HEAD may inspect current source directly.
+provides available curated context. Lode may inspect current source directly.
 Preparation never activates Product, indexes the repository or creates recovery
 records. Optional Product/World work is chosen only when the task needs it.
 
-Advanced automation may call the preview directly with HEAD-authored structured
+Advanced automation may call the preview directly with Lode-authored structured
 input:
 
 ```powershell
-head-agent context-preview C:\path\to\project `
+lode-agent context-preview C:\path\to\project `
   --task "Keep this exact task text across retries" `
   --budget 32768 `
   --evidence-needs .\evidence-needs.json
@@ -465,15 +483,15 @@ CLI output is concise by default. Add `--json` for selected context, sources,
 omissions and uncertainty. One preparation or preview call is enough when its
 evidence is useful; a separate preview is optional, not a setup ritual.
 
-`ready_for_head_semantic_assessment` means HEAD should assess the selected
-context, not that the tool has proved completeness. HEAD reads original bodies
+`ready_for_head_semantic_assessment` means Lode should assess the selected
+context, not that the tool has proved completeness. Lode reads original bodies
 when needed and can expand a returned graph anchor with `details: true`.
 Missing/stale World is disclosed; direct current source remains available.
 No fixed budget tiers, inclusion certificate or extra user approval is required.
 
 ### Conversation-first path
 
-The bundled `head-agent-onboarding` Skill is the preferred interactive entry.
+The bundled `lode-agent-onboarding` Skill is the preferred interactive entry.
 It inspects the current state, asks only for material choices such as repository
 scope or storage mode, semantically analyzes bounded current evidence, submits a
 typed proposal for Core verification, presents the resulting evidence-linked
@@ -482,11 +500,11 @@ the `product` profile explicitly. The provider proposal remains P3 evidence.
 
 ### Optional Product profile CLI path
 
-Initialize or resume the same project and HEAD Session identities:
+Initialize or resume the same project and Lode Session identities:
 
 ```powershell
-head-agent init C:\path\to\project --runtime claude,codex,opencode --profile product
-head-agent onboarding-status C:\path\to\project
+lode-agent init C:\path\to\project --runtime claude,codex,opencode --profile product
+lode-agent onboarding-status C:\path\to\project
 ```
 
 Without a structured user brief, first use intentionally returns
@@ -497,8 +515,8 @@ SourceSnapshot, paths, lines, optional symbols, and Product Model references, an
 immutable candidate-set ID is returned. Inspect it before review:
 
 ```powershell
-$onboarding = head-agent onboarding-status C:\path\to\project | ConvertFrom-Json
-head-agent onboarding-candidates C:\path\to\project `
+$onboarding = lode-agent onboarding-status C:\path\to\project | ConvertFrom-Json
+lode-agent onboarding-candidates C:\path\to\project `
   --candidate-set $onboarding.state.candidateSetId
 ```
 
@@ -517,13 +535,13 @@ when any candidate should be renamed, split, merged, or excluded.
 Apply the decision and verify the resulting views:
 
 ```powershell
-head-agent onboarding-review C:\path\to\project --input .\onboarding-review.json
-head-agent graph-query C:\path\to\project --query "<task>"
-head-agent world-status C:\path\to\project
-head-agent context-preview C:\path\to\project `
+lode-agent onboarding-review C:\path\to\project --input .\onboarding-review.json
+lode-agent graph-query C:\path\to\project --query "<task>"
+lode-agent world-status C:\path\to\project
+lode-agent context-preview C:\path\to\project `
   --task "Find implementation evidence for one reviewed Feature" --budget 32768
-head-agent world-docs-build C:\path\to\project
-head-agent resume C:\path\to\project --runtime claude,codex,opencode --profile product
+lode-agent world-docs-build C:\path\to\project
+lode-agent resume C:\path\to\project --runtime claude,codex,opencode --profile product
 ```
 
 `accept-all` is supported for a fully inspected batch, but it is not the default
@@ -547,13 +565,13 @@ before the first index:
 }
 ```
 
-Pass it with `head-agent init ... --profile product --input .\onboarding.json`. Source Scope
+Pass it with `lode-agent init ... --profile product --input .\onboarding.json`. Source Scope
 controls observation only; it cannot define Product Canon, approve a candidate,
 or grant execution authority.
 
 ## Core model
 
-HEAD separates meaning, recovery, evidence, views, and effects so that one
+Lode separates meaning, recovery, evidence, views, and effects so that one
 representation cannot inherit another's authority.
 
 | Plane | Owns | Examples | Does not authorize |
@@ -569,20 +587,20 @@ becomes a sixth source of product meaning. The complete executable boundary is
 documented in [Authority planes](docs/authority-plane-contract.md).
 
 The smaller normative root and the formal Record/Graph boundary are documented
-in [Provider-neutral HEAD constitution](docs/head-constitution.md).
+in [Provider-neutral Lode constitution](docs/lode-constitution.md).
 
 ### Architecture at a glance
 
 ```mermaid
 flowchart LR
-    U[User objective] --> H[Whole-plan HEAD]
+    U[User objective] --> H[Whole-plan Lode]
     PC[Product Canon] --> WM[World Model + GraphSnapshot]
     RE[Repository evidence] --> WM
     H --> CC[Context Compiler]
     WM -->|bounded evidence| CC
     CC --> RA[Runtime adapter]
     RA --> RP[ResultPacket]
-    RP --> FR[Fresh HEAD review]
+    RP --> FR[Fresh Lode review]
     WM --> PX[Local / ArcadeDB / Markdown projections]
 ```
 
@@ -590,21 +608,21 @@ The feedback path is explicit: an accepted result may become reviewed lineage,
 the repository can be re-indexed, and a later graph may project that evidence.
 No result, projection, or runtime effect accepts itself.
 
-### HEAD judgment with reproducible selected context
+### Lode judgment with reproducible selected context
 
 The Context Compiler selects task-relevant evidence under an explicit budget.
 It records what was included, excluded, stale, missing, truncated, or unknown.
 The same canonical inputs, compiler version, traversal policy, and budget
 reproduce the same Context Capsule.
 
-The default budget is `32768` approximate tokens, and HEAD may use any positive
+The default budget is `32768` approximate tokens, and Lode may use any positive
 safe integer. There is no five-tier ladder or 512K policy ceiling. Actual provider
 context fit and output reserve still apply; the estimate is not a tokenizer proof.
 
-HEAD may guide selection with exact repository paths, Product Canon keys,
+Lode may guide selection with exact repository paths, Product Canon keys,
 Observation IDs or bounded current graph anchors. The compiler supplies
 `evidenceGaps`, `omissions` and `uncertainty`, not an inclusion-proof gate.
-HEAD decides whether more source evidence is needed. A persisted ExecutionContract
+Lode decides whether more source evidence is needed. A persisted ExecutionContract
 records that separate judgment; it does not manufacture semantic acceptance.
 
 A Capsule is a derived execution input, not a second Canon. Digest or Canon drift
@@ -619,39 +637,39 @@ WholePlanSnapshot
   → ExecutionContract + ContextCapsule
   → runtime or bounded worker
   → ResultPacket
-  → Fresh HEAD ReviewDecision
+  → Fresh Lode ReviewDecision
   → accepted lineage or a revised plan
 ```
 
 Provider loss does not require importing a transcript. `session-restore`
 reconstructs the current input from the exact P2 checkpoint and verified lineage.
 After an accepted result, `run-integrate-checkpoint` can bind that review to a new
-checkpoint only when HEAD or the user explicitly supplies its recovery fields.
+checkpoint only when Lode or the user explicitly supplies its recovery fields.
 
 Intentional context compaction uses the same boundary internally:
 
-1. provider HEAD writes or reuses the exact P2 direction before compaction;
+1. provider Lode writes or reuses the exact P2 direction before compaction;
 2. a provider-neutral Host adapter retains the one-time transport token outside
    project Canon and performs the provider-owned compaction;
 3. Core restores P2 first, then verifies trusted real-user-turn evidence and
    rejects drift, uncertain replay, or summary-derived recovery;
-4. the Host submits the checkpoint-bound continuation at most once, or HEAD
-   continues as a disclosed fresh logical HEAD from the verified artifacts.
+4. the Host submits the checkpoint-bound continuation at most once, or Lode
+   continues as a disclosed fresh logical Lode from the verified artifacts.
 
-The normal UX is simply to continue the task. `head_conversation_enter` is the
+The normal UX is simply to continue the task. `lode_conversation_enter` is the
 automatic read-only entry projection used by the Skill, while the `compact-*`
-and `head_compaction_lifecycle_step` surfaces are advanced adapter and diagnostic
+and `lode_compaction_lifecycle_step` surfaces are advanced adapter and diagnostic
 operations. Missing Host hooks do not create a setup gate and never block
 ordinary work.
 
 For a durable direction update, the Skill internally uses the read-only
-`head_checkpoint_basis` and idempotent `head_checkpoint_sync` surfaces. Core
+`lode_checkpoint_basis` and idempotent `lode_checkpoint_sync` surfaces. Core
 returns `created`, `reused`, `deferred`, or `conflict`; only the affected recovery
 path pauses, and none of these outcomes asks the user for checkpoint JSON.
 
-When recovery needs explanation, `head_checkpoint_diagnose` gives one bounded,
+When recovery needs explanation, `lode_checkpoint_diagnose` gives one bounded,
 read-only answer: the current pointer, artifact-restore result, mechanical update
-availability, and the next HEAD action. It writes no lock or cache and never calls
+availability, and the next Lode action. It writes no lock or cache and never calls
 another model merely to read status. Matching IDs and hashes prove artifact
 consistency, not that checkpoint prose still matches the latest user intent.
 Changed sequential reads require a retry; the result explicitly does not claim an
@@ -675,7 +693,7 @@ Signal → Hypothesis → Initiative candidate → user ReviewDecision
 
 This is not one automatic promotion chain. Evidence remains evidence,
 hypotheses remain hypotheses, and a reviewed Initiative remains distinct from
-Product Canon. HEAD judges risk and persistence directly, without a recommendation
+Product Canon. Lode judges risk and persistence directly, without a recommendation
 API or a note-formatting call:
 
 - Observe for read and reasoning work;
@@ -693,7 +711,7 @@ documented in [Delivery state observation](docs/delivery-observation.md).
 
 ## Graph and records
 
-For new project information, HEAD uses bounded `head_project_graph` discovery
+For new project information, Lode uses bounded `lode_project_graph` discovery
 first, or reuses sufficient results from the same basis. Work and Product views
 reference the same original records. The result keeps revision, provenance,
 coverage and candidate/rejection state, including intact history. Missing or
@@ -710,7 +728,7 @@ backup, or mutable latest-node collection. The same verified inputs produce the
 same `graphSnapshotId`; semantic changes create a new snapshot with explicit
 ancestry.
 
-`head_world_model` verifies that complete model and current repository, then
+`lode_world_model` verifies that complete model and current repository, then
 returns a bounded status projection instead of transporting the full snapshot.
 Counts, IDs, digests, samples, and omission metadata stay available; deeper
 inspection uses the bounded graph, history, runtime, and semantic query tools.
@@ -775,15 +793,15 @@ closed instead of redefining the graph.
 ### Query the graph
 
 ```powershell
-head-agent world-status C:\path\to\project
-head-agent world-temporal C:\path\to\project `
+lode-agent world-status C:\path\to\project
+lode-agent world-temporal C:\path\to\project `
   --query "<Feature, symbol, path, ChangeSet, or ReviewDecision>" `
   --depth 3 --limit 100 --edge-limit 200
-head-agent graph-lineage-status C:\path\to\project
-head-agent graph-lineage-trace C:\path\to\project --anchor <exact-node-id>
-head-agent graph-lineage-diff C:\path\to\project `
+lode-agent graph-lineage-status C:\path\to\project
+lode-agent graph-lineage-trace C:\path\to\project --anchor <exact-node-id>
+lode-agent graph-lineage-diff C:\path\to\project `
   --from <older-world-model-id> --to <newer-world-model-id>
-head-agent context-preview C:\path\to\project --task "<task>" --budget 32768
+lode-agent context-preview C:\path\to\project --task "<task>" --budget 32768
 ```
 
 Traversal returns snapshot, query, and result identities plus inclusion,
@@ -797,18 +815,18 @@ reported as a possible move; semantic identity is never asserted automatically.
 
 ## Runtime and coordination
 
-Claude Code, Codex, and OpenCode are projections over one `.head/` authority. Runtime adapters
+Claude Code, Codex, and OpenCode are projections over one `.lode/` authority. Runtime adapters
 observe capability, consume one exact authorization at most once, supervise the
 owned process tree, validate structured output, and keep operational state
 outside the project.
 
 Ordinary delegation uses the current Host's tasks, messages and progress.
-HEAD provides context and ownership, combines successful contributions, inspects
-unknown effects, and handles only the unfinished part. There is no HEAD role-token,
+Lode provides context and ownership, combines successful contributions, inspects
+unknown effects, and handles only the unfinished part. There is no Lode role-token,
 generation, inbox or target-chain setup. Worker success cannot approve Canon or
 write recovery direction.
 
-Optional P2-first exact endpoint attachment preserves the same logical HEAD when
+Optional P2-first exact endpoint attachment preserves the same logical Lode when
 the Host disappears. The portable export bridge is attachment-only; it retains one
 current snapshot, not a durable delivery mail service. Host-specific pane/socket/UI
 behavior stays outside Core. See [Runtime adapters](docs/runtime-adapters.md)
@@ -827,7 +845,7 @@ activation must prove semantic conformance with the recoverable embedded graph.
 The JavaScript bridge is the semantic reference. When a verified native package
 is present, read-only prepared queries may use a content-addressed Go query-batch
 bridge; JavaScript still verifies the pointer, topology, traversal, request
-binding, and receipt. Set `HEAD_AGENT_ARCADEDB_NATIVE_MODE` to:
+binding, and receipt. Set `LODE_AGENT_ARCADEDB_NATIVE_MODE` to:
 
 - `auto` — use the verified native bridge when available, otherwise disclose and
   use the JavaScript reference path;
@@ -873,11 +891,11 @@ node .\scripts\distribution.mjs uninstall
 Upgrade stages and verifies an immutable release before replacing the active
 pointer. Normal removal deletes launchers and the active pointer but preserves
 verified releases for recovery. `uninstall --purge` also removes the user-scoped
-release store. Neither form traverses or deletes project `.head` state, Git data,
+release store. Neither form traverses or deletes project `.lode` state, Git data,
 generated project documents, or GraphDB data.
 
 Provider configuration and authentication remain owned by Claude Code, Codex,
-or OpenCode. HEAD passes only the exact authorized `provider/model` plus an
+or OpenCode. Lode passes only the exact authorized `provider/model` plus an
 ephemeral permission/privacy overlay; it does not install provider presets,
 copy credentials, or rewrite endpoints.
 
@@ -895,7 +913,7 @@ Status labels are evidence claims, not roadmap promises:
 | Project | initialization, Source Scope, review-gated Product Canon | **Available** |
 | Knowledge | graph-first bounded discovery with source fallback, World Model, incremental refresh, optional Context Capsules | **Available** |
 | Sessions | request-local logical Sessions and current common direction with exact-basis updates | **Available** |
-| Lineage | Runs, ResultPackets, Fresh HEAD review, P2 Session and conversation-entry recovery | **Available** |
+| Lineage | Runs, ResultPackets, Fresh Lode review, P2 Session and conversation-entry recovery | **Available** |
 | Host lifecycle | provider-neutral injected compaction contract | **Experimental** |
 | Host lifecycle | packaged Claude Code, Codex, and OpenCode compaction event bindings | **Deferred** |
 | Runtime | Claude Code, Codex, and OpenCode one-shot Session/Run execution | **Available** |
@@ -922,18 +940,18 @@ verification rather than inferring capability from this summary.
 
 ## Design principles
 
-HEAD Agent Core Plugin is inspired by
+Lode Agent Core Plugin is inspired by
 [Won6314/head-agent-core](https://github.com/Won6314/head-agent-core) and
 independently reworked as a provider-neutral plugin. It is not an official
 upstream release or a drop-in replacement. See the
 [source-grounded comparison](docs/original-head-core-comparison.md).
 
-This implementation retains the foundational HEAD principles while expressing
+This implementation retains the foundational Lode principles while expressing
 them through provider-neutral contracts:
 
-- HEAD owns the connected whole outcome;
+- Lode owns the connected whole outcome;
 - the user retains consequential authority;
-- semantic sufficiency belongs to HEAD; bounded verified context beats maximum context;
+- semantic sufficiency belongs to Lode; bounded verified context beats maximum context;
 - durable Canon survives temporary model sessions;
 - delegation stays bounded and non-authoritative;
 - completion requires connected primary evidence;
@@ -958,7 +976,7 @@ Start with these documents:
 - [Architecture](docs/architecture.md) — the provider-neutral composition;
 - [Authority planes](docs/authority-plane-contract.md) — the executable
   Graph/record and non-amplification contract;
-- [Onboarding](docs/onboarding.md) — HEAD semantic proposals, Core verification, and explicit review;
+- [Onboarding](docs/onboarding.md) — Lode semantic proposals, Core verification, and explicit review;
 - [Context Compiler](docs/context-compiler.md) — reproducible task context;
 - [Work artifact storage](docs/artifact-storage.md) — where to save evidence without extra ceremony.
 - [Execution Lineage](docs/execution-lineage.md) — plans, contracts, results,
@@ -995,11 +1013,11 @@ for a project using it.
 ## Verify from source
 
 Core verifies the exact target and permitted transition of a decision supplied
-by a trusted local caller. The Host and HEAD must convey the user's actual
+by a trusted local caller. The Host and Lode must convey the user's actual
 approval; digests and confirmation flags do not authenticate a human.
 
 Fixture tests establish reproducibility and transition behavior. They do not
-establish HEAD's evidence-discovery rate or end-to-end coding accuracy.
+establish Lode's evidence-discovery rate or end-to-end coding accuracy.
 See [verification evidence and local diagnostics](docs/verification-evidence.md).
 
 ```powershell
@@ -1017,7 +1035,7 @@ integrity verification.
 
 ## Status and licensing
 
-HEAD Agent Core Plugin is beta software: the provider-neutral constitutional
+Lode Agent Core Plugin is beta software: the provider-neutral constitutional
 Core, recovery, Context Compiler, execution lineage, local projections, bounded
 workers, and verified Codex/Claude distribution are ready for broader testing.
 Capabilities marked Experimental, Planned, or Deferred above remain outside

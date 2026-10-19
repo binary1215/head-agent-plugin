@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { inspectProject, SCHEMA_VERSION } from "./head-core.mjs";
+import { inspectProject, SCHEMA_VERSION } from "./lode-core.mjs";
 import {
   buildGitDecisionHistory,
   classifyGitReference,
@@ -81,6 +81,8 @@ import { withRefreshWriterLease } from "./refresh-writer-lease.mjs";
 import { readGraphProject, safeGraphFile } from "./discovery-index.mjs";
 import { SOURCE_ANALYSIS_VERSION } from "./source-analysis.mjs";
 import { withSessionRoute } from "./session-routing.mjs";
+import { ARTIFACT_COMPOSITION, publicToolName } from "./lode-artifact-composition.mjs";
+import { familyFormatForOriginal, formatForVerifiedOwner, relativeProjectArtifact } from "./project-storage-format.mjs";
 
 export const WORLD_MODEL_VERSION = "0.19.0";
 export const WORLD_MODEL_STORE = WORLD_MODEL_STORAGE_CONTRACT;
@@ -107,8 +109,8 @@ function canonical(value) {
   return value;
 }
 
-function readRecoverableTemporalGraphProjection({ projectRoot, projectId, adapter = null, expectedPointer = null } = {}) {
-  const selected = createGraphProjectionAdapter({ projectRoot, adapter });
+function readRecoverableTemporalGraphProjection({ projectRoot, projectId, adapter = null, expectedPointer = null, storage = null } = {}) {
+  const selected = createGraphProjectionAdapter({ storage, projectRoot, adapter });
   const pointerEntry = selected.readPointer();
   if (!pointerEntry) return null;
   const pointer = verifyGraphProjectionPointer(pointerEntry.document);
@@ -136,14 +138,14 @@ function canonicalJson(value) {
   return JSON.stringify(canonical(value));
 }
 
-function loadObservationProjectionForWorld({ projectRoot, projectId }) {
+function loadObservationProjectionForWorld({ projectRoot, projectId, storage = null }) {
   try {
-    return { projection: loadObservationProjection({ projectRoot, projectId }), status: "projected", reasonCode: "" };
+    return { projection: loadObservationProjection({ storage, projectRoot, projectId }), status: "projected", reasonCode: "" };
   } catch (error) {
     const reasonCode = String(error?.code || "");
     if (!OBSERVATION_WORLD_ERROR_PREFIXES.some((prefix) => reasonCode.startsWith(prefix))) throw error;
     return {
-      projection: loadObservationProjection({ projectRoot, projectId, artifacts: { descriptors: [], observations: [], derivedObservations: [], receipts: [] } }),
+      projection: loadObservationProjection({ storage, projectRoot, projectId, artifacts: { descriptors: [], observations: [], derivedObservations: [], receipts: [] } }),
       status: "unavailable",
       reasonCode,
     };
@@ -165,13 +167,13 @@ function restoreCanonBytes(file, beforeBytes) {
   }
 }
 
-function materializeGraphProjectionWithCanonFence({ projectRoot, graph, adapter }) {
-  const canonFile = path.resolve(projectRoot, ...PRODUCT_MODEL_RELATIVE_PATH.split("/"));
+function materializeGraphProjectionWithCanonFence({ projectRoot, graph, adapter, storage = null }) {
+  const canonFile = path.resolve(projectRoot, ...relativeProjectArtifact(storage, "context", "product-model.json").split("/"));
   const beforeBytes = fs.existsSync(canonFile) ? fs.readFileSync(canonFile) : null;
   let result;
   let operationError = null;
   try {
-    result = materializeGraphProjection({ projectRoot, graph, adapter });
+    result = materializeGraphProjection({ storage, projectRoot, graph, adapter });
   } catch (error) {
     operationError = error;
   }
@@ -356,7 +358,7 @@ function runtimeStateFor(state) {
   });
 }
 
-function verifiedSnapshot(snapshot, expectedId = "") {
+function verifiedSnapshot(snapshot, expectedId = "", storage = null) {
   if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) fail("World Model snapshot is invalid.", "INVALID_WORLD_MODEL");
   const recordedHash = snapshot.worldModelHash;
   const recordedId = snapshot.worldModelId;
@@ -368,16 +370,18 @@ function verifiedSnapshot(snapshot, expectedId = "") {
   if (recordedHash !== actualHash || recordedId !== `world-model-${actualHash.slice(0, 24)}` || (expectedId && recordedId !== expectedId)) {
     fail("World Model snapshot digest verification failed.", "WORLD_MODEL_DIGEST_MISMATCH");
   }
+  const format = familyFormatForOriginal("head-agent-core-world-model", snapshot, storage);
+  if (!format) fail("World Model snapshot protocol is unsupported.", "INVALID_WORLD_MODEL");
   if (snapshot.repositoryScan) validateRepositoryScanResult({
     schemaVersion: 1,
     kind: "RepositoryScanResult",
     ...snapshot.repositoryScan,
     files: snapshot.files,
     skipped: snapshot.skipped,
-  });
+  }, { storage: format });
   if (snapshot.semanticGraph) verifySemanticGraph(snapshot.semanticGraph);
   if (snapshot.productModel) {
-    const normalizedProductModel = normalizeProductModelDocument(productModelDocument(snapshot.productModel));
+    const normalizedProductModel = normalizeProductModelDocument(productModelDocument(snapshot.productModel), format);
     if (normalizedProductModel.productModelId !== snapshot.productModel.productModelId
       || normalizedProductModel.productModelHash !== snapshot.productModel.productModelHash) {
       fail("World Model product canon projection is invalid.", "PRODUCT_MODEL_IDENTITY_MISMATCH");
@@ -690,7 +694,7 @@ export function inspectWorldDomainFreshness({ root = ".", domains = WORLD_DOMAIN
   }
   const stored = readWorldModelForDiscovery({ root, worldModelId, storeAdapter });
   const snapshot = stored.snapshot, projectRoot = snapshot.projectRoot;
-  const { project } = readGraphProject(projectRoot);
+  const { project, storage } = readGraphProject(projectRoot);
   const result = {};
   for (const domain of [...new Set(domains)]) {
     try {
@@ -700,29 +704,29 @@ export function inspectWorldDomainFreshness({ root = ".", domains = WORLD_DOMAIN
       }
       let current = { ...snapshot };
       if (domain === "code") {
-        const sourceScope = readRepositorySourceScope({ projectRoot }).sourceScope;
-        const scan = inspectRepositoryScanFreshness({ projectRoot, sourceScope,
-          managedRootFiles: managedRootFilesForProject(project), storedFiles: snapshot.files });
+        const sourceScope = readRepositorySourceScope({ storage, projectRoot }).sourceScope;
+        const scan = inspectRepositoryScanFreshness({ storage, projectRoot, sourceScope,
+          managedRootFiles: managedRootFilesForProject(project, storage), storedFiles: snapshot.files });
         current = { ...current, files: scan.files, analysisBasis: codeAnalysisBasis(snapshot.semanticGraph),
           repositoryScan: { ...snapshot.repositoryScan, sourceScope },
           rules: { ...snapshot.rules, sourceScope, maxFileBytes: REPOSITORY_SCAN_DEFAULTS.maxFileBytes,
             maxFiles: REPOSITORY_SCAN_DEFAULTS.maxFiles, maxTotalBytes: REPOSITORY_SCAN_DEFAULTS.maxTotalBytes,
             maxSymbolsPerFile: REPOSITORY_SCAN_DEFAULTS.maxSymbolsPerFile,
-            excludedDirectories: REPOSITORY_SCAN_EXCLUDED_DIRECTORIES, managedRootProjectionsExcluded: managedRootFilesForProject(project) } };
+            excludedDirectories: REPOSITORY_SCAN_EXCLUDED_DIRECTORIES, managedRootProjectionsExcluded: managedRootFilesForProject(project, storage) } };
       } else if (domain === "product") {
-        const model = readProductModelCanon({ projectRoot }).model;
-        const input = { projectRoot, projectId: project.projectId, currentProductModelId: model.productModelId };
+        const model = readProductModelCanon({ storage, projectRoot }).model;
+        const input = { projectRoot, storage, projectId: project.projectId, currentProductModelId: model.productModelId };
         current = { ...current, productModel: model,
           onboardingProjection: loadOnboardingGraphProjection(input), productPolicyProjection: loadProductPolicyGraphProjection(input),
           featureMappingProjection: loadFeatureMappingProjection(input), changeSetProjection: loadChangeSetProjection(input),
           documentChangeProjection: loadDocumentChangeProjection(input) };
       } else if (domain === "git") {
         current = { ...current, git: gitHeadState(projectRoot),
-          releaseObservationProjection: loadReleaseObservationProjection({ projectRoot, projectId: project.projectId }) };
+          releaseObservationProjection: loadReleaseObservationProjection({ storage, projectRoot, projectId: project.projectId }) };
       } else if (domain === "observations") {
-        const observation = loadObservationProjectionForWorld({ projectRoot, projectId: project.projectId });
+        const observation = loadObservationProjectionForWorld({ storage, projectRoot, projectId: project.projectId });
         current = { ...current, observationProjection: { ...observation.projection, status: observation.status, reasonCode: observation.reasonCode },
-          productOperatingProjection: loadProductOperatingProjection({ projectRoot, projectId: project.projectId }) };
+          productOperatingProjection: loadProductOperatingProjection({ storage, projectRoot, projectId: project.projectId }) };
         if (observation.status === "unavailable") {
           result[domain] = { status: "unavailable", reasonCode: observation.reasonCode, fallback: "original-source" };
           continue;
@@ -733,7 +737,7 @@ export function inspectWorldDomainFreshness({ root = ".", domains = WORLD_DOMAIN
         const captured = withSessionRoute(projectRoot, snapshot.runtimeState.sessionId, () => readyProject(projectRoot));
         const selected = runtimeStateAdapter || runtimeStateAdapterFromDescriptor(stored.pointer?.sourceAdapters?.runtimeState);
         current = { ...current, runtimeState: runtimeStateFor(captured.state),
-          externalRuntimeState: buildExternalRuntimeState({ projectRoot, adapter: selected }).runtimeState };
+          externalRuntimeState: buildExternalRuntimeState({ storage, projectRoot, adapter: selected }).runtimeState };
       }
       const currentBasis = domainBasesFor(current, [domain])[domain];
       result[domain] = { status: currentBasis === snapshot.domainBases[domain] ? "current" : "stale",
@@ -798,8 +802,9 @@ export function buildWorldTraversalEligibility(snapshot, domainFreshness) {
 
 export function readWorldModel({ root = ".", storeAdapter = null } = {}) {
   const inspected = readyProject(root);
+  const storage = inspected.storage;
   const projectRoot = inspected.project.projectRoot;
-  const adapter = createWorldModelStoreAdapter({ projectRoot, adapter: storeAdapter });
+  const adapter = createWorldModelStoreAdapter({ storage, projectRoot, adapter: storeAdapter });
   const pointerEntry = adapter.readPointer();
   if (!pointerEntry) fail("Repository World Model has not been built.", "WORLD_MODEL_NOT_BUILT");
   const pointer = pointerEntry.document;
@@ -814,9 +819,10 @@ export function readWorldModel({ root = ".", storeAdapter = null } = {}) {
   }
   const snapshotEntry = adapter.readSnapshot(pointer.worldModelId);
   if (!snapshotEntry) fail("World Model snapshot is missing.", "WORLD_MODEL_SNAPSHOT_MISSING");
-  const snapshot = verifiedSnapshot(snapshotEntry.document, pointer.worldModelId);
+  const snapshot = verifiedSnapshot(snapshotEntry.document, pointer.worldModelId, storage);
   if (snapshot.worldModelHash !== pointer.worldModelHash) fail("World Model pointer hash does not match its snapshot.", "WORLD_MODEL_POINTER_MISMATCH");
   return {
+    storage,
     status: "verified",
     pointerFile: pointerEntry.location,
     file: snapshotEntry.location,
@@ -828,14 +834,16 @@ export function readWorldModel({ root = ".", storeAdapter = null } = {}) {
 
 export function readWorldModelSnapshot({ root = ".", worldModelId, storeAdapter = null } = {}) {
   const inspected = readyProject(root);
+  const storage = inspected.storage;
   if (!/^world-model-[a-f0-9]{24}$/.test(worldModelId || "")) fail("World Model snapshot id is invalid.", "INVALID_WORLD_MODEL_ID");
-  const adapter = createWorldModelStoreAdapter({ projectRoot: inspected.project.projectRoot, adapter: storeAdapter });
+  const adapter = createWorldModelStoreAdapter({ storage, projectRoot: inspected.project.projectRoot, adapter: storeAdapter });
   const snapshotEntry = adapter.readSnapshot(worldModelId);
   if (!snapshotEntry) fail(`World Model snapshot is missing: ${worldModelId}`, "WORLD_MODEL_SNAPSHOT_MISSING");
   return {
     status: "verified",
     file: snapshotEntry.location,
-    snapshot: verifiedSnapshot(snapshotEntry.document, worldModelId),
+    snapshot: verifiedSnapshot(snapshotEntry.document, worldModelId, storage),
+    storage,
     storeAdapter: adapter.describe(),
   };
 }
@@ -844,11 +852,11 @@ export function readWorldModelSnapshot({ root = ".", worldModelId, storeAdapter 
 // installation drift or whole-repository freshness a prerequisite. Current
 // mutations and reproducible Capsule consumers keep their existing checks.
 export function readWorldModelForDiscovery({ root = ".", worldModelId = "", storeAdapter = null } = {}) {
-  const { projectRoot, project } = readGraphProject(root);
+  const { projectRoot, project, storage } = readGraphProject(root);
   if (!project) fail("HEAD Agent Core is not initialized.", "NOT_INITIALIZED");
   if (worldModelId && !/^world-model-[a-f0-9]{24}$/.test(worldModelId)) fail("World Model snapshot id is invalid.", "INVALID_WORLD_MODEL_ID");
-  const adapter = createWorldModelStoreAdapter({ projectRoot, adapter: storeAdapter });
-  if (!storeAdapter) safeGraphFile(projectRoot, ".head/world-model/current.json");
+  const adapter = createWorldModelStoreAdapter({ storage, projectRoot, adapter: storeAdapter });
+  if (!storeAdapter) safeGraphFile(projectRoot, relativeProjectArtifact(storage, "world-model", "current.json"));
   let pointer = null;
   try { pointer = adapter.readPointer()?.document || null; }
   catch (error) { if (!worldModelId) throw error; }
@@ -859,19 +867,20 @@ export function readWorldModelForDiscovery({ root = ".", worldModelId = "", stor
   }
   const selectedId = worldModelId || pointer?.worldModelId;
   if (!selectedId) fail("Repository World Model has not been built.", "WORLD_MODEL_NOT_BUILT");
-  if (!storeAdapter) safeGraphFile(projectRoot, `.head/world-model/snapshots/${selectedId}.json`);
+  if (!storeAdapter) safeGraphFile(projectRoot, relativeProjectArtifact(storage, "world-model", "snapshots", `${selectedId}.json`));
   const entry = adapter.readSnapshot(selectedId);
   if (!entry) fail("World Model snapshot is missing.", "WORLD_MODEL_SNAPSHOT_MISSING");
-  const snapshot = verifiedSnapshot(entry.document, selectedId);
+  const snapshot = verifiedSnapshot(entry.document, selectedId, storage);
   if (snapshot.projectId !== project.projectId || snapshot.projectRoot !== projectRoot) fail("World snapshot belongs to another Project/root.", "WORLD_MODEL_IDENTITY_MISMATCH");
   if (!worldModelId && pointer.worldModelHash !== snapshot.worldModelHash) fail("World pointer hash differs from retained bytes.", "WORLD_MODEL_POINTER_MISMATCH");
-  return { snapshot, pointer, file: entry.location, historical: !pointer || selectedId !== pointer.worldModelId };
+  return { snapshot, pointer, storage, file: entry.location, historical: !pointer || selectedId !== pointer.worldModelId };
 }
 
 export function findWorldModelSnapshot({ root = ".", graphSnapshotId = "", sourceSnapshotId = "", storeAdapter = null } = {}) {
   const inspected = readyProject(root);
+  const storage = inspected.storage;
   if (!graphSnapshotId && !sourceSnapshotId) fail("A GraphSnapshot or SourceSnapshot identity is required.", "WORLD_MODEL_SNAPSHOT_QUERY_REQUIRED");
-  const adapter = createWorldModelStoreAdapter({ projectRoot: inspected.project.projectRoot, adapter: storeAdapter });
+  const adapter = createWorldModelStoreAdapter({ storage, projectRoot: inspected.project.projectRoot, adapter: storeAdapter });
   const matches = [];
   for (const worldModelId of adapter.listSnapshotIds()) {
     const snapshot = readWorldModelSnapshot({ root: inspected.project.projectRoot, worldModelId, storeAdapter: adapter }).snapshot;
@@ -887,58 +896,59 @@ export function findWorldModelSnapshot({ root = ".", graphSnapshotId = "", sourc
 export function inspectWorldModel({ root = ".", storeAdapter = null, runtimeStateAdapter = null } = {}) {
   const stored = readWorldModel({ root, storeAdapter });
   const inspected = readyProject(root);
-  const sourceScopeState = readRepositorySourceScope({ projectRoot: inspected.project.projectRoot });
+  const storage = inspected.storage;
+  const sourceScopeState = readRepositorySourceScope({ storage, projectRoot: inspected.project.projectRoot });
   const sourceScope = sourceScopeState.sourceScope;
-  const scanInput = buildRepositoryScanInput({
+  const scanInput = buildRepositoryScanInput({ storage,
     projectRoot: inspected.project.projectRoot,
-    managedRootFiles: managedRootFilesForProject(inspected.project),
+    managedRootFiles: managedRootFilesForProject(inspected.project, storage),
     sourceScope,
   });
-  const storedSourceScope = stored.snapshot.repositoryScan?.sourceScope || buildRepositorySourceScope();
-  const freshness = inspectRepositoryScanFreshness({
+  const storedSourceScope = stored.snapshot.repositoryScan?.sourceScope || buildRepositorySourceScope({ storage });
+  const freshness = inspectRepositoryScanFreshness({ storage,
     projectRoot: inspected.project.projectRoot,
-    managedRootFiles: managedRootFilesForProject(inspected.project),
+    managedRootFiles: managedRootFilesForProject(inspected.project, storage),
     sourceScope,
     storedFiles: stored.snapshot.files,
   });
   const sourceScopeChanged = sourceScope.sourceScopeId !== storedSourceScope.sourceScopeId;
   const scan = freshness.status === "unchanged" && !sourceScopeChanged
     ? { files: stored.snapshot.files }
-    : scanRepositoryReference(scanInput);
-  const productCanon = readProductModelCanon({ projectRoot: inspected.project.projectRoot });
-  const onboardingProjection = loadOnboardingGraphProjection({
+    : scanRepositoryReference(scanInput, { storage });
+  const productCanon = readProductModelCanon({ storage, projectRoot: inspected.project.projectRoot });
+  const onboardingProjection = loadOnboardingGraphProjection({ storage,
     projectRoot: inspected.project.projectRoot,
     projectId: inspected.project.projectId,
     currentProductModelId: productCanon.model.productModelId,
   });
-  const productPolicyProjection = loadProductPolicyGraphProjection({
+  const productPolicyProjection = loadProductPolicyGraphProjection({ storage,
     projectRoot: inspected.project.projectRoot,
     projectId: inspected.project.projectId,
     currentProductModelId: productCanon.model.productModelId,
   });
-  const featureMappingProjection = loadFeatureMappingProjection({
+  const featureMappingProjection = loadFeatureMappingProjection({ storage,
     projectRoot: inspected.project.projectRoot,
     projectId: inspected.project.projectId,
     currentProductModelId: productCanon.model.productModelId,
   });
-  const changeSetProjection = loadChangeSetProjection({
+  const changeSetProjection = loadChangeSetProjection({ storage,
     projectRoot: inspected.project.projectRoot,
     projectId: inspected.project.projectId,
   });
-  const documentChangeProjection = loadDocumentChangeProjection({
+  const documentChangeProjection = loadDocumentChangeProjection({ storage,
     projectRoot: inspected.project.projectRoot,
     projectId: inspected.project.projectId,
   });
-  const observationIntegration = loadObservationProjectionForWorld({
+  const observationIntegration = loadObservationProjectionForWorld({ storage,
     projectRoot: inspected.project.projectRoot,
     projectId: inspected.project.projectId,
   });
   const observationProjection = observationIntegration.projection;
-  const productOperatingProjection = loadProductOperatingProjection({
+  const productOperatingProjection = loadProductOperatingProjection({ storage,
     projectRoot: inspected.project.projectRoot,
     projectId: inspected.project.projectId,
   });
-  const releaseObservationProjection = loadReleaseObservationProjection({
+  const releaseObservationProjection = loadReleaseObservationProjection({ storage,
     projectRoot: inspected.project.projectRoot,
     projectId: inspected.project.projectId,
   });
@@ -946,7 +956,7 @@ export function inspectWorldModel({ root = ".", storeAdapter = null, runtimeStat
   const runtimeState = withSessionRoute(inspected.project.projectRoot, stored.snapshot.runtimeState.sessionId,
     () => runtimeStateFor(readyProject(inspected.project.projectRoot).state));
   const selectedRuntimeAdapter = runtimeStateAdapter || runtimeStateAdapterFromDescriptor(stored.pointer.sourceAdapters?.runtimeState);
-  const externalRuntimeResult = buildExternalRuntimeState({ projectRoot: inspected.project.projectRoot, adapter: selectedRuntimeAdapter });
+  const externalRuntimeResult = buildExternalRuntimeState({ storage, projectRoot: inspected.project.projectRoot, adapter: selectedRuntimeAdapter });
   const externalRuntimeState = externalRuntimeResult.runtimeState;
   const currentSourceDigest = sourceDigestFor(
     scan.files,
@@ -1085,7 +1095,7 @@ export function buildWorldModelStatusProjection(inspection, { sampleLimit = WORL
   const payload = {
     schemaVersion: 1,
     kind: "WorldModelStatusProjection",
-    protocol: { name: "head-agent-core-world-model-status", version: WORLD_MODEL_STATUS_PROJECTION_VERSION },
+    protocol: { name: (familyFormatForOriginal("head-agent-core-world-model", inspection.snapshot) || formatForVerifiedOwner(inspection.storage)).protocol("head-agent-core-world-model-status"), version: WORLD_MODEL_STATUS_PROJECTION_VERSION },
     status: inspection.status,
     verification: {
       completeSnapshotDigestVerified: true,
@@ -1153,8 +1163,8 @@ export function buildWorldModelStatusProjection(inspection, { sampleLimit = WORL
       serializedByteLength: snapshotSerializedByteLength(snapshot),
       worldModelId: snapshot.worldModelId,
       worldModelHash: snapshot.worldModelHash,
-      localInspectionCommand: "head-agent world-status <project>",
-      boundedDetailTools: ["head_world_query", "head_temporal_graph", "head_git_history", "head_runtime_state"],
+      localInspectionCommand: `${ARTIFACT_COMPOSITION.identity === "lode" ? "lode-agent" : "head-agent"} world-status <project>`,
+      boundedDetailTools: ["head_world_query", "head_temporal_graph", "head_git_history", "head_runtime_state"].map(publicToolName),
     },
   };
   const statusProjectionHash = digest(canonicalJson(payload));
@@ -1204,20 +1214,21 @@ async function buildWorldModelLocked({
     fail("Current-entity revision-parent filtering is available only for non-persisted refresh previews.", "REVISION_PARENT_FILTER_PREVIEW_ONLY");
   }
   const inspected = readyProject(root);
+  const storage = inspected.storage;
   const project = inspected.project;
-  const worldStoreAdapter = createWorldModelStoreAdapter({ projectRoot: project.projectRoot, adapter: storeAdapter });
-  const managedRootFiles = managedRootFilesForProject(project);
-  const sourceScope = readRepositorySourceScope({ projectRoot: project.projectRoot }).sourceScope;
+  const worldStoreAdapter = createWorldModelStoreAdapter({ storage, projectRoot: project.projectRoot, adapter: storeAdapter });
+  const managedRootFiles = managedRootFilesForProject(project, storage);
+  const sourceScope = readRepositorySourceScope({ storage, projectRoot: project.projectRoot }).sourceScope;
   const selectedRepositoryScanExecution = repositoryScanExecution
-    ? validateRepositoryScanExecution(repositoryScanExecution, { projectRoot: project.projectRoot, managedRootFiles, sourceScope })
-    : await executeRepositoryScan({
-      adapter: computeAdapter || createRepositoryScanComputeAdapter(),
+    ? validateRepositoryScanExecution(repositoryScanExecution, { projectRoot: project.projectRoot, managedRootFiles, sourceScope, storage })
+    : await executeRepositoryScan({ storage,
+      adapter: computeAdapter || createRepositoryScanComputeAdapter({ storage }),
       projectRoot: project.projectRoot,
       managedRootFiles,
       sourceScope,
     });
-  const scan = validateRepositoryScanResult(selectedRepositoryScanExecution.result);
-  const productCanon = readProductModelCanon({ projectRoot: project.projectRoot });
+  const scan = validateRepositoryScanResult(selectedRepositoryScanExecution.result, { storage });
+  const productCanon = readProductModelCanon({ storage, projectRoot: project.projectRoot });
   let previousTemporalGraph = null;
   let previousTemporalStateUnavailable = false;
   let previousWorldReadCode = "";
@@ -1228,7 +1239,7 @@ async function buildWorldModelLocked({
       if (!new Set(["WORLD_MODEL_NOT_BUILT", "WORLD_MODEL_SNAPSHOT_MISSING"]).has(error.code)) throw error;
       previousWorldReadCode = error.code;
       const failedWorldPointer = worldStoreAdapter.readPointer()?.document || null;
-      previousTemporalGraph = readRecoverableTemporalGraphProjection({
+      previousTemporalGraph = readRecoverableTemporalGraphProjection({ storage,
         projectRoot: project.projectRoot,
         projectId: project.projectId,
         adapter: graphProjectionAdapter,
@@ -1238,32 +1249,32 @@ async function buildWorldModelLocked({
         if (!previousTemporalGraph) {
           const previousId = failedWorldPointer?.previousWorldModelId || "";
           const previousEntry = /^world-model-[a-f0-9]{24}$/.test(previousId) ? worldStoreAdapter.readSnapshot(previousId) : null;
-          if (previousEntry) previousTemporalGraph = verifiedSnapshot(previousEntry.document, previousId).temporalProvenanceGraph;
+          if (previousEntry) previousTemporalGraph = verifiedSnapshot(previousEntry.document, previousId, storage).temporalProvenanceGraph;
           previousTemporalStateUnavailable = true;
         }
       }
     }
   }
-  const onboardingProjection = onboardingProjectionInput || loadOnboardingGraphProjection({
+  const onboardingProjection = onboardingProjectionInput || loadOnboardingGraphProjection({ storage,
     projectRoot: project.projectRoot,
     projectId: project.projectId,
     currentProductModelId: productCanon.model.productModelId,
   });
-  const productPolicyProjection = productPolicyProjectionInput || loadProductPolicyGraphProjection({
+  const productPolicyProjection = productPolicyProjectionInput || loadProductPolicyGraphProjection({ storage,
     projectRoot: project.projectRoot,
     projectId: project.projectId,
     currentProductModelId: productCanon.model.productModelId,
   });
-  const featureMappingProjection = featureMappingProjectionInput || loadFeatureMappingProjection({
+  const featureMappingProjection = featureMappingProjectionInput || loadFeatureMappingProjection({ storage,
     projectRoot: project.projectRoot,
     projectId: project.projectId,
     currentProductModelId: productCanon.model.productModelId,
   });
-  const changeSetProjection = changeSetProjectionInput || loadChangeSetProjection({
+  const changeSetProjection = changeSetProjectionInput || loadChangeSetProjection({ storage,
     projectRoot: project.projectRoot,
     projectId: project.projectId,
   });
-  const documentChangeProjection = documentChangeProjectionInput || loadDocumentChangeProjection({
+  const documentChangeProjection = documentChangeProjectionInput || loadDocumentChangeProjection({ storage,
     projectRoot: project.projectRoot,
     projectId: project.projectId,
   });
@@ -1276,28 +1287,28 @@ async function buildWorldModelLocked({
     }))) previousTemporalStateUnavailable = true;
   const observationIntegration = observationProjectionInput
     ? { projection: observationProjectionInput, status: "projected", reasonCode: "" }
-    : loadObservationProjectionForWorld({ projectRoot: project.projectRoot, projectId: project.projectId });
+    : loadObservationProjectionForWorld({ storage, projectRoot: project.projectRoot, projectId: project.projectId });
   const observationProjection = observationIntegration.projection;
-  const productOperatingProjection = productOperatingProjectionInput || loadProductOperatingProjection({
+  const productOperatingProjection = productOperatingProjectionInput || loadProductOperatingProjection({ storage,
     projectRoot: project.projectRoot,
     projectId: project.projectId,
   });
-  const releaseObservationProjection = releaseObservationProjectionInput || loadReleaseObservationProjection({
+  const releaseObservationProjection = releaseObservationProjectionInput || loadReleaseObservationProjection({ storage,
     projectRoot: project.projectRoot,
     projectId: project.projectId,
   });
   const git = gitHeadState(project.projectRoot);
   const runtimeState = runtimeStateFor(inspected.state);
   const indexer = indexerState();
-  const externalRuntimeResult = buildExternalRuntimeState({ projectRoot: project.projectRoot, adapter: runtimeStateAdapter });
+  const externalRuntimeResult = buildExternalRuntimeState({ storage, projectRoot: project.projectRoot, adapter: runtimeStateAdapter });
   const externalRuntimeState = externalRuntimeResult.runtimeState;
-  const sourceRelationResult = await collectSourceRelationEvidence({
+  const sourceRelationResult = await collectSourceRelationEvidence({ storage,
     projectId: project.projectId,
     projectRoot: project.projectRoot,
     files: scan.files.map((file) => ({ path: file.path, digest: file.digest, language: file.language })),
     adapter: sourceRelationEvidenceAdapter,
   });
-  const semanticGraph = buildSemanticGraph({ files: scan.files, sourceRelationEvidence: sourceRelationResult.evidence });
+  const semanticGraph = buildSemanticGraph({ storage, files: scan.files, sourceRelationEvidence: sourceRelationResult.evidence });
   const selectedRevisionParentIds = filterRevisionParentsToCurrentEntities
     ? filterRevisionParentsForCurrentTemporalEntities({
       projectId: project.projectId,
@@ -1320,7 +1331,7 @@ async function buildWorldModelLocked({
         logicalLineageState,
       })
       : logicalLineageState;
-  const temporalProvenanceGraph = buildTemporalProvenanceGraph({
+  const temporalProvenanceGraph = buildTemporalProvenanceGraph({ storage,
     projectId: project.projectId,
     files: scan.files,
     productModel: productCanon.model,
@@ -1358,7 +1369,7 @@ async function buildWorldModelLocked({
     temporalProvenanceGraph.revisionParentIds,
     temporalProvenanceGraph.logicalLineageState,
   );
-  const gitHistoryResult = await buildGitDecisionHistory({
+  const gitHistoryResult = await buildGitDecisionHistory({ storage,
     projectRoot: project.projectRoot,
     adapter: gitHistoryAdapter,
     referenceCommits: git.referenceCommits || [],
@@ -1368,7 +1379,7 @@ async function buildWorldModelLocked({
   const payload = {
     schemaVersion: SCHEMA_VERSION,
     kind: "RepositoryWorldModel",
-    protocol: { name: "head-agent-core-world-model", version: WORLD_MODEL_VERSION },
+    protocol: { name: formatForVerifiedOwner(storage).protocol("head-agent-core-world-model"), version: WORLD_MODEL_VERSION },
     storageContract: WORLD_MODEL_STORAGE_CONTRACT,
     projectId: project.projectId,
     projectRoot: project.projectRoot,
@@ -1380,7 +1391,7 @@ async function buildWorldModelLocked({
       maxTotalBytes: REPOSITORY_SCAN_DEFAULTS.maxTotalBytes,
       maxSymbolsPerFile: REPOSITORY_SCAN_DEFAULTS.maxSymbolsPerFile,
       excludedDirectories: REPOSITORY_SCAN_EXCLUDED_DIRECTORIES,
-      managedRootProjectionsExcluded: managedRootFilesForProject(project),
+      managedRootProjectionsExcluded: managedRootFilesForProject(project, storage),
       sourceScope,
     },
     coverage: {
@@ -1402,7 +1413,7 @@ async function buildWorldModelLocked({
       productOperatingProjection: "epistemically-typed-signals-hypotheses-human-reviewed-initiatives-feature-links-and-outcome-observations-as-derived-product-graph",
       releaseObservationProjection: "provider-neutral-git-ref-deployment-result-and-release-observations-as-p3-evidence-and-p4-graph",
       gitHistory: gitDecisionHistory.coverage,
-      runtimeState: "canonical-head-lifecycle-state",
+      runtimeState: formatForVerifiedOwner(storage).value("canonical-head-lifecycle-state"),
       externalRuntimeState: externalRuntimeState.coverage,
     },
     git,
@@ -1601,7 +1612,7 @@ async function buildWorldModelLocked({
     snapshotEntry = adapter.writeSnapshot(worldModelId, snapshot);
   }
   verifiedSnapshot(snapshotEntry.document, worldModelId);
-  const graphProjection = materializeGraphProjectionWithCanonFence({
+  const graphProjection = materializeGraphProjectionWithCanonFence({ storage,
     projectRoot: project.projectRoot,
     graph: temporalProvenanceGraph,
     adapter: graphProjectionAdapter,
@@ -1692,7 +1703,8 @@ export async function buildWorldModel(options = {}) {
   const persist = options.persist ?? true;
   if (!persist) return buildWorldModelLocked(options);
   const inspected = readyProject(options.root ?? ".");
-  return withRefreshWriterLease({
+  const storage = inspected.storage;
+  return withRefreshWriterLease({ storage,
     projectRoot: inspected.project.projectRoot,
     projectId: inspected.project.projectId,
     lease: options.writerLease || null,
@@ -1738,6 +1750,7 @@ export function queryWorldTemporalGraph({
   const eligibility = buildWorldTraversalEligibility(inspected.snapshot, inspected.freshness.domains);
   const needsMask = eligibility.nodeIds.length !== graph.nodes.length || eligibility.edgeIds.length !== graph.edges.length;
   const projected = queryGraphProjection({
+    storage: inspected.storage,
     projectRoot: inspected.snapshot.projectRoot,
     graph: inspected.snapshot.temporalProvenanceGraph,
     adapter: graphProjectionAdapter,
@@ -1769,6 +1782,7 @@ export function queryWorldTemporalGraph({
 export function inspectWorldGraphProjection({ root = ".", storeAdapter = null, graphProjectionAdapter = null } = {}) {
   const inspected = inspectWorldModel({ root, storeAdapter });
   const projection = inspectGraphProjection({
+    storage: inspected.storage,
     projectRoot: inspected.snapshot.projectRoot,
     graph: inspected.snapshot.temporalProvenanceGraph,
     adapter: graphProjectionAdapter,
@@ -1787,6 +1801,7 @@ export function materializeWorldMarkdownProjection({ root = ".", storeAdapter = 
   const inspected = inspectWorldModel({ root, storeAdapter });
   if (inspected.status !== "current") fail("Repository World Model is stale and cannot regenerate document projections.", "WORLD_MODEL_STALE");
   const materialized = materializeMarkdownProjection({
+    storage: inspected.storage,
     projectRoot: inspected.snapshot.projectRoot,
     graph: inspected.snapshot.temporalProvenanceGraph,
     adapter: documentProjectionAdapter,
@@ -1805,6 +1820,7 @@ export function materializeWorldMarkdownProjection({ root = ".", storeAdapter = 
 export function inspectWorldMarkdownProjection({ root = ".", storeAdapter = null, documentProjectionAdapter = null } = {}) {
   const inspected = inspectWorldModel({ root, storeAdapter });
   const projection = inspectMarkdownProjection({
+    storage: inspected.storage,
     projectRoot: inspected.snapshot.projectRoot,
     graph: inspected.snapshot.temporalProvenanceGraph,
     adapter: documentProjectionAdapter,
@@ -1832,6 +1848,7 @@ export function captureWorldMarkdownChanges({ root = ".", storeAdapter = null, d
     fail("Repository World Model has non-document drift and cannot anchor document change candidates.", "WORLD_MODEL_STALE");
   }
   const captured = captureDocumentChangeCandidates({
+    storage: inspected.storage,
     projectRoot: inspected.snapshot.projectRoot,
     graph: inspected.snapshot.temporalProvenanceGraph,
     adapter: documentProjectionAdapter,
@@ -1848,7 +1865,8 @@ export function captureWorldMarkdownChanges({ root = ".", storeAdapter = null, d
 
 export function readWorldDocumentChangeCandidateSet({ root = ".", candidateSetId: id } = {}) {
   const inspected = readyProject(root);
-  return readDocumentChangeCandidateSet({ projectRoot: inspected.project.projectRoot, id });
+  const storage = inspected.storage;
+  return readDocumentChangeCandidateSet({ storage, projectRoot: inspected.project.projectRoot, id });
 }
 
 export function queryWorldHistory({ root = ".", query = "", limit = 50, storeAdapter = null } = {}) {

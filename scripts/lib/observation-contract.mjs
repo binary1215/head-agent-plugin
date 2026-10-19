@@ -1,5 +1,6 @@
+import { formatForVerifiedOwner, familyFormatForOriginal } from "./project-storage-format.mjs";
 import crypto from "node:crypto";
-import { SCHEMA_VERSION } from "./head-core.mjs";
+import { SCHEMA_VERSION } from "./lode-core.mjs";
 
 export const OBSERVATION_PROTOCOL_VERSION = "0.1.0";
 export const OBSERVATION_FORMS = Object.freeze(["event", "snapshot", "aggregate"]);
@@ -100,7 +101,8 @@ function normalizeField(field, index) {
   return normalized;
 }
 
-export function createObservationTypeDescriptor(input = {}) {
+export function createObservationTypeDescriptor(input = {}, storage = null) {
+  const format = formatForVerifiedOwner(storage);
   exactFields(input, ["typeKey", "typeVersion", "forms", "payloadSchema"], "ObservationTypeDescriptor input");
   const forms = Array.isArray(input.forms) ? [...new Set(input.forms.map((item) => String(item).trim()))].sort() : [];
   if (!forms.length || forms.some((item) => !OBSERVATION_FORMS.includes(item))) fail("ObservationTypeDescriptor forms are invalid.", "INVALID_OBSERVATION_DESCRIPTOR");
@@ -111,7 +113,7 @@ export function createObservationTypeDescriptor(input = {}) {
   const payload = {
     schemaVersion: SCHEMA_VERSION,
     kind: "ObservationTypeDescriptor",
-    protocol: { name: "head-agent-core-observation", version: OBSERVATION_PROTOCOL_VERSION },
+    protocol: { name: format.protocol("head-agent-core-observation"), version: OBSERVATION_PROTOCOL_VERSION },
     typeKey: stableKey(input.typeKey, "Observation typeKey", 192),
     typeVersion: stableKey(input.typeVersion, "Observation typeVersion", 64),
     forms,
@@ -124,13 +126,14 @@ export function createObservationTypeDescriptor(input = {}) {
   return verifyObservationTypeDescriptor(identity(payload, "observation-type", "descriptorId", "descriptorHash"));
 }
 
-export function verifyObservationTypeDescriptor(document) {
+export function verifyObservationTypeDescriptor(document, storage = undefined) {
+  const format = familyFormatForOriginal("head-agent-core-observation", document, storage);
   exactFields(document, ["schemaVersion", "kind", "protocol", "typeKey", "typeVersion", "forms", "payloadSchema", "authority", "instructionAuthority", "promotionAuthority", "recoveryAuthority", "descriptorId", "descriptorHash"], "ObservationTypeDescriptor");
   exactFields(document.protocol, ["name", "version"], "ObservationTypeDescriptor protocol");
   exactFields(document.payloadSchema, ["fields", "additionalFields"], "ObservationTypeDescriptor payloadSchema");
   verifyIdentity(document, "observation-type", "descriptorId", "descriptorHash", "ObservationTypeDescriptor");
   if (document.schemaVersion !== SCHEMA_VERSION || document.kind !== "ObservationTypeDescriptor"
-    || document.protocol?.name !== "head-agent-core-observation" || document.protocol?.version !== OBSERVATION_PROTOCOL_VERSION
+    || !format || document.protocol?.version !== OBSERVATION_PROTOCOL_VERSION
     || !document.typeKey || !document.typeVersion || !Array.isArray(document.forms) || !document.forms.length
     || document.forms.some((item) => !OBSERVATION_FORMS.includes(item)) || document.payloadSchema?.additionalFields !== false
     || !Array.isArray(document.payloadSchema?.fields)
@@ -223,15 +226,16 @@ function nonAuthorityValid(document, authority) {
     && document.mutatesCanon === false && document.recoveryAuthority === false;
 }
 
-export function createObservationRecord({ projectId, descriptor, subject, form, temporalScope, source, coverage, payload } = {}) {
-  const verifiedDescriptor = verifyObservationTypeDescriptor(descriptor);
+export function createObservationRecord({ projectId, descriptor, subject, form, temporalScope, source, coverage, payload } = {}, storage = null) {
+  const format = formatForVerifiedOwner(storage);
+  const verifiedDescriptor = verifyObservationTypeDescriptor(descriptor, storage);
   if (!verifiedDescriptor.forms.includes(form)) fail("Observation form is not allowed by its descriptor.", "INVALID_OBSERVATION_INPUT");
   exactFields(subject, ["type", "key"], "Observation subject");
   exactFields(source, ["adapterKey", "adapterVersion", "sourceScopeDigest", "sourceEventKeyDigest", "sourceEvidenceDigest"], "Observation source");
   const body = {
     schemaVersion: SCHEMA_VERSION,
     kind: "ObservationRecord",
-    protocol: { name: "head-agent-core-observation", version: OBSERVATION_PROTOCOL_VERSION },
+    protocol: { name: format.protocol("head-agent-core-observation"), version: OBSERVATION_PROTOCOL_VERSION },
     projectId: requiredText(projectId, "Observation projectId", 256),
     descriptorId: verifiedDescriptor.descriptorId,
     descriptorHash: verifiedDescriptor.descriptorHash,
@@ -259,15 +263,17 @@ export function createObservationRecord({ projectId, descriptor, subject, form, 
   return verifyObservationRecord(identity(body, "observation", "observationId", "observationHash"), verifiedDescriptor, projectId);
 }
 
-export function verifyObservationRecord(document, descriptor, projectId = "") {
+export function verifyObservationRecord(document, descriptor, projectId = "", storage) {
+  const format = familyFormatForOriginal("head-agent-core-observation", document, storage);
   exactFields(document, ["schemaVersion", "kind", "protocol", "projectId", "descriptorId", "descriptorHash", "typeKey", "typeVersion", "subject", "form", "temporalScope", "source", "coverage", "payload", "epistemicClass", "authority", "instructionAuthority", "promotionAuthority", "mutatesCanon", "recoveryAuthority", "observationId", "observationHash"], "ObservationRecord");
   exactFields(document.protocol, ["name", "version"], "ObservationRecord protocol");
   exactFields(document.subject, ["type", "key"], "ObservationRecord subject");
   exactFields(document.source, ["adapterKey", "adapterVersion", "sourceScopeDigest", "sourceEventKeyDigest", "sourceEvidenceDigest"], "ObservationRecord source");
   verifyIdentity(document, "observation", "observationId", "observationHash", "ObservationRecord");
-  const verifiedDescriptor = verifyObservationTypeDescriptor(descriptor);
+  const verifiedDescriptor = verifyObservationTypeDescriptor(descriptor, storage);
   if (document.schemaVersion !== SCHEMA_VERSION || document.kind !== "ObservationRecord"
-    || document.protocol?.name !== "head-agent-core-observation" || document.protocol?.version !== OBSERVATION_PROTOCOL_VERSION
+    || !format || document.protocol?.version !== OBSERVATION_PROTOCOL_VERSION
+    || document.protocol?.name !== verifiedDescriptor.protocol.name
     || projectId && document.projectId !== projectId || document.descriptorId !== verifiedDescriptor.descriptorId
     || document.descriptorHash !== verifiedDescriptor.descriptorHash || document.typeKey !== verifiedDescriptor.typeKey
     || document.typeVersion !== verifiedDescriptor.typeVersion || !verifiedDescriptor.forms.includes(document.form)
@@ -286,8 +292,9 @@ export function verifyObservationRecord(document, descriptor, projectId = "") {
   return document;
 }
 
-export function createDerivedObservationRecord({ projectId, descriptor, subject, temporalScope, inputObservations, algorithm, coverage, payload } = {}) {
-  const verifiedDescriptor = verifyObservationTypeDescriptor(descriptor);
+export function createDerivedObservationRecord({ projectId, descriptor, subject, temporalScope, inputObservations, algorithm, coverage, payload } = {}, storage = null) {
+  const format = formatForVerifiedOwner(storage);
+  const verifiedDescriptor = verifyObservationTypeDescriptor(descriptor, storage);
   if (!Array.isArray(inputObservations) || !inputObservations.length || inputObservations.length > 64) fail("DerivedObservationRecord requires bounded input observations.", "INVALID_DERIVED_OBSERVATION");
   const inputs = inputObservations.map((item) => {
     if (!item || !/^observation-[a-f0-9]{24}$/.test(item.observationId || "") || !/^[a-f0-9]{64}$/.test(item.observationHash || "")) fail("DerivedObservationRecord input identity is invalid.", "INVALID_DERIVED_OBSERVATION");
@@ -299,7 +306,7 @@ export function createDerivedObservationRecord({ projectId, descriptor, subject,
   const body = {
     schemaVersion: SCHEMA_VERSION,
     kind: "DerivedObservationRecord",
-    protocol: { name: "head-agent-core-observation", version: OBSERVATION_PROTOCOL_VERSION },
+    protocol: { name: format.protocol("head-agent-core-observation"), version: OBSERVATION_PROTOCOL_VERSION },
     projectId: requiredText(projectId, "Derived Observation projectId", 256),
     descriptorId: verifiedDescriptor.descriptorId,
     descriptorHash: verifiedDescriptor.descriptorHash,
@@ -322,15 +329,17 @@ export function createDerivedObservationRecord({ projectId, descriptor, subject,
   return verifyDerivedObservationRecord(identity(body, "derived-observation", "derivedObservationId", "derivedObservationHash"), verifiedDescriptor, projectId);
 }
 
-export function verifyDerivedObservationRecord(document, descriptor, projectId = "") {
+export function verifyDerivedObservationRecord(document, descriptor, projectId = "", storage) {
+  const format = familyFormatForOriginal("head-agent-core-observation", document, storage);
   exactFields(document, ["schemaVersion", "kind", "protocol", "projectId", "descriptorId", "descriptorHash", "typeKey", "typeVersion", "subject", "form", "temporalScope", "inputObservations", "algorithm", "coverage", "payload", "epistemicClass", "authority", "instructionAuthority", "promotionAuthority", "mutatesCanon", "recoveryAuthority", "derivedObservationId", "derivedObservationHash"], "DerivedObservationRecord");
   exactFields(document.protocol, ["name", "version"], "DerivedObservationRecord protocol");
   exactFields(document.subject, ["type", "key"], "DerivedObservationRecord subject");
   exactFields(document.algorithm, ["key", "version", "digest"], "DerivedObservationRecord algorithm");
   verifyIdentity(document, "derived-observation", "derivedObservationId", "derivedObservationHash", "DerivedObservationRecord");
-  const verifiedDescriptor = verifyObservationTypeDescriptor(descriptor);
+  const verifiedDescriptor = verifyObservationTypeDescriptor(descriptor, storage);
   if (document.schemaVersion !== SCHEMA_VERSION || document.kind !== "DerivedObservationRecord"
-    || document.protocol?.name !== "head-agent-core-observation" || document.protocol?.version !== OBSERVATION_PROTOCOL_VERSION
+    || !format || document.protocol?.version !== OBSERVATION_PROTOCOL_VERSION
+    || document.protocol?.name !== verifiedDescriptor.protocol.name
     || projectId && document.projectId !== projectId || document.descriptorId !== verifiedDescriptor.descriptorId
     || document.descriptorHash !== verifiedDescriptor.descriptorHash || document.typeKey !== verifiedDescriptor.typeKey
     || document.typeVersion !== verifiedDescriptor.typeVersion || document.form !== "comparison"

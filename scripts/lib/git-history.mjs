@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { familyFormatForOriginal, formatForVerifiedOwner } from "./project-storage-format.mjs";
 
 export const GIT_HISTORY_ADAPTER_VERSION = "0.2.0";
 export const GIT_DECISION_HISTORY_VERSION = "0.2.0";
@@ -358,7 +359,7 @@ export function createGitHistoryAdapter(adapter = null) {
   return assertGitHistoryAdapter(adapter || new GitCliHistoryAdapter());
 }
 
-export async function buildGitDecisionHistory({ projectRoot, adapter = null, referenceCommits = [], referenceTags = [] } = {}) {
+export async function buildGitDecisionHistory({ projectRoot, adapter = null, referenceCommits = [], referenceTags = [], storage = null } = {}) {
   const selected = createGitHistoryAdapter(adapter);
   const references = [...new Set(referenceCommits.map((item) => String(item).toLocaleLowerCase()))].sort();
   if (references.some((item) => !/^[a-f0-9]{40,64}$/.test(item))) fail("Git history reference commit is invalid.", "INVALID_GIT_HISTORY_REFERENCE");
@@ -383,7 +384,7 @@ export async function buildGitDecisionHistory({ projectRoot, adapter = null, ref
   const effectiveStatus = status === "available" && commits.length === 0 ? "empty" : status;
   const payload = {
     kind: "GitDecisionHistory",
-    protocol: { name: "head-agent-core-git-decision-history", version: GIT_DECISION_HISTORY_VERSION },
+    protocol: { name: formatForVerifiedOwner(storage).protocol("head-agent-core-git-decision-history"), version: GIT_DECISION_HISTORY_VERSION },
     status: effectiveStatus,
     coverage: effectiveStatus === "available" ? "all-reachable-commits" : effectiveStatus === "empty" ? "empty-repository" : "none",
     reasonCode: effectiveStatus === "available" || effectiveStatus === "empty" ? "" : String(observed?.reasonCode || "git-history-unavailable"),
@@ -416,6 +417,7 @@ export function verifyGitDecisionHistory(history) {
   if (history.historyHash !== actual || history.historyId !== `git-history-${actual.slice(0, 24)}`) {
     fail("Git decision history digest verification failed.", "GIT_DECISION_HISTORY_DIGEST_MISMATCH");
   }
+  if (!familyFormatForOriginal("head-agent-core-git-decision-history", history)) fail("Git decision history is invalid.", "INVALID_GIT_DECISION_HISTORY");
   return history;
 }
 

@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
-import { SCHEMA_VERSION } from "./head-core.mjs";
+import { SCHEMA_VERSION } from "./lode-core.mjs";
+import { formatForVerifiedOwner, familyFormatForOriginal } from "./project-storage-format.mjs";
 import { artifactAuthorityBoundary, verifyArtifactAuthorityBoundary } from "./authority-plane-contract.mjs";
 
 export const CONFORMANCE_PROTOCOL_VERSION = "0.1.0";
@@ -117,7 +118,8 @@ function normalizeDisclosures(values) {
   return normalized;
 }
 
-export function createConformanceFindingCandidate({ projectId, sessionId, baseline, canonAnchor, evidenceAnchors, claim, disclosures = [] } = {}) {
+export function createConformanceFindingCandidate({ projectId, sessionId, baseline, canonAnchor, evidenceAnchors, claim, disclosures = [] } = {}, storage) {
+  const format = formatForVerifiedOwner(storage);
   if (!Array.isArray(evidenceAnchors) || evidenceAnchors.length < 1 || evidenceAnchors.length > 64) fail("Conformance Finding requires one through 64 exact evidence anchors.", "INVALID_CONFORMANCE_EVIDENCE_COUNT");
   exactFields(claim, ["kind", "summary", "rationale", "riskHint"], "Conformance claim");
   const claimKind = text(claim.kind, "Conformance claim kind", 64);
@@ -131,7 +133,7 @@ export function createConformanceFindingCandidate({ projectId, sessionId, baseli
   const body = {
     schemaVersion: SCHEMA_VERSION,
     kind: "ConformanceFindingCandidate",
-    protocol: { name: "head-agent-core-conformance-reconciliation", version: CONFORMANCE_PROTOCOL_VERSION },
+    protocol: { name: format.protocol("head-agent-core-conformance-reconciliation"), version: CONFORMANCE_PROTOCOL_VERSION },
     projectId: text(projectId, "Conformance projectId", 256),
     sessionId: text(sessionId, "Conformance sessionId", 256),
     baseline: normalizedBaseline,
@@ -150,15 +152,16 @@ export function createConformanceFindingCandidate({ projectId, sessionId, baseli
     recoveryAuthority: false,
     blocksOrdinaryWork: false,
   };
-  return verifyConformanceFindingCandidate(identity(body, "conformance-finding", "findingId", "findingHash"), projectId);
+  return verifyConformanceFindingCandidate(identity(body, "conformance-finding", "findingId", "findingHash"), projectId, storage);
 }
 
-export function verifyConformanceFindingCandidate(document, projectId = "") {
+export function verifyConformanceFindingCandidate(document, projectId = "", storage) {
   exactFields(document, ["schemaVersion", "kind", "protocol", "projectId", "sessionId", "baseline", "canonAnchor", "evidenceAnchors", "fingerprintId", "fingerprintHash", "claim", "disclosures", "epistemicClass", "authority", "authorityBoundary", "instructionAuthority", "promotionAuthority", "mutatesCanon", "recoveryAuthority", "blocksOrdinaryWork", "findingId", "findingHash"], "ConformanceFindingCandidate");
   exactFields(document.protocol, ["name", "version"], "ConformanceFindingCandidate protocol");
+  const format = familyFormatForOriginal("head-agent-core-conformance-reconciliation", document, storage);
   verifyIdentity(document, "conformance-finding", "findingId", "findingHash", "ConformanceFindingCandidate");
   if (document.schemaVersion !== SCHEMA_VERSION || document.kind !== "ConformanceFindingCandidate"
-    || document.protocol?.name !== "head-agent-core-conformance-reconciliation" || document.protocol?.version !== CONFORMANCE_PROTOCOL_VERSION
+    || !format || document.protocol?.version !== CONFORMANCE_PROTOCOL_VERSION
     || projectId && document.projectId !== projectId || document.epistemicClass !== "inferred-meaning"
     || !authorityValid(document, "non-authoritative-conformance-finding-candidate")) fail("ConformanceFindingCandidate fields or authority are invalid.", "INVALID_CONFORMANCE_FINDING");
   normalizeBaseline(document.baseline); normalizeCanonAnchor(document.canonAnchor);
@@ -178,23 +181,24 @@ export function verifyConformanceFindingCandidate(document, projectId = "") {
 export const HEAD_CONFORMANCE_MAINTENANCE_AUTHORITY = "head-maintenance-evidence-not-user-decision-or-execution-authority";
 export const USER_CONFORMANCE_DISPOSITION_AUTHORITY = "user-disposition-evidence-not-canon-or-execution-authority";
 
-export function createConformanceDispositionReceipt({ projectId, sessionId, finding, disposition, rationale, deferUntil = null, previousDisposition = null, resolution = null, actor = "user" } = {}) {
-  if (!["user", "head"].includes(actor)) fail("Conformance disposition actor is invalid.", "INVALID_CONFORMANCE_DISPOSITION");
-  if (actor === "head" && (!["acknowledge", "defer"].includes(disposition)
-    || previousDisposition && previousDisposition.authority !== HEAD_CONFORMANCE_MAINTENANCE_AUTHORITY)) fail("HEAD may only acknowledge/defer without superseding a user disposition.", "CONFORMANCE_HEAD_MAINTENANCE_ONLY");
-  const verified = verifyConformanceFindingCandidate(finding, projectId);
+export function createConformanceDispositionReceipt({ projectId, sessionId, finding, disposition, rationale, deferUntil = null, previousDisposition = null, resolution = null, actor = "user" } = {}, storage) {
+  const format = formatForVerifiedOwner(storage);
+  if (!["user", "head", "lode"].includes(actor)) fail("Conformance disposition actor is invalid.", "INVALID_CONFORMANCE_DISPOSITION");
+  if (actor !== "user" && (!["acknowledge", "defer"].includes(disposition)
+    || previousDisposition && previousDisposition.authority !== format.value(HEAD_CONFORMANCE_MAINTENANCE_AUTHORITY))) fail("HEAD may only acknowledge/defer without superseding a user disposition.", "CONFORMANCE_HEAD_MAINTENANCE_ONLY");
+  const verified = verifyConformanceFindingCandidate(finding, projectId, storage);
   const normalizedDisposition = text(disposition, "Conformance disposition", 64);
   if (!CONFORMANCE_DISPOSITIONS.includes(normalizedDisposition)) fail("Conformance disposition is invalid.", "INVALID_CONFORMANCE_DISPOSITION");
   if (deferUntil != null && Number.isNaN(Date.parse(deferUntil))) fail("Conformance deferUntil is invalid.", "INVALID_CONFORMANCE_DISPOSITION");
   const normalizedDeferUntil = deferUntil == null ? null : new Date(deferUntil).toISOString();
   if (normalizedDisposition !== "defer" && normalizedDeferUntil !== null) fail("Conformance deferUntil is invalid.", "INVALID_CONFORMANCE_DISPOSITION");
-  if (previousDisposition != null) verifyConformanceDispositionReceipt(previousDisposition, verified, projectId);
-  if (resolution != null) verifyConformanceResolutionCandidate(resolution, verified, projectId);
+  if (previousDisposition != null) verifyConformanceDispositionReceipt(previousDisposition, verified, projectId, storage);
+  if (resolution != null) verifyConformanceResolutionCandidate(resolution, verified, projectId, storage);
   if ((normalizedDisposition === "accept-resolution") !== (resolution != null)) fail("accept-resolution requires one exact resolution candidate and no other disposition may carry one.", "INVALID_CONFORMANCE_DISPOSITION");
   const body = {
     schemaVersion: SCHEMA_VERSION,
     kind: "ConformanceDispositionReceipt",
-    protocol: { name: "head-agent-core-conformance-reconciliation", version: CONFORMANCE_PROTOCOL_VERSION },
+    protocol: { name: format.protocol("head-agent-core-conformance-reconciliation"), version: CONFORMANCE_PROTOCOL_VERSION },
     projectId: text(projectId, "Conformance projectId", 256),
     sessionId: text(sessionId, "Conformance sessionId", 256),
     findingId: verified.findingId,
@@ -207,7 +211,7 @@ export function createConformanceDispositionReceipt({ projectId, sessionId, find
     rationale: text(rationale, "Conformance disposition rationale", 4096),
     deferUntil: normalizedDeferUntil,
     scope: "exact-finding-only",
-    authority: actor === "head" ? HEAD_CONFORMANCE_MAINTENANCE_AUTHORITY : USER_CONFORMANCE_DISPOSITION_AUTHORITY,
+    authority: actor !== "user" ? format.value(HEAD_CONFORMANCE_MAINTENANCE_AUTHORITY) : USER_CONFORMANCE_DISPOSITION_AUTHORITY,
     authorityBoundary: artifactAuthorityBoundary("ConformanceDispositionReceipt"),
     instructionAuthority: false,
     promotionAuthority: false,
@@ -215,16 +219,18 @@ export function createConformanceDispositionReceipt({ projectId, sessionId, find
     recoveryAuthority: false,
     blocksOrdinaryWork: false,
   };
-  return verifyConformanceDispositionReceipt(identity(body, "conformance-disposition", "dispositionId", "dispositionHash"), verified, projectId);
+  return verifyConformanceDispositionReceipt(identity(body, "conformance-disposition", "dispositionId", "dispositionHash"), verified, projectId, storage);
 }
 
-export function verifyConformanceDispositionReceipt(document, finding, projectId = "") {
+export function verifyConformanceDispositionReceipt(document, finding, projectId = "", storage) {
   exactFields(document, ["schemaVersion", "kind", "protocol", "projectId", "sessionId", "findingId", "findingHash", "previousDispositionId", "previousDispositionHash", "resolutionId", "resolutionHash", "disposition", "rationale", "deferUntil", "scope", "authority", "authorityBoundary", "instructionAuthority", "promotionAuthority", "mutatesCanon", "recoveryAuthority", "blocksOrdinaryWork", "dispositionId", "dispositionHash"], "ConformanceDispositionReceipt");
   exactFields(document.protocol, ["name", "version"], "ConformanceDispositionReceipt protocol");
+  const format = familyFormatForOriginal("head-agent-core-conformance-reconciliation", document, storage);
   verifyIdentity(document, "conformance-disposition", "dispositionId", "dispositionHash", "ConformanceDispositionReceipt");
-  const verified = verifyConformanceFindingCandidate(finding, projectId);
+  const verified = verifyConformanceFindingCandidate(finding, projectId, storage);
   if (document.schemaVersion !== SCHEMA_VERSION || document.kind !== "ConformanceDispositionReceipt"
-    || document.protocol?.name !== "head-agent-core-conformance-reconciliation" || document.protocol?.version !== CONFORMANCE_PROTOCOL_VERSION
+    || !format || document.protocol?.version !== CONFORMANCE_PROTOCOL_VERSION
+    || document.protocol.name !== verified.protocol.name
     || projectId && document.projectId !== projectId || document.findingId !== verified.findingId || document.findingHash !== verified.findingHash
     || (document.previousDispositionId === null) !== (document.previousDispositionHash === null)
     || document.previousDispositionId != null && (!/^conformance-disposition-[a-f0-9]{24}$/.test(document.previousDispositionId) || !/^[a-f0-9]{64}$/.test(document.previousDispositionHash))
@@ -233,15 +239,16 @@ export function verifyConformanceDispositionReceipt(document, finding, projectId
     || (document.disposition === "accept-resolution") !== (document.resolutionId !== null)
     || !CONFORMANCE_DISPOSITIONS.includes(document.disposition) || document.scope !== "exact-finding-only"
     || !(authorityValid(document, USER_CONFORMANCE_DISPOSITION_AUTHORITY)
-      || authorityValid(document, HEAD_CONFORMANCE_MAINTENANCE_AUTHORITY) && ["acknowledge", "defer"].includes(document.disposition))) fail("ConformanceDispositionReceipt fields or authority are invalid.", "INVALID_CONFORMANCE_DISPOSITION");
+      || authorityValid(document, format.value(HEAD_CONFORMANCE_MAINTENANCE_AUTHORITY)) && ["acknowledge", "defer"].includes(document.disposition))) fail("ConformanceDispositionReceipt fields or authority are invalid.", "INVALID_CONFORMANCE_DISPOSITION");
   text(document.rationale, "Conformance disposition rationale", 4096);
   if (document.deferUntil != null && Number.isNaN(Date.parse(document.deferUntil)) || document.disposition !== "defer" && document.deferUntil !== null) fail("Conformance disposition deferUntil is invalid.", "INVALID_CONFORMANCE_DISPOSITION");
   verifyArtifactAuthorityBoundary("ConformanceDispositionReceipt", document.authorityBoundary);
   return document;
 }
 
-export function createConformanceResolutionCandidate({ projectId, sessionId, finding, baseline, evidenceAnchors, assessment, rationale, disclosures = [] } = {}) {
-  const verified = verifyConformanceFindingCandidate(finding, projectId);
+export function createConformanceResolutionCandidate({ projectId, sessionId, finding, baseline, evidenceAnchors, assessment, rationale, disclosures = [] } = {}, storage) {
+  const format = formatForVerifiedOwner(storage);
+  const verified = verifyConformanceFindingCandidate(finding, projectId, storage);
   const normalizedAssessment = text(assessment, "Conformance resolution assessment", 32);
   if (!new Set(["appears-resolved", "still-present", "uncertain"]).has(normalizedAssessment)) fail("Conformance resolution assessment is invalid.", "INVALID_CONFORMANCE_RESOLUTION");
   if (!Array.isArray(evidenceAnchors) || evidenceAnchors.length < 1 || evidenceAnchors.length > 64) fail("Conformance resolution requires exact evidence.", "INVALID_CONFORMANCE_RESOLUTION");
@@ -250,7 +257,7 @@ export function createConformanceResolutionCandidate({ projectId, sessionId, fin
   const body = {
     schemaVersion: SCHEMA_VERSION,
     kind: "ConformanceResolutionCandidate",
-    protocol: { name: "head-agent-core-conformance-reconciliation", version: CONFORMANCE_PROTOCOL_VERSION },
+    protocol: { name: format.protocol("head-agent-core-conformance-reconciliation"), version: CONFORMANCE_PROTOCOL_VERSION },
     projectId: text(projectId, "Conformance projectId", 256),
     sessionId: text(sessionId, "Conformance sessionId", 256),
     findingId: verified.findingId,
@@ -269,16 +276,18 @@ export function createConformanceResolutionCandidate({ projectId, sessionId, fin
     recoveryAuthority: false,
     blocksOrdinaryWork: false,
   };
-  return verifyConformanceResolutionCandidate(identity(body, "conformance-resolution", "resolutionId", "resolutionHash"), verified, projectId);
+  return verifyConformanceResolutionCandidate(identity(body, "conformance-resolution", "resolutionId", "resolutionHash"), verified, projectId, storage);
 }
 
-export function verifyConformanceResolutionCandidate(document, finding, projectId = "") {
+export function verifyConformanceResolutionCandidate(document, finding, projectId = "", storage) {
   exactFields(document, ["schemaVersion", "kind", "protocol", "projectId", "sessionId", "findingId", "findingHash", "baseline", "evidenceAnchors", "assessment", "rationale", "disclosures", "epistemicClass", "authority", "authorityBoundary", "instructionAuthority", "promotionAuthority", "mutatesCanon", "recoveryAuthority", "blocksOrdinaryWork", "resolutionId", "resolutionHash"], "ConformanceResolutionCandidate");
   exactFields(document.protocol, ["name", "version"], "ConformanceResolutionCandidate protocol");
+  const format = familyFormatForOriginal("head-agent-core-conformance-reconciliation", document, storage);
   verifyIdentity(document, "conformance-resolution", "resolutionId", "resolutionHash", "ConformanceResolutionCandidate");
-  const verified = verifyConformanceFindingCandidate(finding, projectId);
+  const verified = verifyConformanceFindingCandidate(finding, projectId, storage);
   if (document.schemaVersion !== SCHEMA_VERSION || document.kind !== "ConformanceResolutionCandidate"
-    || document.protocol?.name !== "head-agent-core-conformance-reconciliation" || document.protocol?.version !== CONFORMANCE_PROTOCOL_VERSION
+    || !format || document.protocol?.version !== CONFORMANCE_PROTOCOL_VERSION
+    || document.protocol.name !== verified.protocol.name
     || projectId && document.projectId !== projectId || document.findingId !== verified.findingId || document.findingHash !== verified.findingHash
     || !new Set(["appears-resolved", "still-present", "uncertain"]).has(document.assessment)
     || document.epistemicClass !== "inferred-meaning" || !authorityValid(document, "non-authoritative-conformance-resolution-candidate")) fail("ConformanceResolutionCandidate fields or authority are invalid.", "INVALID_CONFORMANCE_RESOLUTION");

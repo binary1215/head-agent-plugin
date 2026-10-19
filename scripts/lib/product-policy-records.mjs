@@ -1,3 +1,4 @@
+import { formatForVerifiedOwner, familyFormatForOriginal, relativeProjectArtifact } from "./project-storage-format.mjs";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -96,17 +97,17 @@ export function evidenceStatusFor(anchors) {
 
 export function policyHash(policy) { return policy ? digest(productPolicyCanonicalJson(policy)) : null; }
 
-export function candidateFile(projectRoot, candidateId) {
+export function candidateFile(projectRoot, candidateId, storage = null) {
   if (!CANDIDATE_ID.test(candidateId || "")) fail("Product Policy candidate id is invalid.", "INVALID_PRODUCT_POLICY_CANDIDATE_ID");
-  return safeFile(projectRoot, `${PRODUCT_POLICY_CANDIDATE_DIRECTORY}/${candidateId}.json`);
+  return safeFile(projectRoot, relativeProjectArtifact(storage, "product-policy", "candidates", `${candidateId}.json`));
 }
 
-export function reviewFile(projectRoot, reviewDecisionId) {
+export function reviewFile(projectRoot, reviewDecisionId, storage = null) {
   if (!REVIEW_ID.test(reviewDecisionId || "")) fail("Product Policy ReviewDecision id is invalid.", "INVALID_PRODUCT_POLICY_REVIEW_ID");
-  return safeFile(projectRoot, `${PRODUCT_POLICY_REVIEW_DIRECTORY}/${reviewDecisionId}.json`);
+  return safeFile(projectRoot, relativeProjectArtifact(storage, "product-policy", "review-decisions", `${reviewDecisionId}.json`));
 }
 
-export function nextPolicyModel({ baseModel, operation, key, name, description, statement, appliesTo, governedBy }) {
+export function nextPolicyModel({ baseModel, operation, key, name, description, statement, appliesTo, governedBy, storage = null }) {
   const document = upgradeProductModelDocument(baseModel);
   const index = document.policies.findIndex((policy) => policy.key === key);
   const prior = index >= 0 ? document.policies[index] : null;
@@ -126,16 +127,17 @@ export function nextPolicyModel({ baseModel, operation, key, name, description, 
   };
   if (index < 0) document.policies.push(proposed);
   else document.policies[index] = proposed;
-  const resultingModel = normalizeProductModelDocument(document);
+  const resultingModel = normalizeProductModelDocument(document, storage);
   const normalizedPolicy = resultingModel.policies.find((policy) => policy.key === key);
   if (resultingModel.productModelId === baseModel.productModelId) fail("Product Policy proposal would not change Product Canon.", "PRODUCT_POLICY_NO_CHANGE");
   return { prior, proposed: normalizedPolicy, resultingModel };
 }
 
-export function verifyProductPolicyCandidate(document, projectId = "") {
+export function verifyProductPolicyCandidate(document, projectId = "", storage = undefined) {
+  const format = familyFormatForOriginal("head-agent-core-product-policy-candidate", document, storage);
   exactFields(document, ["schemaVersion", "kind", "protocol", "projectId", "sessionId", "operation", "policyKey", "baseProductModelId", "baseProductModelHash", "baseProductModelDocument", "priorPolicyHash", "proposedPolicy", "resultingProductModelId", "resultingProductModelHash", "resultingProductModelDocument", "evidenceAnchors", "evidenceStatus", "explanation", "epistemicClass", "authority", "authorityBoundary", "instructionAuthority", "promotionAuthority", "recoveryAuthority", "mutatesCanon", "blocksOrdinaryWork", "candidateId", "candidateHash"], "Product Policy candidate");
   if (!document || document.schemaVersion !== SCHEMA_VERSION || document.kind !== "ProductPolicyCandidate"
-    || document.protocol?.name !== "head-agent-core-product-policy-candidate" || document.protocol.version !== PRODUCT_POLICY_VERSION
+    || !format || document.protocol.version !== PRODUCT_POLICY_VERSION
     || !CANDIDATE_ID.test(document.candidateId || "") || !HASH.test(document.candidateHash || "")
     || projectId && document.projectId !== projectId || !["create", "revise", "retire"].includes(document.operation)
     || document.policyKey !== document.proposedPolicy?.key || !["not-supplied", "local-source-bound", "partially-bound", "unverified-external"].includes(document.evidenceStatus)
@@ -143,8 +145,8 @@ export function verifyProductPolicyCandidate(document, projectId = "") {
     || document.instructionAuthority !== false || document.promotionAuthority !== false || document.recoveryAuthority !== false
     || document.mutatesCanon !== false || document.blocksOrdinaryWork !== false) fail("Product Policy candidate is invalid.", "INVALID_PRODUCT_POLICY_CANDIDATE");
   verifyArtifactAuthorityBoundary("PolicyCandidate", document.authorityBoundary);
-  const base = normalizeProductModelDocument(document.baseProductModelDocument);
-  const result = normalizeProductModelDocument(document.resultingProductModelDocument);
+  const base = normalizeProductModelDocument(document.baseProductModelDocument, format);
+  const result = normalizeProductModelDocument(document.resultingProductModelDocument, format);
   if (base.productModelId !== document.baseProductModelId || base.productModelHash !== document.baseProductModelHash
     || result.productModelId !== document.resultingProductModelId || result.productModelHash !== document.resultingProductModelHash) {
     fail("Product Policy candidate Product Model binding is invalid.", "PRODUCT_POLICY_MODEL_BINDING_MISMATCH");
@@ -164,6 +166,7 @@ export function verifyProductPolicyCandidate(document, projectId = "") {
       statement: document.proposedPolicy?.statement,
       appliesTo: document.proposedPolicy?.appliesTo,
       governedBy: document.proposedPolicy?.governedBy,
+      storage: format,
     });
   } catch (error) {
     fail(`Product Policy candidate transition is invalid: ${error.message}`, "PRODUCT_POLICY_TRANSITION_MISMATCH");
@@ -181,10 +184,11 @@ export function verifyProductPolicyCandidate(document, projectId = "") {
   return document;
 }
 
-export function verifyProductPolicyReviewDecision(document, candidate = null, projectId = "") {
+export function verifyProductPolicyReviewDecision(document, candidate = null, projectId = "", storage = undefined) {
+  const format = familyFormatForOriginal("head-agent-core-product-policy-review", document, storage);
   exactFields(document, ["schemaVersion", "kind", "protocol", "projectId", "sessionId", "candidateId", "candidateHash", "disposition", "rationale", "previousProductModelId", "previousProductModelHash", "resultingProductModelId", "resultingProductModelHash", "authority", "authorityBoundary", "instructionAuthority", "promotionAuthority", "recoveryAuthority", "mutatesCanon", "blocksOrdinaryWork", "reviewDecisionId", "reviewDecisionHash"], "Product Policy ReviewDecision");
   if (!document || document.schemaVersion !== SCHEMA_VERSION || document.kind !== "ReviewDecision"
-    || document.protocol?.name !== "head-agent-core-product-policy-review" || document.protocol.version !== PRODUCT_POLICY_VERSION
+    || !format || document.protocol.version !== PRODUCT_POLICY_VERSION
     || !REVIEW_ID.test(document.reviewDecisionId || "") || !HASH.test(document.reviewDecisionHash || "")
     || projectId && document.projectId !== projectId || !["accept", "reject"].includes(document.disposition)
     || document.authority !== "explicit-user-review-decision" || document.instructionAuthority !== false
@@ -194,7 +198,7 @@ export function verifyProductPolicyReviewDecision(document, candidate = null, pr
   const accepting = document.disposition === "accept";
   if (accepting !== Boolean(document.resultingProductModelId) || accepting !== Boolean(document.resultingProductModelHash)) fail("Product Policy ReviewDecision promotion fields are invalid.", "INVALID_PRODUCT_POLICY_REVIEW");
   if (candidate) {
-    verifyProductPolicyCandidate(candidate, projectId || candidate.projectId);
+    verifyProductPolicyCandidate(candidate, projectId || candidate.projectId, format);
     if (document.projectId !== candidate.projectId || document.sessionId !== candidate.sessionId || document.candidateId !== candidate.candidateId
       || document.candidateHash !== candidate.candidateHash || document.previousProductModelId !== candidate.baseProductModelId
       || document.previousProductModelHash !== candidate.baseProductModelHash
@@ -211,26 +215,26 @@ export function verifyProductPolicyReviewDecision(document, candidate = null, pr
 }
 
 
-function recordProject(root) {
+function recordProject(root, storage) {
   const projectRoot = fs.realpathSync(path.resolve(root));
-  const project = readJson(safeFile(projectRoot, ".head/project.json"), "Project canon");
+  const project = readJson(safeFile(projectRoot, relativeProjectArtifact(storage, "project.json")), "Project canon");
   if (project.schemaVersion !== SCHEMA_VERSION || project.projectRoot !== projectRoot || !project.projectId) fail("Project canon does not match this canonical root.", "PROJECT_IDENTITY_MISMATCH");
-  return { projectRoot, projectId: project.projectId };
+  return { projectRoot, projectId: project.projectId, storage };
 }
-export function readProductPolicyCandidateRecord({ root = ".", candidateId } = {}) {
-  const owner = recordProject(root);
-  const file = candidateFile(owner.projectRoot, candidateId);
+export function readProductPolicyCandidateRecord({ root = ".", candidateId, storage = null } = {}) {
+  const owner = recordProject(root, storage);
+  const file = candidateFile(owner.projectRoot, candidateId, storage);
   if (!fs.existsSync(file)) fail(`Product Policy candidate is missing: ${candidateId}`, "PRODUCT_POLICY_CANDIDATE_NOT_FOUND");
-  const candidate = verifyProductPolicyCandidate(readJson(file, "Product Policy candidate"), owner.projectId);
+  const candidate = verifyProductPolicyCandidate(readJson(file, "Product Policy candidate"), owner.projectId, formatForVerifiedOwner(storage));
   if (candidate.candidateId !== candidateId) fail("Product Policy candidate filename does not match its identity.", "PRODUCT_POLICY_ARTIFACT_IDENTITY_MISMATCH");
   return { status: "verified", file, candidate };
 }
-export function readProductPolicyReviewDecisionRecord({ root = ".", reviewDecisionId } = {}) {
-  const owner = recordProject(root);
-  const file = reviewFile(owner.projectRoot, reviewDecisionId);
+export function readProductPolicyReviewDecisionRecord({ root = ".", reviewDecisionId, storage = null } = {}) {
+  const owner = recordProject(root, storage);
+  const file = reviewFile(owner.projectRoot, reviewDecisionId, storage);
   if (!fs.existsSync(file)) fail(`Product Policy ReviewDecision is missing: ${reviewDecisionId}`, "PRODUCT_POLICY_REVIEW_NOT_FOUND");
-  const review = verifyProductPolicyReviewDecision(readJson(file, "Product Policy ReviewDecision"), null, owner.projectId);
+  const review = verifyProductPolicyReviewDecision(readJson(file, "Product Policy ReviewDecision"), null, owner.projectId, formatForVerifiedOwner(storage));
   if (review.reviewDecisionId !== reviewDecisionId) fail("Product Policy ReviewDecision filename does not match its identity.", "PRODUCT_POLICY_ARTIFACT_IDENTITY_MISMATCH");
-  const candidate = readProductPolicyCandidateRecord({ root: owner.projectRoot, candidateId: review.candidateId }).candidate;
-  return { status: "verified", file, reviewDecision: verifyProductPolicyReviewDecision(review, candidate, owner.projectId), candidate };
+  const candidate = readProductPolicyCandidateRecord({ root: owner.projectRoot, candidateId: review.candidateId, storage }).candidate;
+  return { status: "verified", file, reviewDecision: verifyProductPolicyReviewDecision(review, candidate, owner.projectId, formatForVerifiedOwner(storage)), candidate };
 }

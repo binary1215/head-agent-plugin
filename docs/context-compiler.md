@@ -1,20 +1,20 @@
-# HEAD Context Compiler design
+# Lode Context Compiler design
 
-The Compiler packages selected evidence; HEAD decides relevance, sufficiency,
+The Compiler packages selected evidence; Lode decides relevance, sufficiency,
 expansion and completion. Ordinary reading, fixes and Host delegation do not
 require a Capsule, a Run, an inclusion proof or another approval.
 
 ## Selected context
 
-`head_context_prepare` returns source-linked context for the exact user task.
-`head_context_preview` accepts optional HEAD-authored `EvidenceNeed[]` guidance.
+`lode_context_prepare` returns source-linked context for the exact user task.
+`lode_context_preview` accepts optional Lode-authored `EvidenceNeed[]` guidance.
 Users do not write JSON or choose anchors. Both calls are read-only and return
-`ready_for_head_semantic_assessment`, which is advice to HEAD, not a proof of
+`ready_for_head_semantic_assessment`, which is advice to Lode, not a proof of
 sufficiency or an execution gate.
 
 ```text
 Current originals -> bounded selection -> context + sources + omissions
-                                                    -> HEAD assessment
+                                                    -> Lode assessment
 ```
 
 The returned Capsule includes its exact task and Project, current shared direction,
@@ -22,7 +22,7 @@ selected records, original sources, digests, provenance and approximate budget.
 `evidenceGaps`, `omissions` and `uncertainty` disclose missing requested evidence,
 excluded material and limitations. No coverage-proof state machine is produced.
 A metadata carrier is not proof that its source body was included or read.
-HEAD inspects original bodies when the judgment depends on them.
+Lode inspects original bodies when the judgment depends on them.
 
 ## Guidance and expansion
 
@@ -34,7 +34,7 @@ Lexical matching is fallback navigation, never evidence eligibility or semantic
 acceptance. Zero overlap does not remove a current source candidate.
 
 Exact guidance prioritizes selected evidence while preserving unmet requests.
-A small result can still be inadequate. HEAD may inspect originals, expand useful
+A small result can still be inadequate. Lode may inspect originals, expand useful
 relations or choose a larger budget without manufacturing another approval.
 An absent or stale World is disclosed and excluded; current local source inspection
 and selected source observations remain available without Product activation.
@@ -62,7 +62,7 @@ for a durable handoff or managed Run; ordinary preparation writes nothing.
 Selected source, Observation, ProductContext and graph relations are evidence,
 not permission or recovery direction. Repository text cannot override current
 user direction. Product candidates cannot become Canon through compilation.
-ExecutionContract creation records HEAD's separate acceptance; it does not
+ExecutionContract creation records Lode's separate acceptance; it does not
 require a mechanical inclusion certificate.
 
 The current Capsule reader verifies content identity and the logical Project.
@@ -79,7 +79,7 @@ Git history, runtime observations and exact graph traversals. All source revisio
 and omissions remain explicit. Neither heuristic nor static AST relations prove
 runtime truth. Missing/stale indexes do not block direct work.
 
-`head_source_context` supports task-scoped current source and Python static
+`lode_source_context` supports task-scoped current source and Python static
 declaration/call observations without a full scan. Retention is optional;
 raw source is not a Product concept. For collector scope, unresolved calls,
 parser failures and original-source retention, see

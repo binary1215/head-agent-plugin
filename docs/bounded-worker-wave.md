@@ -1,12 +1,12 @@
 # Provider-neutral bounded worker launch waves
 
-`BoundedWorkerWave` adds one concise launch-wave view without turning HEAD Core
+`BoundedWorkerWave` adds one concise launch-wave view without turning Lode Core
 into a worker launcher, provider-session registry, or Herdr adapter. It groups
 already-created and already-verified `BoundedWorkerDispatch` records beneath one
 exact active Run lineage.
 
 Use a wave when independent dispatches need durable recovery and effect tracking,
-for either useful new work or retained work. Direct HEAD and ordinary Host
+for either useful new work or retained work. Direct Lode and ordinary Host
 delegation remain available. File edits, worker count or ordinary failure do not
 force a wave; history/status/wait remain ordinary diagnostics.
 
@@ -43,8 +43,8 @@ existing BoundedWorkerDispatch[]
   -> explicit BoundedWorkerWaveSeal
   -> WorkerWaveStatusProjection(sealed | completed | failed)
   -> optional BoundedWorkerWaveWaitOutcome
-  -> HEAD gathers individual evidence while the Run is valid
-  -> one combined Run ResultPacket -> Fresh HEAD -> ReviewDecision -> P2 integration
+  -> Lode gathers individual evidence while the Run is valid
+  -> one combined Run ResultPacket -> Fresh Lode -> ReviewDecision -> P2 integration
 ```
 
 The read-only status projection never creates a seal. Seal requires verified
@@ -53,9 +53,9 @@ not start evidence. Aggregate result read and wave wait fail closed before seal.
 `completed` means every member returned a successful terminal runtime result.
 One fast terminal failure makes the sealed wave `failed`, never `completed`.
 
-Status and wait include non-persisted HEAD guidance: whether aggregate reads are
+Status and wait include non-persisted Lode guidance: whether aggregate reads are
 available, whether all start evidence is present, and which started members lack
-lease release evidence. This is not proof of process cleanup. HEAD can read
+lease release evidence. This is not proof of process cleanup. Lode can read
 individual jobs before sealing; aborting wait or abandoning a wave does not
 cancel members. Preserve successful results and inspect/cancel owned unfinished
 members separately. CLI/MCP cards expose this distinction without a new user form.
@@ -68,12 +68,12 @@ retries converge and divergent retries fail. Both compete for the same
 create-only terminal slot, so concurrent seal/abandon attempts cannot produce
 two terminal truths.
 
-Wave completion does not apply a ResultPacket, build Fresh HEAD review, create a
+Wave completion does not apply a ResultPacket, build Fresh Lode review, create a
 `ReviewDecision`, or integrate a checkpoint. HF-009 remains independent worker
 dispatch and execution ownership. HF-010 remains the later explicit reviewed
 result integration path for the Run's single whole result, not each fragment.
 For context selection, partial launch and the distinction between single-worker
-application and HEAD's combined finish, see
+application and Lode's combined finish, see
 [worker context and integration](worker-context-integration.md).
 
 ## CLI and typed MCP
@@ -89,7 +89,7 @@ head managed worker-wave-abandon <project> --input <abandonment.json>
 ```
 
 Typed MCP uses the same Core functions and identities. Discover a managed
-mutation schema and use `head_tools_call` with `execution_mode: "managed"`, or
+mutation schema and use `lode_tools_call` with `execution_mode: "managed"`, or
 the retained separate managed stdio server. The CLI `managed` route also supports
 useful new durable work. Routing creates no authorization and preserves exact
 lineage, lease and start-evidence checks. Ordinary MCP retains read/status/results/

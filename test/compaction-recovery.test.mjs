@@ -7,6 +7,7 @@ import { spawn } from "node:child_process";
 import { withProjectMutation, withProjectMutationAsync } from "../scripts/lib/project-mutation-lock.mjs";
 import { withRefreshWriterLease, inspectRefreshWriterLease } from "../scripts/lib/refresh-writer-lease.mjs";
 import { initializeProject, inspectProject } from "../scripts/lib/head-core.mjs";
+import { formatForVerifiedOwner } from "../scripts/lib/project-storage-format.mjs";
 import { compileContext } from "../scripts/lib/context-compiler.mjs";
 import { createExecutionContract, createWholePlanSnapshot } from "../scripts/lib/execution-lineage.mjs";
 import { finishRun, startRun } from "../scripts/lib/run-lineage.mjs";
@@ -31,7 +32,8 @@ function temporaryProject(prefix = "head-compaction-test-") {
 
 function initialize(root) {
   initializeProject({ root, pluginRoot, runtimes: ["codex", "opencode"] });
-  return root;
+  const layout = inspectProject(root).storage;
+  return { root, layout };
 }
 
 function recoveryInput(overrides = {}) {
@@ -102,7 +104,7 @@ function recoveryChild(t, action, input, { holdLock = false, crashAfter = null, 
 }
 
 test("rejected prepare preserves every project byte and validates the turn before writes", (t) => {
-  const root = initialize(temporaryProject());
+  const { root, layout } = initialize(temporaryProject());
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const initial = projectBytes(root);
   for (const userTurnIdAtPrepare of [undefined, -1, 1.5, "7"]) {
@@ -117,7 +119,7 @@ test("rejected prepare preserves every project byte and validates the turn befor
 });
 
 test("a public checkpoint change prevents stale continuation without consuming its token", (t) => {
-  const root = initialize(temporaryProject());
+  const { root, layout } = initialize(temporaryProject());
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const prepared = prepareCompaction({ root, ...recoveryInput() });
   verifyCompaction({ root, epochId: prepared.epoch.epochId, checkpointDigest: prepared.checkpoint.checkpointDigest, currentUserTurnId: 7, providerCompacted: true });
@@ -129,7 +131,7 @@ test("a public checkpoint change prevents stale continuation without consuming i
 });
 
 test("independent concurrent prepares publish exactly one checkpoint and one epoch", async (t) => {
-  const root = initialize(temporaryProject());
+  const { root, layout } = initialize(temporaryProject());
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const outcomes = await Promise.all(Array.from({ length: 4 }, (_, index) => recoveryChild(t, "prepare", { root, ...recoveryInput({ nextExpectedResult: `Direction ${index}` }) }).done));
   const winners = outcomes.filter((item) => item.status === "compaction_prepared");
@@ -138,14 +140,14 @@ test("independent concurrent prepares publish exactly one checkpoint and one epo
   const current = inspectCompaction({ root });
   assert.equal(current.checkpoint.checkpointId, winners[0].checkpointId);
   assert.equal(inspectProject(root).state.latestCheckpoint, winners[0].checkpointId);
-  assert.equal(fs.readdirSync(path.join(root, ".head", "sessions", "ledger")).filter((name) => name.endsWith(".json")).length, 1);
-  assert.equal(fs.readdirSync(path.join(root, ".head", "sessions", "compaction", "epochs")).length, 1);
+  assert.equal(fs.readdirSync(path.join(root, layout.directory, "sessions", "ledger")).filter((name) => name.endsWith(".json")).length, 1);
+  assert.equal(fs.readdirSync(path.join(root, layout.directory, "sessions", "compaction", "epochs")).length, 1);
 });
 
 test("mutation release preserves the shared parent during a following writer's mkdir", async (t) => {
-  const root = fs.realpathSync(initialize(temporaryProject()));
+  const initialized = initialize(temporaryProject()), root = fs.realpathSync(initialized.root), layout = initialized.layout;
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const operations = path.join(root, ".head", ".operations");
+  const operations = path.join(root, layout.directory, ".operations");
   const before = projectBytes(root);
   const mkdir = fs.mkdirSync;
   const rmdir = fs.rmdirSync;
@@ -181,9 +183,9 @@ test("mutation release preserves the shared parent during a following writer's m
 
 test("mutation acquisition preserves genuine missing, unsafe and denied filesystem failures", async (t) => {
   for (const mode of ["missing-head", "unsafe-head", "denied-parent", "missing-parent"]) {
-    const root = fs.realpathSync(initialize(temporaryProject()));
+    const initialized = initialize(temporaryProject()), root = fs.realpathSync(initialized.root), layout = initialized.layout;
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-    const head = path.join(root, ".head");
+    const head = path.join(root, layout.directory);
     const parked = path.join(root, ".head-diagnostic-original");
     const operations = path.join(head, ".operations");
     const before = projectBytes(root);
@@ -218,7 +220,7 @@ test("mutation acquisition preserves genuine missing, unsafe and denied filesyst
 });
 
 test("independent continuation waits for a checkpoint writer and verifies the committed direction", async (t) => {
-  const root = initialize(temporaryProject());
+  const { root, layout } = initialize(temporaryProject());
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const prepared = prepareCompaction({ root, ...recoveryInput() });
   verifyCompaction({ root, epochId: prepared.epoch.epochId, checkpointDigest: prepared.checkpoint.checkpointDigest, currentUserTurnId: 7, providerCompacted: true });
@@ -230,11 +232,11 @@ test("independent continuation waits for a checkpoint writer and verifies the co
   });
   assert.equal((await waiting.done).code, "COMPACTION_CHECKPOINT_STALE");
   assert.equal(inspectCompaction({ root }).epoch.state, "verified");
-  assert.equal(fs.existsSync(path.join(root, ".head", "sessions", "compaction", "consumptions", `${prepared.epoch.epochId}.json`)), false);
+  assert.equal(fs.existsSync(path.join(root, layout.directory, "sessions", "compaction", "consumptions", `${prepared.epoch.epochId}.json`)), false);
 });
 
 test("an interrupted mutation lock is reclaimed only after its exact owner exits", async (t) => {
-  const root = initialize(temporaryProject());
+  const { root, layout } = initialize(temporaryProject());
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   await recoveryChild(t, "crash-lock", { root }, { holdLock: true }).done;
   assert.equal(withProjectMutation({ root, scope: "session-recovery" }, () => "reclaimed"), "reclaimed");
@@ -243,7 +245,7 @@ test("an interrupted mutation lock is reclaimed only after its exact owner exits
 
 test("interrupted prepare preserves complete P2 direction and closes only uncertain P5 state", async (t) => {
   for (const crashAfter of ["/compaction/current.json", "/sessions/current.json"]) {
-    const root = initialize(temporaryProject());
+    const { root, layout } = initialize(temporaryProject());
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));
     const before = runCommand(["checkpoint", root, "--summary", "Prior direction", "--next", "Prior next"]).checkpoint;
     await recoveryChild(t, "prepare", { root, ...recoveryInput() }, { crashAfter }).done;
@@ -254,7 +256,7 @@ test("interrupted prepare preserves complete P2 direction and closes only uncert
     assert.equal(current.nextExpectedResult, crashAfter === "/compaction/current.json" ? before.nextExpectedResult : recoveryInput().nextExpectedResult);
     const recovered = prepareCompaction({ root, ...recoveryInput({ nextExpectedResult: "New explicit direction after uncertain prepare" }) });
     assert.equal(recovered.status, "compaction_prepared");
-    const previousEpoch = JSON.parse(fs.readFileSync(path.join(root, ".head", "sessions", "compaction", "epochs", `${interrupted.epoch.epochId}.json`)));
+    const previousEpoch = JSON.parse(fs.readFileSync(path.join(root, layout.directory, "sessions", "compaction", "epochs", `${interrupted.epoch.epochId}.json`)));
     assert.equal(previousEpoch.state, "aborted");
     assert.equal(previousEpoch.continuationTokenBindingHash, null);
   }
@@ -262,7 +264,7 @@ test("interrupted prepare preserves complete P2 direction and closes only uncert
 
 test("concurrent continuation consumes once and an interrupted consumption never replays", async (t) => {
   for (const crashAfterConsumption of [false, true]) {
-    const root = initialize(temporaryProject());
+    const { root, layout } = initialize(temporaryProject());
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));
     const prepared = prepareCompaction({ root, ...recoveryInput() });
     verifyCompaction({ root, epochId: prepared.epoch.epochId, checkpointDigest: prepared.checkpoint.checkpointDigest, currentUserTurnId: 7, providerCompacted: true });
@@ -272,7 +274,7 @@ test("concurrent continuation consumes once and an interrupted consumption never
       assert.equal(inspectCompaction({ root }).continuationOutcome, "uncertain");
       const next = prepareCompaction({ root, ...recoveryInput({ userTurnIdAtPrepare: 8 }) });
       assert.notEqual(next.epoch.epochId, prepared.epoch.epochId);
-      const previous = JSON.parse(fs.readFileSync(path.join(root, ".head/sessions/compaction/epochs", `${prepared.epoch.epochId}.json`), "utf8"));
+      const previous = JSON.parse(fs.readFileSync(path.join(root, layout.directory, "sessions/compaction/epochs", `${prepared.epoch.epochId}.json`), "utf8"));
       assert.equal(previous.state, "aborted");
       assert.equal(previous.abortReason, "continuation-consumed-outcome-uncertain");
       assert.equal(previous.continuationTokenBindingHash, null);
@@ -282,13 +284,13 @@ test("concurrent continuation consumes once and an interrupted consumption never
       assert.equal(outcomes.filter((item) => item.status === "compaction_continuation_consumed").length, 1, JSON.stringify(outcomes));
       assert.equal(outcomes.filter((item) => item.code === "COMPACTION_TOKEN_CONSUMED").length, 7, JSON.stringify(outcomes));
     }
-    assert.equal(fs.readdirSync(path.join(root, ".head", "sessions", "compaction", "consumptions")).length, 1);
-    assert.deepEqual(fs.readdirSync(path.join(root, ".head", ".operations")), []);
+    assert.equal(fs.readdirSync(path.join(root, layout.directory, "sessions", "compaction", "consumptions")).length, 1);
+    assert.deepEqual(fs.readdirSync(path.join(root, layout.directory, ".operations")), []);
   }
 });
 
 test("a Run started after verification invalidates the old continuation without a new user turn", (t) => {
-  const root = initialize(temporaryProject());
+  const { root, layout } = initialize(temporaryProject());
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const prepared = prepareCompaction({ root, ...recoveryInput() });
   verifyCompaction({ root, epochId: prepared.epoch.epochId, checkpointDigest: prepared.checkpoint.checkpointDigest, currentUserTurnId: 7, providerCompacted: true });
@@ -302,18 +304,18 @@ test("a Run started after verification invalidates the old continuation without 
 });
 
 test("refresh lease recovers an empty legacy lock and a crash before owner publication", async (t) => {
-  const root = initialize(temporaryProject());
+  const { root, layout } = initialize(temporaryProject());
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const projectId = inspectProject(root).project.projectId;
-  fs.mkdirSync(path.join(root, ".head", "refresh", "writer.lock"), { recursive: true });
+  fs.mkdirSync(path.join(root, layout.directory, "refresh", "writer.lock"), { recursive: true });
   await withRefreshWriterLease({ projectRoot: root, projectId }, () => "recovered-empty-legacy-lock");
   for (const crashRefreshStaging of [true, "partial"]) {
     await recoveryChild(t, "refresh-crash", { root }, { crashRefreshStaging }).done;
     assert.equal(await withRefreshWriterLease({ projectRoot: root, projectId }, () => "recovered-staging"), "recovered-staging");
   }
   assert.equal(inspectRefreshWriterLease({ projectRoot: root, projectId }).status, "idle");
-  assert.equal(fs.readdirSync(path.join(root, ".head", "refresh")).some((name) => name.includes("writer.lock")), false);
-  assert.deepEqual(fs.readdirSync(path.join(root, ".head", ".operations")), []);
+  assert.equal(fs.readdirSync(path.join(root, layout.directory, "refresh")).some((name) => name.includes("writer.lock")), false);
+  assert.deepEqual(fs.readdirSync(path.join(root, layout.directory, ".operations")), []);
 });
 
 function refreshPublication(source, target) {
@@ -322,7 +324,7 @@ function refreshPublication(source, target) {
 }
 
 test("refresh publication retries the same owned Windows staging without replaying work", { skip: process.platform !== "win32" }, async (t) => {
-  const root = initialize(temporaryProject());
+  const { root, layout } = initialize(temporaryProject());
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const projectId = inspectProject(root).project.projectId;
   const before = projectBytes(root);
@@ -346,11 +348,11 @@ test("refresh publication retries the same owned Windows staging without replayi
   assert.equal(new Set(staged.map(([, bytes]) => bytes)).size, 1);
   assert.deepEqual(projectBytes(root), before);
   assert.equal(inspectRefreshWriterLease({ projectRoot: root, projectId }).status, "idle");
-  assert.deepEqual(fs.readdirSync(path.join(root, ".head", "refresh")), []);
+  assert.deepEqual(fs.readdirSync(path.join(root, layout.directory, "refresh")), []);
 });
 
 test("refresh publication exhausts a finite Windows retry bound without running work", { skip: process.platform !== "win32" }, async (t) => {
-  const root = initialize(temporaryProject());
+  const { root, layout } = initialize(temporaryProject());
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const projectId = inspectProject(root).project.projectId;
   const before = projectBytes(root);
@@ -367,11 +369,11 @@ test("refresh publication exhausts a finite Windows retry bound without running 
   assert.equal(attempts, 5);
   assert.equal(work, 0);
   assert.deepEqual(projectBytes(root), before);
-  assert.deepEqual(fs.readdirSync(path.join(root, ".head", "refresh")), []);
+  assert.deepEqual(fs.readdirSync(path.join(root, layout.directory, "refresh")), []);
 });
 
 test("refresh publication never overwrites an owner appearing during publication", async (t) => {
-  const root = initialize(temporaryProject());
+  const { root, layout } = initialize(temporaryProject());
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const projectId = inspectProject(root).project.projectId;
   const rename = fs.renameSync;
@@ -397,11 +399,11 @@ test("refresh publication never overwrites an owner appearing during publication
   assert.equal(attempts, 1);
   assert.equal(work, 0);
   assert.equal(fs.readFileSync(occupiedFile, "utf8"), occupiedBytes);
-  assert.deepEqual(fs.readdirSync(path.join(root, ".head", "refresh")), ["writer.lock"]);
+  assert.deepEqual(fs.readdirSync(path.join(root, layout.directory, "refresh")), ["writer.lock"]);
 });
 
 test("refresh publication preserves tampered staging instead of retrying or deleting it", { skip: process.platform !== "win32" }, async (t) => {
-  const root = initialize(temporaryProject());
+  const { root, layout } = initialize(temporaryProject());
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const projectId = inspectProject(root).project.projectId;
   const rename = fs.renameSync;
@@ -427,15 +429,15 @@ test("refresh publication preserves tampered staging instead of retrying or dele
   assert.equal(attempts, 1);
   assert.equal(work, 0);
   assert.equal(fs.readFileSync(stagedOwner, "utf8"), "tampered publication owner");
-  assert.equal(fs.existsSync(path.join(root, ".head", "refresh", "writer.lock")), false);
+  assert.equal(fs.existsSync(path.join(root, layout.directory, "refresh", "writer.lock")), false);
 });
 
 test("refresh publication preserves an invalid appearing owner and treats denied stat as unknown", async (t) => {
   for (const mode of ["invalid-owner", "denied-stat"]) {
-    const root = initialize(temporaryProject());
+    const { root, layout } = initialize(temporaryProject());
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));
     const projectId = inspectProject(root).project.projectId;
-    const targetDirectory = path.join(root, ".head", "refresh", "writer.lock");
+    const targetDirectory = path.join(root, layout.directory, "refresh", "writer.lock");
     const rename = fs.renameSync;
     const stat = fs.lstatSync;
     let work = 0;
@@ -459,12 +461,12 @@ test("refresh publication preserves an invalid appearing owner and treats denied
     assert.equal(work, 0);
     assert.equal(attempts, mode === "invalid-owner" ? 1 : 0);
     if (mode === "invalid-owner") assert.equal(fs.readFileSync(path.join(targetDirectory, "owner.json"), "utf8"), "invalid owner must survive");
-    else assert.deepEqual(fs.readdirSync(path.join(root, ".head", "refresh")), []);
+    else assert.deepEqual(fs.readdirSync(path.join(root, layout.directory, "refresh")), []);
   }
 });
 
 test("refresh publication converges a completed rename with a reported error and releases it", async (t) => {
-  const root = initialize(temporaryProject());
+  const { root, layout } = initialize(temporaryProject());
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const projectId = inspectProject(root).project.projectId;
   const before = projectBytes(root);
@@ -484,11 +486,11 @@ test("refresh publication converges a completed rename with a reported error and
   assert.equal(attempts, 1);
   assert.equal(work, 1);
   assert.deepEqual(projectBytes(root), before);
-  assert.deepEqual(fs.readdirSync(path.join(root, ".head", "refresh")), []);
+  assert.deepEqual(fs.readdirSync(path.join(root, layout.directory, "refresh")), []);
 });
 
 test("refresh publication preserves cleanup diagnostics when a competing owner and staging drift coexist", async (t) => {
-  const root = initialize(temporaryProject());
+  const { root, layout } = initialize(temporaryProject());
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const projectId = inspectProject(root).project.projectId;
   const rename = fs.renameSync;
@@ -527,7 +529,7 @@ test("refresh publication preserves cleanup diagnostics when a competing owner a
 
 test("refresh publication does not retry unrelated errors or a failed callback", async (t) => {
   for (const code of ["EIO", "ENOENT", "CALLBACK_FAILURE"]) {
-    const root = initialize(temporaryProject());
+    const { root, layout } = initialize(temporaryProject());
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));
     const projectId = inspectProject(root).project.projectId;
     const before = projectBytes(root);
@@ -545,12 +547,12 @@ test("refresh publication does not retry unrelated errors or a failed callback",
     assert.equal(attempts, 1);
     assert.equal(work, code === "CALLBACK_FAILURE" ? 1 : 0);
     assert.deepEqual(projectBytes(root), before);
-    assert.deepEqual(fs.readdirSync(path.join(root, ".head", "refresh")), []);
+    assert.deepEqual(fs.readdirSync(path.join(root, layout.directory, "refresh")), []);
   }
 });
 
 test("refresh publication retains its original failure and reports an owned cleanup failure", async (t) => {
-  const root = initialize(temporaryProject());
+  const { root, layout } = initialize(temporaryProject());
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const projectId = inspectProject(root).project.projectId;
   const originalError = Object.assign(new Error("Publication failed"), { code: "EIO" });
@@ -575,13 +577,13 @@ test("refresh publication retains its original failure and reports an owned clea
   } finally { fs.renameSync = rename; fs.unlinkSync = unlink; }
   assert.equal(work, 0);
   assert.equal(fs.existsSync(stagedOwner), true);
-  assert.equal(fs.existsSync(path.join(root, ".head", "refresh", "writer.lock")), false);
+  assert.equal(fs.existsSync(path.join(root, layout.directory, "refresh", "writer.lock")), false);
 });
 
 test("compaction recovers only from a canonical checkpoint and consumes continuation once", (t) => {
-  const root = initialize(temporaryProject());
+  const { root, layout } = initialize(temporaryProject());
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const productFile = path.join(root, ".head", "context", "product-model.json");
+  const productFile = path.join(root, layout.directory, "context", "product-model.json");
   const productBefore = fs.readFileSync(productFile);
 
   const prepared = prepareCompaction({ root, ...recoveryInput() });
@@ -621,7 +623,7 @@ test("compaction recovers only from a canonical checkpoint and consumes continua
   assert.equal(verified.recoverySource, "canonical-session-run-checkpoint");
   assert.equal(Object.hasOwn(verified, "recoveryReceipt"), false);
   assert.equal(verified.checkpoint.purpose, prepared.checkpoint.purpose);
-  assert.equal(verified.excludedSources.includes("HEADContinuitySnapshot"), true);
+  assert.equal(verified.excludedSources.includes(formatForVerifiedOwner(layout).kind("HEADContinuitySnapshot")), true);
 
   const continued = continueCompaction({
     root,
@@ -633,7 +635,7 @@ test("compaction recovers only from a canonical checkpoint and consumes continua
   assert.equal(continued.status, "compaction_continuation_consumed");
   assert.equal(continued.providerSubmission, "adapter-or-user-owned");
   assert.equal(Object.hasOwn(continued, "recoveryReceipt"), false);
-  assert.equal(fs.existsSync(path.join(root, ".head", "sessions", "compaction", "receipts")), false);
+  assert.equal(fs.existsSync(path.join(root, layout.directory, "sessions", "compaction", "receipts")), false);
   assert.equal(continued.checkpoint.purpose, prepared.checkpoint.purpose);
   assert.throws(() => continueCompaction({
     root,
@@ -646,7 +648,7 @@ test("compaction recovers only from a canonical checkpoint and consumes continua
 });
 
 test("a newer real user turn supersedes a prepared continuation", (t) => {
-  const root = initialize(temporaryProject());
+  const { root, layout } = initialize(temporaryProject());
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const prepared = prepareCompaction({ root, ...recoveryInput({ userTurnIdAtPrepare: 10 }) });
   assert.throws(() => verifyCompaction({
@@ -669,7 +671,7 @@ test("a newer real user turn supersedes a prepared continuation", (t) => {
 });
 
 test("provider failure and checkpoint tamper abort instead of guessing recovery", (t) => {
-  const root = initialize(temporaryProject());
+  const { root, layout } = initialize(temporaryProject());
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const failedProvider = prepareCompaction({ root, ...recoveryInput({ userTurnIdAtPrepare: 12 }) });
   assert.throws(() => verifyCompaction({
@@ -682,7 +684,7 @@ test("provider failure and checkpoint tamper abort instead of guessing recovery"
   assert.equal(inspectCompaction({ root }).epoch.state, "aborted");
 
   const tampered = prepareCompaction({ root, ...recoveryInput({ userTurnIdAtPrepare: 13 }) });
-  const checkpointFile = path.join(root, ".head", "sessions", "ledger", `${tampered.checkpoint.checkpointId}.json`);
+  const checkpointFile = path.join(root, layout.directory, "sessions", "ledger", `${tampered.checkpoint.checkpointId}.json`);
   const checkpoint = JSON.parse(fs.readFileSync(checkpointFile, "utf8"));
   checkpoint.nextExpectedResult = "A provider summary silently replaced the next result";
   fs.writeFileSync(checkpointFile, `${JSON.stringify(checkpoint, null, 2)}\n`);
@@ -697,7 +699,7 @@ test("provider failure and checkpoint tamper abort instead of guessing recovery"
 });
 
 test("an active Run checkpoint pins verified plan, contract, and capsule identities", (t) => {
-  const root = initialize(temporaryProject());
+  const { root, layout } = initialize(temporaryProject());
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const capsule = compileContext({ root, task: "Preserve the active Run across compaction", budget: 32_768, persist: true }).capsule;
   const plan = createWholePlanSnapshot({
@@ -734,10 +736,10 @@ test("an active Run checkpoint pins verified plan, contract, and capsule identit
 });
 
 test("compaction verification rejects Session pointer drift beyond the active Run tuple", (t) => {
-  const root = initialize(temporaryProject());
+  const { root, layout } = initialize(temporaryProject());
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const prepared = prepareCompaction({ root, ...recoveryInput({ userTurnIdAtPrepare: 22 }) });
-  const stateFile = path.join(root, ".head", "sessions", "current.json");
+  const stateFile = path.join(root, layout.directory, "sessions", "current.json");
   const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
   state.lastReviewDecisionId = "review-decision-000000000000000000000000";
   fs.writeFileSync(stateFile, `${JSON.stringify(state, null, 2)}\n`);
@@ -752,7 +754,7 @@ test("compaction verification rejects Session pointer drift beyond the active Ru
 });
 
 test("checkpoint recovery remains sufficient after ResultPacket evidence is deleted", (t) => {
-  const root = initialize(temporaryProject());
+  const { root, layout } = initialize(temporaryProject());
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const capsule = compileContext({ root, task: "Prove checkpoint-only recovery", budget: 32_768, persist: true }).capsule;
   const plan = createWholePlanSnapshot({
@@ -777,19 +779,19 @@ test("checkpoint recovery remains sufficient after ResultPacket evidence is dele
   const nextExpectedResult = "Continue from the exact checkpoint direction without consulting the deleted ResultPacket";
   const prepared = prepareCompaction({ root, ...recoveryInput({ userTurnIdAtPrepare: 21, nextExpectedResult }) });
   assert.equal(prepared.checkpoint.authorityBoundary.planeId, "P2");
-  const resultFile = path.join(root, ".head", "lineage", "result-packets", `${finished.resultPacket.resultPacketId}.json`);
+  const resultFile = path.join(root, layout.directory, "lineage", "result-packets", `${finished.resultPacket.resultPacketId}.json`);
   fs.unlinkSync(resultFile);
   const recovered = readRecoveryCheckpoint({ root, checkpointId: prepared.checkpoint.checkpointId }).checkpoint;
   assert.equal(recovered.nextExpectedResult, nextExpectedResult);
   assert.equal(recovered.authorityBoundary.recoveryAuthority, true);
-  assert.equal(recovered.authority.recoveryFieldSources, "explicit-head-user-direction-and-verified-p2-lineage-only");
+  assert.equal(recovered.authority.recoveryFieldSources, formatForVerifiedOwner(layout).value("explicit-head-user-direction-and-verified-p2-lineage-only"));
   assert.equal(recovered.authority.evidenceRecords, "reference-only-not-recovery-field-source");
   assert.equal(fs.existsSync(resultFile), false);
   abortCompaction({ root, epochId: prepared.epoch.epochId, reason: "fixture cleanup" });
 });
 
 test("CLI default help exposes safe compaction status while mutations remain advanced", async (t) => {
-  const root = initialize(temporaryProject());
+  const { root, layout } = initialize(temporaryProject());
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const inputFile = path.join(root, "compact-prepare.json");
   fs.writeFileSync(inputFile, `${JSON.stringify(recoveryInput({ runtime: "manual", userTurnIdAtPrepare: 30 }), null, 2)}\n`);
@@ -799,7 +801,7 @@ test("CLI default help exposes safe compaction status while mutations remain adv
   assert.equal(runCommand(["help"]).commands.some((command) => command.includes("compact-status")), true);
   assert.equal(runCommand(["help"]).commands.some((command) => command.includes("compact-prepare")), false);
   assert.equal(runCommand(["help-all"]).commands.some((command) => command.includes("compact-prepare")), true);
-  assert.equal(mcpTools.some((tool) => tool.name === "head_compact_prepare"), true);
+  assert.equal(mcpTools.some((tool) => tool.name === "lode_compact_prepare"), true);
   const status = await dispatch({
     jsonrpc: "2.0",
     id: 501,

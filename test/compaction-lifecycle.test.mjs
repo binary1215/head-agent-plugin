@@ -21,7 +21,8 @@ function temporaryProject(prefix = "head-compaction-lifecycle-test-") {
   fs.mkdirSync(parent, { recursive: true });
   const root = fs.mkdtempSync(path.join(parent, prefix));
   initializeProject({ root, pluginRoot, runtimes: ["codex", "claude", "opencode"] });
-  return root;
+  const layout = inspectProject(root).storage;
+  return { root, layout };
 }
 
 function direction(overrides = {}) {
@@ -67,7 +68,7 @@ function projectFiles(root) {
 }
 
 test("durable continuation consumption with interrupted epoch commit closes only P5 and restores P2 without replay", (t) => {
-  const root = temporaryProject();
+  const { root, layout } = temporaryProject();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const canonical = checkpoint(root);
   const host = enqueue(new InMemoryCompactionLifecycleHostAdapter(), event(root, "before-compaction"));
@@ -75,7 +76,7 @@ test("durable continuation consumption with interrupted epoch commit closes only
   const epochId = prepared.epoch.epochId;
   enqueue(host, event(root, "after-compaction", { epochId, outcome: "succeeded" }));
   const nonTransportBytes = () => Object.fromEntries(projectFiles(root)
-    .filter((file) => !file.startsWith(".head/sessions/compaction/"))
+    .filter((file) => !file.startsWith(`${layout.directory}/sessions/compaction/`))
     .map((file) => [file, fs.readFileSync(path.join(root, file), "base64")]));
   const authorityBefore = nonTransportBytes();
   const rename = fs.renameSync;
@@ -90,7 +91,7 @@ test("durable continuation consumption with interrupted epoch commit closes only
   try { assert.throws(() => processCompactionLifecycle({ root, hostAdapter: host }), { code: "EIO" }); }
   finally { fs.renameSync = rename; }
   assert.equal(faultInjected, true);
-  const epochFile = path.join(root, ".head/sessions/compaction/epochs", `${epochId}.json`);
+  const epochFile = path.join(root, layout.directory, "sessions/compaction/epochs", `${epochId}.json`);
   const interruptedBytes = fs.readFileSync(epochFile);
   const status = inspectCompaction({ root });
   assert.equal(status.epoch.state, "verified");
@@ -132,19 +133,19 @@ test("durable continuation consumption with interrupted epoch commit closes only
   assert.equal(next.checkpoint.checkpointId, canonical.checkpointId);
   assert.notEqual(next.epoch.epochId, epochId);
   assert.deepEqual(nonTransportBytes(), authorityBefore);
-  assert.equal(fs.readdirSync(path.join(root, ".head/sessions/compaction/consumptions")).length, 1);
+  assert.equal(fs.readdirSync(path.join(root, layout.directory, "sessions/compaction/consumptions")).length, 1);
   assert.throws(() => settleCompactionContinuation({ root, epochId }), { code: "COMPACTION_CHECKPOINT_STALE" });
 });
 
 test("P5 interrupted-consumption settlement rejects invented or mismatched evidence without modifying P2", (t) => {
-  const root = temporaryProject();
+  const { root, layout } = temporaryProject();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   checkpoint(root);
   const prepared = prepareCompactionFromCurrentCheckpoint({ root, runtime: "codex", userTurnIdAtPrepare: 10 });
   const epochId = prepared.epoch.epochId;
-  const session = fs.readFileSync(path.join(root, ".head/sessions/current.json"));
+  const session = fs.readFileSync(path.join(root, layout.directory, "sessions/current.json"));
   assert.throws(() => settleCompactionContinuation({ root, epochId }), { code: "INVALID_COMPACTION_CONSUMPTION" });
-  const consumptionDir = path.join(root, ".head/sessions/compaction/consumptions");
+  const consumptionDir = path.join(root, layout.directory, "sessions/compaction/consumptions");
   fs.mkdirSync(consumptionDir, { recursive: true });
   fs.writeFileSync(path.join(consumptionDir, `${epochId}.json`), JSON.stringify({
     schemaVersion: prepared.epoch.schemaVersion, kind: "CompactionContinuationConsumption",
@@ -154,13 +155,13 @@ test("P5 interrupted-consumption settlement rejects invented or mismatched evide
   assert.throws(() => settleCompactionContinuation({ root, epochId }), { code: "INVALID_COMPACTION_CONSUMPTION" });
   assert.equal(inspectCompaction({ root }).continuationConsumption, "invalid");
   assert.equal(inspectCompaction({ root }).epoch.state, "prepared");
-  assert.deepEqual(fs.readFileSync(path.join(root, ".head/sessions/current.json")), session);
+  assert.deepEqual(fs.readFileSync(path.join(root, layout.directory, "sessions/current.json")), session);
 });
 
 test("conversation entry restores current P2 direction automatically and otherwise creates no gate", (t) => {
-  const root = temporaryProject();
+  const { root, layout } = temporaryProject();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const before = fs.readFileSync(path.join(root, ".head", "sessions", "current.json"));
+  const before = fs.readFileSync(path.join(root, layout.directory, "sessions", "current.json"));
   const filesBefore = projectFiles(root);
   const empty = enterConversationRecovery({ root });
   assert.equal(empty.status, "conversation_ready");
@@ -168,11 +169,11 @@ test("conversation entry restores current P2 direction automatically and otherwi
   assert.equal(empty.projectStatus.kind, "HeadProjectExperienceProjection");
   assert.equal(empty.attention.status, "clear");
   assert.equal(empty.ordinaryWorkBlocked, false);
-  assert.deepEqual(fs.readFileSync(path.join(root, ".head", "sessions", "current.json")), before);
+  assert.deepEqual(fs.readFileSync(path.join(root, layout.directory, "sessions", "current.json")), before);
   assert.deepEqual(projectFiles(root), filesBefore);
 
   const canonical = checkpoint(root);
-  const stateAfterCheckpoint = fs.readFileSync(path.join(root, ".head", "sessions", "current.json"));
+  const stateAfterCheckpoint = fs.readFileSync(path.join(root, layout.directory, "sessions", "current.json"));
   const restored = enterConversationRecovery({ root });
   assert.equal(restored.status, "conversation_direction_restored");
   assert.equal(restored.restore.checkpoint.checkpointId, canonical.checkpointId);
@@ -180,14 +181,14 @@ test("conversation entry restores current P2 direction automatically and otherwi
   assert.equal(restored.restore.projection.providerBoundary.providerTranscriptUsed, false);
   assert.equal(restored.userDecisionRequired, false);
   assert.equal(Buffer.byteLength(JSON.stringify(restored), "utf8") < 64 * 1024, true);
-  assert.deepEqual(fs.readFileSync(path.join(root, ".head", "sessions", "current.json")), stateAfterCheckpoint);
+  assert.deepEqual(fs.readFileSync(path.join(root, layout.directory, "sessions", "current.json")), stateAfterCheckpoint);
 });
 
 test("tampered recovery stops only checkpoint-dependent work and never guesses direction", (t) => {
-  const root = temporaryProject();
+  const { root, layout } = temporaryProject();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const canonical = checkpoint(root);
-  const file = path.join(root, ".head", "sessions", "ledger", `${canonical.checkpointId}.json`);
+  const file = path.join(root, layout.directory, "sessions", "ledger", `${canonical.checkpointId}.json`);
   const value = JSON.parse(fs.readFileSync(file, "utf8"));
   value.nextExpectedResult = "provider summary supplied direction";
   fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
@@ -201,7 +202,7 @@ test("tampered recovery stops only checkpoint-dependent work and never guesses d
 });
 
 test("lifecycle restores newer P2 direction when its transport token becomes stale", (t) => {
-  const root = temporaryProject();
+  const { root, layout } = temporaryProject();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const host = new InMemoryCompactionLifecycleHostAdapter();
   enqueue(host, event(root, "before-compaction"));
@@ -237,7 +238,7 @@ test("lifecycle restores newer P2 direction when its transport token becomes sta
 });
 
 test("missing Host lifecycle hooks stay optional while artifact entry recovery remains available", (t) => {
-  const root = temporaryProject();
+  const { root, layout } = temporaryProject();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   checkpoint(root);
   const result = processCompactionLifecycle({ root });
@@ -248,10 +249,10 @@ test("missing Host lifecycle hooks stay optional while artifact entry recovery r
 });
 
 test("before-compaction reuses an exact current checkpoint and keeps the raw token Host-local", (t) => {
-  const root = temporaryProject();
+  const { root, layout } = temporaryProject();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const canonical = checkpoint(root);
-  const stateBefore = fs.readFileSync(path.join(root, ".head", "sessions", "current.json"));
+  const stateBefore = fs.readFileSync(path.join(root, layout.directory, "sessions", "current.json"));
   const adapter = enqueue(new InMemoryCompactionLifecycleHostAdapter(), event(root, "before-compaction"));
   const prepared = processCompactionLifecycle({ root, hostAdapter: adapter });
   assert.equal(prepared.status, "compaction_lifecycle_prepared");
@@ -262,8 +263,8 @@ test("before-compaction reuses an exact current checkpoint and keeps the raw tok
   assert.equal(adapter.inspectHostState().retainedContinuationCount, 1);
   assert.match(formatCliResult("compaction-lifecycle-step", prepared), /User action: none/u);
   assert.doesNotMatch(formatCliResult("compaction-lifecycle-step", prepared), /could not verify/u);
-  assert.deepEqual(fs.readFileSync(path.join(root, ".head", "sessions", "current.json")), stateBefore);
-  const persisted = fs.readFileSync(path.join(root, ".head", "sessions", "compaction", "epochs", `${prepared.epoch.epochId}.json`), "utf8");
+  assert.deepEqual(fs.readFileSync(path.join(root, layout.directory, "sessions", "current.json")), stateBefore);
+  const persisted = fs.readFileSync(path.join(root, layout.directory, "sessions", "compaction", "epochs", `${prepared.epoch.epochId}.json`), "utf8");
   const persistedEpoch = JSON.parse(persisted);
   assert.equal(persistedEpoch.providerSessionIdentityPersisted, false);
   assert.equal(Object.hasOwn(persistedEpoch, "providerSessionId"), false);
@@ -271,7 +272,7 @@ test("before-compaction reuses an exact current checkpoint and keeps the raw tok
 });
 
 test("HEAD authors missing recovery direction internally instead of asking the user for lifecycle JSON", (t) => {
-  const root = temporaryProject();
+  const { root, layout } = temporaryProject();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const adapter = enqueue(new InMemoryCompactionLifecycleHostAdapter(), event(root, "before-compaction"));
   const needsHead = processCompactionLifecycle({ root, hostAdapter: adapter });
@@ -285,7 +286,7 @@ test("HEAD authors missing recovery direction internally instead of asking the u
 });
 
 test("successful after-compaction restores P2 first, consumes once, and duplicate delivery converges", (t) => {
-  const root = temporaryProject();
+  const { root, layout } = temporaryProject();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   checkpoint(root);
   const adapter = enqueue(new InMemoryCompactionLifecycleHostAdapter(), event(root, "before-compaction"));
@@ -308,7 +309,7 @@ test("successful after-compaction restores P2 first, consumes once, and duplicat
 });
 
 test("uncertain, failed, and newer-turn outcomes never replay or silently continue", (t) => {
-  const roots = [temporaryProject(), temporaryProject(), temporaryProject()];
+  const roots = [temporaryProject().root, temporaryProject().root, temporaryProject().root];
   t.after(() => roots.forEach((root) => fs.rmSync(root, { recursive: true, force: true })));
   for (const root of roots) checkpoint(root);
 
@@ -338,7 +339,7 @@ test("uncertain, failed, and newer-turn outcomes never replay or silently contin
 });
 
 test("Host token retention and loss fail safely while verified P2 remains usable", (t) => {
-  const roots = [temporaryProject(), temporaryProject()];
+  const roots = [temporaryProject().root, temporaryProject().root];
   t.after(() => roots.forEach((root) => fs.rmSync(root, { recursive: true, force: true })));
   for (const root of roots) checkpoint(root);
 
@@ -368,7 +369,7 @@ test("Host token retention and loss fail safely while verified P2 remains usable
 });
 
 test("conversation-entry and provider replacement restore artifacts and supersede stale transport only", (t) => {
-  const root = temporaryProject();
+  const { root, layout } = temporaryProject();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   checkpoint(root);
   const adapter = enqueue(new InMemoryCompactionLifecycleHostAdapter(), event(root, "before-compaction"));
@@ -382,8 +383,8 @@ test("conversation-entry and provider replacement restore artifacts and supersed
 });
 
 test("cross-project events and authority-amplifying Host descriptors fail closed", (t) => {
-  const root = temporaryProject();
-  const other = temporaryProject();
+  const { root, layout } = temporaryProject();
+  const { root: other } = temporaryProject();
   t.after(() => [root, other].forEach((item) => fs.rmSync(item, { recursive: true, force: true })));
   const cross = enqueue(new InMemoryCompactionLifecycleHostAdapter(), event(other, "conversation-entry"));
   assert.throws(() => processCompactionLifecycle({ root, hostAdapter: cross }), { code: "COMPACTION_LIFECYCLE_PROJECT_MISMATCH" });
@@ -400,11 +401,11 @@ test("cross-project events and authority-amplifying Host descriptors fail closed
 });
 
 test("MCP and CLI expose the same Core behavior without making recovery a user ritual", async (t) => {
-  const root = temporaryProject();
+  const { root, layout } = temporaryProject();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   checkpoint(root);
-  assert.equal(mcpTools.some((tool) => tool.name === "head_conversation_enter"), true);
-  assert.equal(mcpTools.some((tool) => tool.name === "head_compaction_lifecycle_step"), true);
+  assert.equal(mcpTools.some((tool) => tool.name === "lode_conversation_enter"), true);
+  assert.equal(mcpTools.some((tool) => tool.name === "lode_compaction_lifecycle_step"), true);
   assert.equal(runCommand(["help"]).commands.some((command) => command.includes("conversation-enter")), false);
   assert.equal(runCommand(["help-all"]).commands.some((command) => command.includes("conversation-enter")), true);
   assert.equal(runCommand(["conversation-enter", root]).status, "conversation_direction_restored");

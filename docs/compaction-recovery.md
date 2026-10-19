@@ -1,6 +1,6 @@
 # Compaction recovery
 
-Compaction is a lossy provider operation. Recovery authority remains the canonical Session/Run checkpoint; provider transcripts, compaction summaries, provider-session identities, and `HEADContinuitySnapshot` are orientation or derived views only.
+Compaction is a lossy provider operation. Recovery authority remains the canonical Session/Run checkpoint; provider transcripts, compaction summaries, provider-session identities, and `LodeContinuitySnapshot` are orientation or derived views only.
 
 Protocol `0.3.0` embeds the P2 recovery/lineage boundary from
 [`authority-plane-contract.md`](authority-plane-contract.md). A ResultPacket or
@@ -11,7 +11,7 @@ executable recovery test; it cannot turn a summary, graph, inbox, or provider
 session into recovery authority.
 
 Checkpoint authority metadata states that recovery fields come only from explicit
-HEAD/user direction plus verified P2 lineage. P3 evidence may be referenced for
+Lode/user direction plus verified P2 lineage. P3 evidence may be referenced for
 audit but is never a recovery-field source; general non-amplification tests reject
 P3, P4, and P5 attempts to become P2.
 
@@ -21,7 +21,7 @@ On project entry, after compaction and after provider replacement, the Skill
 reuses sufficient verified current context already supplied for the exact
 Project and selected logical Session, including current common direction and
 cancellations. If needed content is missing, it obtains it once through the
-normal read-only `head_conversation_enter` path. Relevant basis changes require
+normal read-only `lode_conversation_enter` path. Relevant basis changes require
 the affected current originals, not another setup/status/list/graph chain. Entry
 has three bounded outcomes:
 
@@ -43,7 +43,7 @@ counters, or continuation tokens. Explicit `session-restore` and `compact-*`
 commands remain advanced diagnostic surfaces.
 
 When recovery needs explanation, project readiness and conversation entry reuse
-the same `head_checkpoint_diagnose` contract. It reads `basis B0`, verifies
+the same `lode_checkpoint_diagnose` contract. It reads `basis B0`, verifies
 artifact restore, then reads `basis B1`; changed observations require a fresh
 read. It writes no lock or cache, triggers no model call, and does not claim an
 atomic filesystem snapshot or ABA detection. Missing pointer, missing pointed
@@ -52,8 +52,8 @@ ResultPacket loss remain separate. Its sync-availability field is mechanical and
 does not claim that checkpoint prose still reflects current user intent.
 
 At a natural durable-work or context-loss boundary outside an already open
-compaction epoch, provider HEAD may use `head_checkpoint_basis` followed by
-`head_checkpoint_sync`. The first call is a non-persisted read-only comparison;
+compaction epoch, provider Lode may use `lode_checkpoint_basis` followed by
+`lode_checkpoint_sync`. The first call is a non-persisted read-only comparison;
 the second revalidates the same exact Project/Session/Run and publication state
 under the existing mutation lock. Identical state and direction reuses the
 current checkpoint without a write. Stale direction conflicts, and an incomplete
@@ -107,14 +107,14 @@ not a guarantee of power-loss durability. A dead local owner can be reclaimed;
 an unknown or foreign-host owner is not guessed dead. A reused PID can require
 Host-side ownership inspection and operational lock cleanup; Core does not steal
 a possibly live lock based on age. This does not block read-only or ordinary work.
-Release removes its own lease, not the shared `.head/.operations` parent. That
+Release removes its own lease, not the shared `.lode/.operations` parent. That
 single empty directory is a stable P5 container, not a new artifact per operation.
 
 If the continuation consumption is durable but committing the terminal epoch
 fails, status reports an uncertain outcome without repairing anything. The next
 mutation closes that exact P5 epoch as aborted; it never replays the token or
 claims provider execution. Lifecycle retry restores current verified P2 direction,
-acknowledges the retained event, and requests a fresh logical HEAD without another
+acknowledges the retained event, and requests a fresh logical Lode without another
 user approval. A lost acknowledgement can be retried without new artifacts. A new
 prepare is then possible. Neither settlement nor status authors a checkpoint.
 
@@ -124,17 +124,17 @@ The Core does not invoke provider compaction. An injected Host adapter may expos
 one journaled `conversation-entry`, `provider-replaced`, `before-compaction`, or
 `after-compaction` event at a time. Its descriptor is fixed to P5, carries no
 recovery/instruction/promotion authority, and promises not to replay an uncertain
-mutation. Events contain the exact Project, HEAD Session, runtime, monotonic
+mutation. Events contain the exact Project, Lode Session, runtime, monotonic
 trusted real-user-turn sequence, and only for post-compaction an epoch plus the
 bounded outcome `succeeded`, `failed`, or `uncertain`. Provider session IDs,
 transcripts, summaries, prompts, credentials, PIDs, sockets, and UI identities
 are rejected from this contract.
 
-`head_compaction_lifecycle_step` processes the event without exposing those
+`lode_compaction_lifecycle_step` processes the event without exposing those
 operational fields to the user:
 
 1. Before compaction it reuses an exact current checkpoint when possible. If new
-   recovery direction is needed, provider HEAD authors it from the current user
+   recovery direction is needed, provider Lode authors it from the current user
    direction, existing approved decisions, and verified P2 lineage only; it may
    not invent an approval, and the user is not asked to fill a schema.
 2. The raw token is retained only by the Host adapter and never returned from the
@@ -145,7 +145,7 @@ operational fields to the user:
    is not verified, continued, or automatically replayed. Provider failure aborts
    only the epoch.
 5. If transport continuation is unavailable after successful P2 restore, the
-   epoch is closed and HEAD continues as a disclosed fresh logical HEAD from the
+   epoch is closed and Lode continues as a disclosed fresh logical Lode from the
    verified artifacts.
 
 With Codex or another runtime that lacks a native compaction hook, automatic
@@ -166,7 +166,7 @@ The mutating commands are advanced `help-all` operations; read-only
 create no epoch by default. An active Run should prepare at a natural idle
 boundary before provider compaction. Compaction never approves an open review,
 changes Product Canon or candidate bytes, or performs an external write. Explicit
-prepare may publish HEAD-authored P2 direction as a new checkpoint; provider
+prepare may publish Lode-authored P2 direction as a new checkpoint; provider
 compaction and continuation never author or replace that direction.
 
 General checkpoint sync never closes, aborts, or replaces an open epoch. Exact
@@ -174,8 +174,8 @@ checkpoint reuse is free of artifact and pointer writes; any changed direction
 waits for the existing compaction transition to reach its own terminal path.
 This keeps operational recovery from becoming a new global work gate.
 
-Host integration additionally uses `head_conversation_enter` and
-`head_compaction_lifecycle_step`; they are not a user setup ritual. The lifecycle
+Host integration additionally uses `lode_conversation_enter` and
+`lode_compaction_lifecycle_step`; they are not a user setup ritual. The lifecycle
 step is non-blocking-unavailable when no adapter is injected.
 
 Example prepare input:

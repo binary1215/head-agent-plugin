@@ -32,6 +32,51 @@ import {
   readWorkerAdmissionProjection,
 } from "../scripts/lib/worker-admission.mjs";
 
+import { initialOnboardingDocuments } from "../scripts/lib/onboarding-contract.mjs";
+import { emptyProductModelDocument, normalizeProductModelDocument } from "../scripts/lib/product-model.mjs";
+import { formatForVerifiedOwner } from "../scripts/lib/project-storage-format.mjs";
+
+// Synthetic legacy contract seed only; genuine old-producer interoperability is verified separately.
+function seedLegacyProject(root) {
+  root = fs.realpathSync(root);
+  const createdAt = "2026-09-22T00:00:00.000Z";
+  const project = { schemaVersion: 1, projectId: `head-${crypto.createHash("sha256").update(root).digest("hex").slice(0, 20)}`,
+    projectRoot: root, createdAt, runtimes: ["claude", "codex", "opencode"], integrations: {},
+    authority: { head: "ordinary investigation, strategy, integration, and completion judgment",
+      user: "material product, policy, architecture, cost, workflow, and consequential external actions" } };
+  const sessionState = { schemaVersion: 1, sessionId: `session-${crypto.randomUUID()}`, mode: "session",
+    currentWholePlanId: null, activeRunId: null, activeExecutionContractId: null, lastResultPacketId: null,
+    pendingReview: null, lastReviewDecisionId: null, requiredPlanAction: null, latestCheckpoint: null, updatedAt: createdAt };
+  const product = emptyProductModelDocument();
+  const onboarding = initialOnboardingDocuments({ project, sessionState,
+    productModelId: normalizeProductModelDocument(product).productModelId, updatedAt: createdAt });
+  const records = new Map([
+    [".head/project.json", project], [".head/sessions/current.json", sessionState],
+    [".head/context/knowledge.json", { schemaVersion: 1, evidence: [], claims: [], decisions: [], unknowns: [] }],
+    [".head/context/product-model.json", product], [".head/onboarding/current.json", onboarding.state],
+    [`.head/sessions/records/${onboarding.sessionRecord.sessionId}.json`, onboarding.sessionRecord],
+    [`.head/onboarding/storage-selections/${onboarding.storageSelection.storageSelectionId}.json`, onboarding.storageSelection],
+    [".head/roles/coder.md", "# Coder\n\nImplement only the bounded task authorized by HEAD; return evidence without changing direction or authority.\n"],
+  ]);
+  for (const [relative, value] of records) {
+    const file = path.join(root, relative); fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, typeof value === "string" ? value : `${JSON.stringify(value, null, 2)}\n`, { flag: "wx" });
+  }
+  fs.mkdirSync(path.join(root, ".head/instructions"), { recursive: true });
+  fs.writeFileSync(path.join(root, ".head/instructions/project.md"), "# Project-specific HEAD context\n\nRecord project identity, canonical sources, repository boundaries, and fixed constraints here.\n", { flag: "wx" });
+  const immutable = [...records.keys()].filter(relative => relative === ".head/project.json"
+    || relative === ".head/roles/coder.md"
+    || relative.startsWith(".head/sessions/records/") || relative.startsWith(".head/onboarding/storage-selections/"));
+  const manifest = { schemaVersion: 1, generatedAt: createdAt, pluginRoot,
+    packageVersion: JSON.parse(fs.readFileSync(path.join(pluginRoot, "package.json"))).version,
+    managed: immutable.map(relative => ({ path: relative, sha256: crypto.createHash("sha256").update(fs.readFileSync(path.join(root, relative))).digest("hex") })) };
+  fs.mkdirSync(path.join(root, ".head/generated"), { recursive: true });
+  fs.writeFileSync(path.join(root, ".head/generated/manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, { flag: "wx" });
+  const inspected = inspectProject(root); assert.equal(inspected.status, "ready");
+  assert.equal(inspected.storage.directory, ".head");
+  return { project };
+}
+
 const pluginRoot = path.resolve(import.meta.dirname, "..");
 const contenderFile = path.join(import.meta.dirname, "fixtures", "worker-admission-contender.mjs");
 const hash = (value) => crypto.createHash("sha256").update(value).digest("hex");
@@ -96,7 +141,7 @@ function waitChild(child) {
   });
 }
 
-async function fixture(t, scopeKind = "run") {
+async function fixture(t, scopeKind = "run", { legacy = false } = {}) {
   const container = fs.mkdtempSync(path.join(os.tmpdir(), "head-worker-admission-"));
   const make = (name) => {
     const directory = path.join(container, name);
@@ -120,7 +165,8 @@ async function fixture(t, scopeKind = "run") {
     fs.rmSync(container, { recursive: true, force: true });
   });
   fs.writeFileSync(path.join(root, "example.mjs"), "export const answer = 42;\n");
-  const initialized = initializeProject({ root, pluginRoot, runtimes: ["claude", "codex", "opencode"] });
+  const initialized = legacy ? seedLegacyProject(root) : initializeProject({ root, pluginRoot, runtimes: ["claude", "codex", "opencode"] });
+  const storage = inspectProject(root).storage, directory = formatForVerifiedOwner(storage).directory;
   if (scopeKind === "run") {
   const capsule = compileContext({ root, task: "Verify provider-neutral bounded worker admission", budget: 32_768, persist: true }).capsule;
   const plan = createWholePlanSnapshot({ root, objective: "Verify worker admission", plan: ["reserve", "consume", "release"], persist: true }).artifact;
@@ -149,6 +195,7 @@ async function fixture(t, scopeKind = "run") {
   const inspected = inspectProject(root);
   const projectBinding = buildRuntimeProjectBinding({
     projectId: initialized.project.projectId,
+    storage,
     headSessionId: inspected.state.sessionId,
     projectRoot: root,
     projectStatus: "ready",
@@ -186,18 +233,18 @@ async function fixture(t, scopeKind = "run") {
     child.once("close", () => ownedChildren.delete(child));
     return child;
   };
-  return { container, root, runtimeOperationalRoot, admissionOperationalRoot, hostExpectationRoot, protocolEvidence, projectBinding, authorization, dispatch, provision, open, spawnOwned };
+  return { container, root, storage, directory, runtimeOperationalRoot, admissionOperationalRoot, hostExpectationRoot, protocolEvidence, projectBinding, authorization, dispatch, provision, open, spawnOwned };
 }
 
 test("Session worker keeps one-shot evidence independent from Run authority and rejects widened requests before dispatch", async (t) => {
   const f = await fixture(t, "session");
   const auth = f.authorization();
-  const protectedFiles = ['.head/project.json', '.head/sessions/current.json', '.head/context/product-model.json'];
+  const protectedFiles = [`${f.directory}/project.json`, `${f.directory}/sessions/current.json`, `${f.directory}/context/product-model.json`];
   const before = protectedFiles.map(file => fs.readFileSync(path.join(f.root, file)));
   for (const sessionRequest of ['', 'Do additional unapproved work.']) {
     await assert.rejects(() => executeBoundedWorkerDispatch({ root: f.root, authorizationId: auth.authorizationId, role: 'coder', execution: { sessionRequest } }), { code: 'RUNTIME_INVOCATION_INPUT_DRIFT' });
-    assert.equal(fs.existsSync(path.join(f.root, '.head/runtime/worker-dispatches', `${auth.authorizationId}.json`)), false);
-    assert.equal(inspectRuntimeExecutionLease({ projectRoot: f.root, projectId: auth.projectId, authorizationId: auth.authorizationId }).singleUseConsumed, false);
+    assert.equal(fs.existsSync(path.join(f.root, f.directory, 'runtime/worker-dispatches', `${auth.authorizationId}.json`)), false);
+    assert.equal(inspectRuntimeExecutionLease({ projectRoot: f.root, projectId: auth.projectId, authorizationId: auth.authorizationId, storage: f.storage }).singleUseConsumed, false);
   }
   const dispatch = f.dispatch(auth);
   for (const field of ['runId', 'wholePlanId', 'executionContractId', 'contextCapsuleId']) assert.equal(dispatch[field], null);
@@ -213,7 +260,7 @@ test("Session worker keeps one-shot evidence independent from Run authority and 
   const leased = await withRuntimeExecutionLease({ projectRoot: f.root, authorization: auth, ownerFenceDigest }, async ({ consumption }) => ({
     receipt: buildRuntimeInvocationLifecycleReceipt({ authorization: auth, events: [], consumption, status: 'completed', exitCode: 0, signal: '', stdoutBytes: 0, stderrBytes: 0, stdoutDigest: hash(''), stderrDigest: hash(''), callerFenceDigest: ownerFenceDigest, childFenceDigest: hash('session-test-child'), childStarted: false, childExitObserved: false, terminationRequested: false, projectFenceValidated: true, inputDigestObserved: auth.executionInput.digest, noDescendantFixture: true, descendantTreeOwnershipValidated: false, providerMode: 'codex-protocol-fixture' }),
   }), { preConsumeGate: reservation.preConsumeGate });
-  assert.equal(inspectRuntimeExecutionLease({ projectRoot: f.root, projectId: auth.projectId, authorizationId: auth.authorizationId }).singleUseConsumed, true);
+  assert.equal(inspectRuntimeExecutionLease({ projectRoot: f.root, projectId: auth.projectId, authorizationId: auth.authorizationId, storage: f.storage }).singleUseConsumed, true);
   await assert.rejects(() => reservation.finalize({ outcomeCode: 'completed' }), { code: 'WORKER_ADMISSION_RELEASE_EVIDENCE_MISSING' });
   const draft = buildRuntimeResultPacketDraft({ authorization: auth, receipt: leased.result.receipt, leaseRelease: leased.release });
   persistRuntimeInvocationRecord({ projectRoot: f.root, authorization: auth, events: [], receipt: leased.result.receipt, draft });
@@ -228,13 +275,13 @@ test("Session worker keeps one-shot evidence independent from Run authority and 
 });
 
 test("legacy immutable Run dispatch replays without rewriting its protocol or ownership", async (t) => {
-  const f = await fixture(t);
+  const f = await fixture(t, "run", { legacy: true });
   const auth = f.authorization();
   const dispatch = f.dispatch(auth);
   const { dispatchId, dispatchHash, ...legacy } = dispatch;
   legacy.protocol.version = '0.1.0';
   const legacyHash = canonicalHash(legacy);
-  const file = path.join(f.root, '.head/runtime/worker-dispatches', `${auth.authorizationId}.json`);
+  const file = path.join(f.root, f.directory, 'runtime/worker-dispatches', `${auth.authorizationId}.json`);
   fs.writeFileSync(file, JSON.stringify({ ...legacy, dispatchId: `bounded-worker-dispatch-${legacyHash.slice(0, 24)}`, dispatchHash: legacyHash }));
   const bytes = fs.readFileSync(file);
   assert.equal(f.dispatch(auth).protocol.version, '0.1.0');
@@ -268,9 +315,9 @@ test("worker admission provisions exact Host identity and refuses partial or rep
 
 test("worker admission cancellation and branded callback preserve zero or exactly-once consumption", async (t) => {
   const f = await fixture(t);
-  const sessionFile = path.join(f.root, ".head", "sessions", "current.json");
-  const canonFile = path.join(f.root, ".head", "context", "product-model.json");
-  const reviewDirectory = path.join(f.root, ".head", "lineage", "review-decisions");
+  const sessionFile = path.join(f.root, f.directory, "sessions", "current.json");
+  const canonFile = path.join(f.root, f.directory, "context", "product-model.json");
+  const reviewDirectory = path.join(f.root, f.directory, "lineage", "review-decisions");
   const authorityBefore = {
     session: fs.readFileSync(sessionFile),
     canon: fs.readFileSync(canonFile),
@@ -284,7 +331,7 @@ test("worker admission cancellation and branded callback preserve zero or exactl
   const reservation = await enqueueWorkerAdmission({ host, root: f.root, authorizationId: auth.authorizationId, dispatchId: dispatch.dispatchId, signal: controller.signal });
   controller.abort();
   await assert.rejects(() => withRuntimeExecutionLease({ projectRoot: f.root, authorization: auth, ownerFenceDigest: hash("cancel-owner") }, async () => ({}), { preConsumeGate: reservation.preConsumeGate }), { code: "WORKER_ADMISSION_CANCELLED" });
-  const cancelledLease = inspectRuntimeExecutionLease({ projectRoot: f.root, projectId: auth.projectId, authorizationId: auth.authorizationId });
+  const cancelledLease = inspectRuntimeExecutionLease({ projectRoot: f.root, projectId: auth.projectId, authorizationId: auth.authorizationId, storage: f.storage });
   assert.equal(cancelledLease.status, "available");
   assert.equal(cancelledLease.singleUseConsumed, false);
   assert.equal((await reservation.finalize({ outcomeCode: "execution-threw" })).status, "existing-terminal");
@@ -413,7 +460,7 @@ test("all provider adapters honor final admission cancellation before spawn and 
         spawnImplementation: () => { spawnCalls += 1; throw new Error("must not spawn"); },
       },
     }), { code: "WORKER_ADMISSION_CANCELLED" });
-    const lease = inspectRuntimeExecutionLease({ projectRoot: f.root, projectId: auth.projectId, authorizationId: auth.authorizationId });
+    const lease = inspectRuntimeExecutionLease({ projectRoot: f.root, projectId: auth.projectId, authorizationId: auth.authorizationId, storage: f.storage });
     assert.equal(lease.singleUseConsumed, false);
   }
   assert.equal(spawnCalls, 0);
@@ -443,7 +490,7 @@ test("all provider adapters honor final admission cancellation before spawn and 
       spawnImplementation: () => { spawnCalls += 1; throw new Error("must not spawn"); },
     },
   }), { code: "HOST_TARGET_RESOLUTION_ABORTED" });
-  const targetAbortLease = inspectRuntimeExecutionLease({ projectRoot: f.root, projectId: targetAbortAuthorization.projectId, authorizationId: targetAbortAuthorization.authorizationId });
+  const targetAbortLease = inspectRuntimeExecutionLease({ projectRoot: f.root, projectId: targetAbortAuthorization.projectId, authorizationId: targetAbortAuthorization.authorizationId, storage: f.storage });
   assert.equal(targetAbortLease.singleUseConsumed, false);
   assert.equal(readWorkerAdmissionProjection({ host: targetAbortHost, root: f.root, authorizationId: targetAbortAuthorization.authorizationId }).state, "released");
   assert.equal(spawnCalls, 0);
@@ -475,6 +522,7 @@ test("all provider adapters honor final admission cancellation before spawn and 
   }), { code: "WORKER_ADMISSION_CANCELLED" });
   const signalAbortLease = inspectRuntimeExecutionLease({
     projectRoot: f.root,
+    storage: f.storage,
     projectId: signalAbortAuthorization.projectId,
     authorizationId: signalAbortAuthorization.authorizationId,
   });
@@ -507,7 +555,7 @@ test("consumption followed by admission marker failure stays consumed and makes 
     fs.linkSync = originalLinkSync;
   }
   assert.equal(sabotaged, true);
-  const lease = inspectRuntimeExecutionLease({ projectRoot: f.root, projectId: auth.projectId, authorizationId: auth.authorizationId });
+  const lease = inspectRuntimeExecutionLease({ projectRoot: f.root, projectId: auth.projectId, authorizationId: auth.authorizationId, storage: f.storage });
   assert.equal(lease.status, "consumed-released");
   assert.equal(lease.release.operationStatus, "threw");
   const projection = readWorkerAdmissionProjection({ host, root: f.root, authorizationId: auth.authorizationId });
@@ -600,7 +648,7 @@ test("reserved restart requires definitive lease evidence and validator-window c
   releaseValidation();
   await assert.rejects(() => execution, { code: "WORKER_ADMISSION_CANCELLED" });
   assert.equal(operationCalls, 0);
-  const cancelLease = inspectRuntimeExecutionLease({ projectRoot: f.root, projectId: cancelAuth.projectId, authorizationId: cancelAuth.authorizationId });
+  const cancelLease = inspectRuntimeExecutionLease({ projectRoot: f.root, projectId: cancelAuth.projectId, authorizationId: cancelAuth.authorizationId, storage: f.storage });
   assert.equal(cancelLease.status, "available");
   assert.equal(cancelLease.singleUseConsumed, false);
   assert.equal(readWorkerAdmissionProjection({ host: cancelHost, root: f.root, authorizationId: cancelAuth.authorizationId }).state, "cancelled");
@@ -707,7 +755,7 @@ test("detached validation, queue capacity, expiry, and capacity-key routing stay
     dispatchId: detachedDispatch.dispatchId,
     mode: "detached",
   }), { code: "WORKER_ADMISSION_CANCELLED" });
-  assert.equal(inspectRuntimeExecutionLease({ projectRoot: f.root, projectId: detachedAuth.projectId, authorizationId: detachedAuth.authorizationId }).singleUseConsumed, false);
+  assert.equal(inspectRuntimeExecutionLease({ projectRoot: f.root, projectId: detachedAuth.projectId, authorizationId: detachedAuth.authorizationId, storage: f.storage }).singleUseConsumed, false);
   assert.equal(readWorkerAdmissionProjection({ host: detachedHost, root: f.root, authorizationId: detachedAuth.authorizationId }).state, "cancelled");
 
   const boundedDomain = f.provision("queue-bounds", { globalLimit: 1, perKeyLimit: 1, default: "hold-for-host-confirmation", maxQueued: 1, maxWaitMs: 1_000 });
@@ -733,7 +781,7 @@ test("detached validation, queue capacity, expiry, and capacity-key routing stay
   await assert.rejects(() => enqueueWorkerAdmission({ host: boundedHost, root: f.root, authorizationId: overflowAuth.authorizationId, dispatchId: overflowDispatch.dispatchId }), { code: "WORKER_ADMISSION_QUEUE_CAPACITY_EXCEEDED" });
   await assert.rejects(() => waiting, { code: "WORKER_ADMISSION_EXPIRED" });
   assert.equal(readWorkerAdmissionProjection({ host: boundedHost, root: f.root, authorizationId: waitingAuth.authorizationId }).state, "expired");
-  assert.equal(inspectRuntimeExecutionLease({ projectRoot: f.root, projectId: waitingAuth.projectId, authorizationId: waitingAuth.authorizationId }).singleUseConsumed, false);
+  assert.equal(inspectRuntimeExecutionLease({ projectRoot: f.root, projectId: waitingAuth.projectId, authorizationId: waitingAuth.authorizationId, storage: f.storage }).singleUseConsumed, false);
   await holder.finalize({ outcomeCode: "test-release" });
 
   const eligibleDomain = f.provision("oldest-eligible", { globalLimit: 2, perKeyLimit: 1, default: "hold-for-host-confirmation", maxQueued: 4, maxWaitMs: 5_000 });
@@ -818,6 +866,7 @@ test("final pre-consume guard rejects a Run closed during Host validation", asyn
   await assert.rejects(() => execution, { code: "WORKER_ADMISSION_LINEAGE_CONFLICT" });
   const lease = inspectRuntimeExecutionLease({
     projectRoot: f.root,
+    storage: f.storage,
     projectId: authorization.projectId,
     authorizationId: authorization.authorizationId,
   });
@@ -908,7 +957,7 @@ test("a throwing detached validator releases its exact queue generation", async 
 
 test("intermediate links cannot redirect Host admission state into the project", async (t) => {
   const f = await fixture(t);
-  const projectTarget = path.join(f.root, ".head", "host-state-fixture");
+  const projectTarget = path.join(f.root, f.directory, "host-state-fixture");
   fs.mkdirSync(projectTarget);
   const redirectedBase = path.join(f.admissionOperationalRoot, "worker-admission");
   fs.symlinkSync(projectTarget, redirectedBase, process.platform === "win32" ? "junction" : "dir");
@@ -1030,7 +1079,7 @@ test("storage redirected during final Host validation is rejected before consump
   }, async () => { operationCalls += 1; }, { preConsumeGate: reservation.preConsumeGate });
   await validationEntered;
   const eventRoot = path.join(f.admissionOperationalRoot, "worker-admission", "domains", created.admissionDomainId, "events");
-  const redirected = path.join(f.root, ".head", "redirected-admission-events");
+  const redirected = path.join(f.root, f.directory, "redirected-admission-events");
   fs.renameSync(eventRoot, redirected);
   fs.symlinkSync(redirected, eventRoot, process.platform === "win32" ? "junction" : "dir");
   releaseValidation();
@@ -1046,6 +1095,7 @@ test("storage redirected during final Host validation is rejected before consump
   assert.equal(operationCalls, 0);
   assert.equal(inspectRuntimeExecutionLease({
     projectRoot: f.root,
+    storage: f.storage,
     projectId: authorization.projectId,
     authorizationId: authorization.authorizationId,
   }).singleUseConsumed, false);
@@ -1081,7 +1131,7 @@ test("unsafe domain replacement cannot redirect lock cleanup into the project", 
   }, async () => { operationCalls += 1; }, { preConsumeGate: reservation.preConsumeGate });
   await validationEntered;
   const domainRoot = path.join(f.admissionOperationalRoot, "worker-admission", "domains", created.admissionDomainId);
-  const redirected = path.join(f.root, ".head", "redirected-admission-domain");
+  const redirected = path.join(f.root, f.directory, "redirected-admission-domain");
   fs.renameSync(domainRoot, redirected);
   fs.symlinkSync(redirected, domainRoot, process.platform === "win32" ? "junction" : "dir");
   releaseValidation();
@@ -1093,6 +1143,7 @@ test("unsafe domain replacement cannot redirect lock cleanup into the project", 
   assert.equal(unavailable.availability, "unavailable");
   assert.equal(inspectRuntimeExecutionLease({
     projectRoot: f.root,
+    storage: f.storage,
     projectId: authorization.projectId,
     authorizationId: authorization.authorizationId,
   }).singleUseConsumed, false);
@@ -1166,6 +1217,7 @@ test("a displaced lock owner cannot delete a later live lock at the same safe pa
   assert.equal(operationCalls, 0);
   assert.equal(inspectRuntimeExecutionLease({
     projectRoot: f.root,
+    storage: f.storage,
     projectId: authorizationA.projectId,
     authorizationId: authorizationA.authorizationId,
   }).singleUseConsumed, false);
@@ -1303,6 +1355,7 @@ test("queued Host validation cannot reserve after the original deadline", async 
   assert.equal(readWorkerAdmissionProjection(args).state, "expired");
   assert.equal(inspectRuntimeExecutionLease({
     projectRoot: f.root,
+    storage: f.storage,
     projectId: authorization.projectId,
     authorizationId: authorization.authorizationId,
   }).singleUseConsumed, false);

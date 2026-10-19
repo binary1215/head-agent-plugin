@@ -1,3 +1,4 @@
+import { relativeProjectArtifact } from "../scripts/lib/project-storage-format.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -13,22 +14,23 @@ import { compileContext } from "../scripts/lib/context-compiler.mjs";
 import { sourceObservationDescriptor, verifySourceObservation } from "../scripts/lib/source-observation.mjs";
 import { artifactAuthorityBoundary, verifyArtifactAuthorityBoundary, assertNoAuthorityAmplification } from "../scripts/lib/authority-plane-contract.mjs";
 import { stageDistributionRelease } from "../scripts/lib/distribution-lifecycle.mjs";
-import { OBSERVATION_RECORD_DIRECTORY, loadObservationArtifacts } from "../scripts/lib/observation-store.mjs";
+import { loadObservationArtifacts } from "../scripts/lib/observation-store.mjs";
 import { inspectProject } from "../scripts/lib/head-core.mjs";
 
 const pluginRoot = path.resolve(import.meta.dirname, "..");
 function project(t, source = 'def target():\n    return 1\n\ndef caller():\n    "한글😀"; target()\n') {
   const root = fs.mkdtempSync(path.join(process.env.HEAD_AGENT_TEST_TMP || os.tmpdir(), "source-context-"));
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const storage = inspectProject(root).storage;
   fs.writeFileSync(path.join(root, "module.py"), source);
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  return root;
+  return { root, storage };
 }
 const need = { kind: "outgoing-calls", path: "module.py", symbol: "caller" };
 const onProcess = (event) => process.stderr.write(`${JSON.stringify({ sourceProcess: event })}\n`);
 
 test("actual isolated Python collection reaches helper and Context, reuses bytes and revalidates edits", async (t) => {
-  const root = project(t);
+  const { root, storage } = project(t);
   const args = { root, task: "Inspect caller's direct dependencies", needs: [need], retain: true, onProcess };
   const first = await prepareSourceContext(args);
   assert.equal(first.status, "observed", JSON.stringify(first.results));
@@ -55,7 +57,7 @@ test("actual isolated Python collection reaches helper and Context, reuses bytes
 });
 
 test("CRLF, UTF8 bytes and non-BMP before a call preserve exact UTF16 occurrence", async (t) => {
-  const root = project(t, 'def target():\r\n    pass\r\ndef caller():\r\n    "한글😀"; target()\r\n');
+  const { root, storage } = project(t, 'def target():\r\n    pass\r\ndef caller():\r\n    "한글😀"; target()\r\n');
   const result = await prepareSourceContext({ root, task: "Inspect", needs: [need], onProcess });
   assert.equal(result.status, "observed", JSON.stringify(result.results));
   const details = JSON.parse(result.context.capsule.observationEvidence[0].payload.details);
@@ -63,7 +65,7 @@ test("CRLF, UTF8 bytes and non-BMP before a call preserve exact UTF16 occurrence
 });
 
 test("dynamic and shadowed names stay unresolved, independent source need continues", async (t) => {
-  const root = project(t, 'def target():\n    pass\ndef caller(target):\n    target()\n    self.target()\n');
+  const { root, storage } = project(t, 'def target():\n    pass\ndef caller(target):\n    target()\n    self.target()\n');
   const result = await prepareSourceContext({ root, task: "Inspect", needs: [need, { kind: "source", path: "module.py" }], onProcess });
   assert.equal(result.status, "partial");
   assert.equal(result.results[0].status, "unavailable");
@@ -74,7 +76,7 @@ test("dynamic and shadowed names stay unresolved, independent source need contin
 });
 
 test("CLI and typed MCP need no JSON/hash input and task-only keeps selection with HEAD", async (t) => {
-  const root = project(t);
+  const { root, storage } = project(t);
   const result = await runCommand(["source-context", root, "--task", "Inspect", "--source", "module.py", "--symbol", "caller"], { onProcess });
   assert.equal(result.status, "observed");
   const mcp = await dispatch({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "head_source_context", arguments: { project_root: root, task: "Inspect", needs: [need] } } }, { onProcess });
@@ -85,7 +87,7 @@ test("CLI and typed MCP need no JSON/hash input and task-only keeps selection wi
 });
 
 test("isolated interpreter ignores project ast/sitecustomize and honors cancellation and deadlines", async (t) => {
-  const root = project(t);
+  const { root, storage } = project(t);
   for (const name of ["ast.py", "sitecustomize.py"]) fs.writeFileSync(path.join(root, name), 'raise RuntimeError("PROJECT CODE EXECUTED")\n');
   const oldPath = process.env.PYTHONPATH;
   process.env.PYTHONPATH = root;
@@ -108,7 +110,7 @@ test("conditional, decorated, nested, alias and duplicate bindings never become 
     'def caller():\n    target()\n    def target(): pass\n',
   ];
   for (const source of variants) {
-    const root = project(t, source);
+    const { root, storage } = project(t, source);
     const selection = { ...need, symbol: source.includes('class A:') ? 'A.caller' : 'caller' };
     const result = await prepareSourceContext({ root, task: "Inspect", needs: [selection], onProcess });
     assert.equal(result.results[0].status, "unavailable", JSON.stringify(result.results));
@@ -117,7 +119,7 @@ test("conditional, decorated, nested, alias and duplicate bindings never become 
 });
 
 test("source drift during actual collection excludes that need, not independent source", async (t) => {
-  const root = project(t);
+  const { root, storage } = project(t);
   fs.writeFileSync(path.join(root, "independent.txt"), "Independent evidence\n");
   let closed = 0;
   const result = await prepareSourceContext({ root, task: "Inspect", needs: [need, { kind: "source", path: "independent.txt" }],
@@ -128,7 +130,7 @@ test("source drift during actual collection excludes that need, not independent 
 });
 
 test("BOM, malformed UTF8, unsupported language and byte limit are scoped unavailable", async (t) => {
-  const root = project(t);
+  const { root, storage } = project(t);
   fs.writeFileSync(path.join(root, "bom.py"), Buffer.concat([Buffer.from([239, 187, 191]), Buffer.from("def caller(): pass\n")]));
   fs.writeFileSync(path.join(root, "invalid.py"), Buffer.from([255, 254, 0]));
   fs.writeFileSync(path.join(root, "large.py"), Buffer.alloc(1_048_577, 32));
@@ -138,7 +140,7 @@ test("BOM, malformed UTF8, unsupported language and byte limit are scoped unavai
 });
 
 test("retained failure preserves raw bytes and coalesces identical retry without authority writes", async (t) => {
-  const root = project(t, "def caller(value):\n    value()\n");
+  const { root, storage } = project(t, "def caller(value):\n    value()\n");
   const args = { root, task: "Inspect", needs: [need], retain: true, onProcess };
   const first = await prepareSourceContext(args);
   assert.equal(first.results[0].status, "unavailable");
@@ -153,9 +155,9 @@ test("retained failure preserves raw bytes and coalesces identical retry without
 });
 
 test("retained source tamper and ephemeral record substitution fail closed at Context", async (t) => {
-  const root = project(t);
+  const { root, storage } = project(t);
   const result = await prepareSourceContext({ root, task: "Inspect", needs: [need], retain: true, onProcess });
-  const file = path.join(root, ".head/observations/source-bundles", `${result.results[0].bundleKey}.json`);
+  const file = path.join(root, relativeProjectArtifact(storage, "observations", "source-bundles"), `${result.results[0].bundleKey}.json`);
   const bundle = JSON.parse(fs.readFileSync(file, "utf8"));
   bundle.observation.payload.details = "forged relationship";
   assert.throws(() => verifySourceObservation(root, bundle.evidence.projectId, bundle));
@@ -175,7 +177,7 @@ test("active cancellation settles only after owned worker close", async () => {
 });
 
 test("unconfigured Python does not block ordinary exact-source Context", async (t) => {
-  const root = project(t);
+  const { root, storage } = project(t);
   const prior = process.env.HEAD_PYTHON;
   process.env.HEAD_PYTHON = path.join(root, "missing-python");
   try {
@@ -219,7 +221,7 @@ async function stdioSource(root, mode, options = {}) {
 }
 
 test("actual stdio MCP collects, handles request cancellation and connection loss", async (t) => {
-  const root = project(t);
+  const { root, storage } = project(t);
   const normal = await stdioSource(root, "normal");
   assert.equal(normal.result.structuredContent.status, "observed");
   for (const mode of ["cancel", "disconnect"]) {
@@ -230,10 +232,10 @@ test("actual stdio MCP collects, handles request cancellation and connection los
 
 test("damaged, missing and malformed retained candidates preserve originals and recollect without losing independent needs", async (t) => {
   for (const corruption of ["truncated", "missing", "wrong-fields"]) {
-    const root = project(t);
+    const { root, storage } = project(t);
     fs.writeFileSync(path.join(root, "independent.txt"), "Independent current source\n");
     const first = await prepareSourceContext({ root, task: "Inspect", needs: [need], retain: true, onProcess });
-    const file = path.join(root, ".head/observations/source-bundles", `${first.results[0].bundleKey}.json`);
+    const file = path.join(root, relativeProjectArtifact(storage, "observations", "source-bundles"), `${first.results[0].bundleKey}.json`);
     if (corruption === "missing") fs.unlinkSync(file);
     else fs.writeFileSync(file, corruption === "truncated" ? '{"truncated":' : JSON.stringify({ evidence: { sources: false }, descriptor: {}, observation: {} }));
     const damaged = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null;
@@ -253,7 +255,7 @@ test("damaged, missing and malformed retained candidates preserve originals and 
 test("Unicode separators and form feed in a literal retain physical Python line coordinates", async (t) => {
   for (const separator of ["\u2028", "\u2029", "\f"]) {
     const prefix = `    "한글${separator}😀"; `;
-    const root = project(t, `def target(): pass\ndef caller():\n${prefix}target()\n`);
+    const { root, storage } = project(t, `def target(): pass\ndef caller():\n${prefix}target()\n`);
     const result = await prepareSourceContext({ root, task: "Inspect", needs: [need], onProcess });
     assert.equal(result.status, "observed", JSON.stringify(result.results));
     const details = JSON.parse(result.context.capsule.observationEvidence[0].payload.details);
@@ -265,7 +267,7 @@ test("modern Python mapping-rest binding cannot resolve to a same-name module fu
   const identity = await runPythonSourceWorker({ operation: "identity" }, { onProcess });
   const [major, minor] = identity.result.profile.python.split(/[. ]/).map(Number);
   if (major < 3 || major === 3 && minor < 10) { t.skip("Requires a real Python 3.10+ parser; separately execute with HEAD_PYTHON on a modern runtime."); return; }
-  const root = project(t, "def target(): pass\ndef caller(value):\n    match value:\n        case {**target}:\n            target()\n");
+  const { root, storage } = project(t, "def target(): pass\ndef caller(value):\n    match value:\n        case {**target}:\n            target()\n");
   const result = await prepareSourceContext({ root, task: "Inspect", needs: [need], onProcess });
   assert.equal(result.results[0].status, "unavailable");
   assert.notEqual(result.results[0].reason, "parse-unsupported");
@@ -282,28 +284,28 @@ test("new artifact planes preserve P2 Capsule type and legacy boundary without a
 });
 
 test("packaged Python is subject to existing development-context exclusion", (t) => {
-  const parent = project(t);
+  const { root: parent } = project(t);
   const candidate = path.join(parent, "plugin");
   fs.mkdirSync(path.join(candidate, ".codex-plugin"), { recursive: true });
   fs.mkdirSync(path.join(candidate, "scripts"));
   fs.copyFileSync(path.join(pluginRoot, ".codex-plugin/plugin.json"), path.join(candidate, ".codex-plugin/plugin.json"));
   fs.copyFileSync(path.join(pluginRoot, "package.json"), path.join(candidate, "package.json"));
   fs.copyFileSync(path.join(pluginRoot, "LICENSE"), path.join(candidate, "LICENSE"));
-  fs.writeFileSync(path.join(candidate, "scripts/head.mjs"), "export const example = true;\n");
+  fs.writeFileSync(path.join(candidate, "scripts/lode.mjs"), "export const example = true;\n");
   fs.writeFileSync(path.join(candidate, "scripts/worker.py"), `# ${["ultimate", "goal"].join("_")}\n`);
   assert.throws(() => stageDistributionRelease({ sourceRoot: candidate, destinationRoot: path.join(parent, "release") }), { code: "HEAD_DISTRIBUTION_DEVELOPMENT_CONTEXT_LEAK" });
 });
 
 test("common by-source-key null, shape and reference corruption cannot gate independent fresh source needs", async (t) => {
   for (const damaged of ["null", "{}", "[]", '{"descriptorId":"missing-descriptor"}', '{"truncated":']) {
-    const root = project(t);
+    const { root, storage } = project(t);
     for (const file of ["seed.txt", "independent.txt", "other.txt"]) fs.writeFileSync(path.join(root, file), "Current source evidence\n");
     await prepareSourceContext({ root, task: "Seed", needs: [{ kind: "source", path: "seed.txt" }], retain: true });
-    const directory = path.join(root, OBSERVATION_RECORD_DIRECTORY);
+    const directory = path.join(root, relativeProjectArtifact(storage, "observations", "records", "by-source-key"));
     const file = path.join(directory, fs.readdirSync(directory).find(name => name.endsWith(".json")));
     fs.writeFileSync(file, damaged);
     const inspected = inspectProject(root);
-    assert.throws(() => loadObservationArtifacts({ projectRoot: root, projectId: inspected.project.projectId }), error => ["INVALID_OBSERVATION_ARTIFACT", "UNKNOWN_OBSERVATION_DESCRIPTOR"].includes(error.code));
+    assert.throws(() => loadObservationArtifacts({ projectRoot: root, projectId: inspected.project.projectId, storage }), error => ["INVALID_OBSERVATION_ARTIFACT", "UNKNOWN_OBSERVATION_DESCRIPTOR"].includes(error.code));
     const result = await prepareSourceContext({ root, task: "Inspect independent sources", needs: [{ kind: "source", path: "independent.txt" }, { kind: "source", path: "other.txt" }], retain: true });
     assert.equal(result.status, "observed", JSON.stringify(result));
     assert.ok(result.results.every(item => item.includedInContext));

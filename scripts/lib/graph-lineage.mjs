@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
-import { inspectProject } from "./head-core.mjs";
+import { inspectProject } from "./lode-core.mjs";
+import { formatForVerifiedOwner } from "./project-storage-format.mjs";
 import { readLineageArtifact } from "./execution-lineage.mjs";
 import { queryTemporalProvenanceGraph } from "./temporal-provenance.mjs";
 import { createWorldModelStoreAdapter } from "./world-model-store.mjs";
@@ -76,7 +77,7 @@ export function inspectGraphLineage({ root = ".", cursor = "", limit = 25, store
   const segmentHash = digest(canonicalJson(segmentPayload));
   return {
     kind: "GraphLineageStatusProjection",
-    protocol: { name: "head-agent-core-graph-lineage-view", version: GRAPH_LINEAGE_VIEW_VERSION },
+    protocol: { name: formatForVerifiedOwner(inspected.storage).protocol("head-agent-core-graph-lineage-view"), version: GRAPH_LINEAGE_VIEW_VERSION },
     projectId: inspected.project.projectId,
     currentWorldModelId: current.snapshot.worldModelId,
     totalRetainedSnapshots: ids.length,
@@ -172,7 +173,7 @@ export function traceGraphLineage({
     }));
   return {
     kind: "GraphLineageTraceProjection",
-    protocol: { name: "head-agent-core-graph-lineage-view", version: GRAPH_LINEAGE_VIEW_VERSION },
+    protocol: { name: formatForVerifiedOwner(inspected.storage).protocol("head-agent-core-graph-lineage-view"), version: GRAPH_LINEAGE_VIEW_VERSION },
     projectId: inspected.project.projectId,
     worldModelId: snapshot.worldModelId,
     graphSnapshotId: graph.graphSnapshotId,
@@ -227,7 +228,7 @@ export function diffGraphLineage({ root = ".", fromWorldModelId, toWorldModelId,
   const moves = possibleMoves(fromSnapshot, toSnapshot);
   return {
     kind: "GraphLineageDiffProjection",
-    protocol: { name: "head-agent-core-graph-lineage-view", version: GRAPH_LINEAGE_VIEW_VERSION },
+    protocol: { name: formatForVerifiedOwner(inspected.storage).protocol("head-agent-core-graph-lineage-view"), version: GRAPH_LINEAGE_VIEW_VERSION },
     projectId: inspected.project.projectId,
     from: { worldModelId: fromSnapshot.worldModelId, graphSnapshotId: fromSnapshot.temporalProvenanceGraph.graphSnapshotId, sourceSnapshotId: fromSnapshot.temporalProvenanceGraph.sourceSnapshotId },
     to: { worldModelId: toSnapshot.worldModelId, graphSnapshotId: toSnapshot.temporalProvenanceGraph.graphSnapshotId, sourceSnapshotId: toSnapshot.temporalProvenanceGraph.sourceSnapshotId },

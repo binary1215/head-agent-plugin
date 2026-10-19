@@ -60,10 +60,10 @@ If the policy is digest-invalid, observed-state refresh still proceeds and the p
 ## Persistence
 
 ```text
-.head/document-projection/post-refresh/current-policy.json
-.head/document-projection/post-refresh/policies/post-refresh-projection-policy-<digest>.json
-.head/document-projection/post-refresh/current.json
-.head/document-projection/post-refresh/receipts/post-refresh-projection-receipt-<digest>.json
+.lode/document-projection/post-refresh/current-policy.json
+.lode/document-projection/post-refresh/policies/post-refresh-projection-policy-<digest>.json
+.lode/document-projection/post-refresh/current.json
+.lode/document-projection/post-refresh/receipts/post-refresh-projection-receipt-<digest>.json
 ```
 
 No timestamp, PID, adapter path, provider session, Git object, GraphDB record, or document-provider page ID participates in policy or receipt identity.
@@ -71,20 +71,20 @@ No timestamp, PID, adapter path, provider session, Git object, GraphDB record, o
 ## CLI
 
 ```text
-node scripts/head.mjs world-docs-policy-set <project> --input <policy.json>
-node scripts/head.mjs world-docs-policy-status <project>
-node scripts/head.mjs world-docs-refresh-status <project>
-node scripts/head.mjs world-docs-refresh-read <project> --receipt <post-refresh-projection-receipt-id>
+node scripts/lode.mjs world-docs-policy-set <project> --input <policy.json>
+node scripts/lode.mjs world-docs-policy-status <project>
+node scripts/lode.mjs world-docs-refresh-status <project>
+node scripts/lode.mjs world-docs-refresh-read <project> --receipt <post-refresh-projection-receipt-id>
 ```
 
 The setting command accepts only `mode: manual|automatic`. Status and receipt commands are read-only. The existing explicit `world-docs-build`, `world-docs-status`, `world-docs-capture`, and candidate-read commands remain available.
 
 Read-only MCP exposes:
 
-- `head_post_refresh_projection_status`;
-- `head_post_refresh_projection_receipt`.
+- `lode_post_refresh_projection_status`;
+- `lode_post_refresh_projection_receipt`.
 
-MCP cannot change the post-refresh policy, trigger refresh, review document-change candidates, apply decisions, or mutate Canon. The separate typed `head_markdown_projection_build` operation may perform an explicit deterministic document build outside the automatic post-refresh policy; read-only document-review MCP tools inspect status and immutable artifacts.
+MCP cannot change the post-refresh policy, trigger refresh, review document-change candidates, apply decisions, or mutate Canon. The separate typed `lode_markdown_projection_build` operation may perform an explicit deterministic document build outside the automatic post-refresh policy; read-only document-review MCP tools inspect status and immutable artifacts.
 
 ## Authority and optional infrastructure
 

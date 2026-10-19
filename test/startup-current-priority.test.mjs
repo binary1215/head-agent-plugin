@@ -1,10 +1,11 @@
+import { relativeProjectArtifact } from "../scripts/lib/project-storage-format.mjs";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { initializeProject } from "../scripts/lib/head-core.mjs";
+import { initializeProject, inspectProject } from "../scripts/lib/head-core.mjs";
 import { createHeadSession, withSessionRoute } from "../scripts/lib/session-routing.mjs";
 import { createSessionHostAdapter } from "../scripts/lib/session-host-adapter.mjs";
 import { recordSessionWorkEvidence, readSessionWorkContext } from "../scripts/lib/session-work-context.mjs";
@@ -38,6 +39,7 @@ function fixture(t, purpose, { records = 40, checkpoint = false } = {}) {
   const root = path.join(base, "project"), operational = path.join(base, "host");
   fs.mkdirSync(root);
   initializeProject({ root, pluginRoot, runtimes: ["codex", "claude"] });
+  const storage = inspectProject(root).storage;
   const session = createHeadSession({ root, purpose });
   createHeadSession({ root, purpose: "OTHER SESSION: never substitute this direction" });
   const direction = updateProjectDirection({ root, input: { goal: "Investigate cache only", constraints: ["Common constraint: preserve original user files"],
@@ -68,12 +70,12 @@ function fixture(t, purpose, { records = 40, checkpoint = false } = {}) {
       assert.match(value.hostCapability, /Verified.*never guess.*No extra bind\/save\/repeated Session ID/);
       const omittedWork = value.omittedEvidenceCount > 0 || value.workCoverage.status === "work_context_partial";
       if (value.expansion.startsWith("When needed,")) {
-        assert.match(value.expansion, /^When needed, head_conversation_enter with project_root:projectRoot and the exact route above reads originals/);
+        assert.match(value.expansion, /^When needed, lode_conversation_enter with project_root:projectRoot and the exact route above reads originals/);
         assert.equal(value.expansion.includes("Omitted work:"), omittedWork);
-        if (omittedWork) assert.match(value.expansion, /Omitted work: head_session_work_read with the same root\/route\.$/);
+        if (omittedWork) assert.match(value.expansion, /Omitted work: lode_session_work_read with the same root\/route\.$/);
       } else {
-        const enter = value.requiredSourceExpansion ? "When needed: head_conversation_enter(project_root:projectRoot, ...route)" : "";
-        const work = omittedWork ? "Omitted work: head_session_work_read(project_root:projectRoot, ...route)" : "";
+        const enter = value.requiredSourceExpansion ? "When needed: lode_conversation_enter(project_root:projectRoot, ...route)" : "";
+        const work = omittedWork ? "Omitted work: lode_session_work_read(project_root:projectRoot, ...route)" : "";
         assert.equal(value.expansion, enter + (enter && work ? "; " : "") + work);
       }
       return { text, value };
@@ -81,7 +83,7 @@ function fixture(t, purpose, { records = 40, checkpoint = false } = {}) {
   });
   t.after(() => { if (process.env.HEAD_AGENT_KEEP_TEST_TMP !== "1") fs.rmSync(base, { recursive: true, force: true }); });
   t.diagnostic(JSON.stringify({ evidenceScope: "synthetic-public-adapter-and-hook; actualHost/model-unverified", fixture: base, sessionId: session.sessionId }));
-  return { base, root, session, direction, callers };
+  return { base, root, storage, session, direction, callers };
 }
 function checkpointView(raw) {
   const c = raw.restore?.checkpoint;
@@ -89,8 +91,9 @@ function checkpointView(raw) {
     historicalPosition: c.currentPosition, historicalNextExpectedResult: c.nextExpectedResult,
     historicalApprovalGrantsCurrentEffect: false } : null;
 }
-function navigationCases(root) {
-  const file = path.join(root, ".head/graph-discovery/index.json"), raw = fs.readFileSync(file, "utf8"), legacy = JSON.parse(raw);
+function navigationCases(f) {
+  const { root } = f;
+  const file = path.join(root, relativeProjectArtifact(f.storage, "graph-discovery", "index.json")), raw = fs.readFileSync(file, "utf8"), legacy = JSON.parse(raw);
   assert.equal(legacy.sessionWorkNavigation?.version, 1); delete legacy.sessionWorkNavigation;
   return ["hinted", "legacy", "missing"].map(mode => ({ mode, prepare() {
     if (mode === "missing") fs.unlinkSync(file); else fs.writeFileSync(file, mode === "hinted" ? raw : JSON.stringify(legacy));
@@ -140,7 +143,7 @@ function assertOptionalWorkExpansion(f, raw, value, runtime, mode) {
 
 test("public Hook: current common cancellation and 4200-character selected purpose precede P3/metadata in both runtimes", (t) => {
   const f = fixture(t, "Current selected purpose: " + "p".repeat(4200));
-  for (const variant of navigationCases(f.root)) {
+  for (const variant of navigationCases(f)) {
   variant.prepare();
   const before = snapshot(f.base);
   for (const caller of f.callers) {
@@ -165,7 +168,7 @@ test("public Hook: current common cancellation and 4200-character selected purpo
 
 test("public Hook: all four latest selected checkpoint direction fields survive alongside current common and Session purpose", (t) => {
   const f = fixture(t, "Current Session local scope: no external effects. " + "p".repeat(2300), { checkpoint: true });
-  const variants = navigationCases(f.root);
+  const variants = navigationCases(f);
   for (const variant of variants) {
   variant.prepare();
   let before = snapshot(f.base);
@@ -180,7 +183,7 @@ test("public Hook: all four latest selected checkpoint direction fields survive 
   }
   assert.deepEqual(snapshot(f.base), before);
   }
-  fs.unlinkSync(path.join(f.root, ".head", "project-direction", "current.json"));
+  fs.unlinkSync(path.join(f.root, relativeProjectArtifact(f.storage, "project-direction", "current.json")));
   for (const variant of variants) {
   variant.prepare();const before = snapshot(f.base);
   for (const caller of f.callers) {
@@ -202,7 +205,7 @@ test("public Hook: normal complete context adds no omission-specific query instr
     const { value } = caller.read();
     assert.equal(value.omittedEvidenceCount, 0);
     assert.equal(Object.hasOwn(value, "requiredSourceExpansion"), false);
-    assert.equal(value.expansion.includes("head_session_work_read"), false);
+    assert.equal(value.expansion.includes("lode_session_work_read"), false);
     assert.equal(value.expansion.includes("omitted"), false);
     assert.equal(value.expansion.includes("reread"), false);
     assert.equal(value.expansion.includes("required"), false);
@@ -244,7 +247,7 @@ test("private formatter: varying root/purpose/checkpoint lengths preserves every
         witness.workCoverage = { omitted: true, sourceOriginals: raw.workContext.coverage.originals, sourceInspected: raw.workContext.coverage.inspected, sourceIncluded: raw.workContext.coverage.included };
         witness.scope = "Read-only, non-atomic. Current common/selected P2 apply; history/P3 grant no effects. IDs/digests select originals; reference freshness not inferred. Check current authority for effects.";
         witness.hostCapability = "Verified route only; never guess. No extra bind/save/repeated Session ID.";
-        witness.expansion = "Omitted work: head_session_work_read(project_root:projectRoot, ...route)";
+        witness.expansion = "Omitted work: lode_session_work_read(project_root:projectRoot, ...route)";
         if (JSON.stringify(witness).length <= 10000) {
           fitted += 1;
           assert.equal(value.sessionPurpose, raw.workContext.sessionPurpose);
@@ -264,7 +267,7 @@ test("private formatter: even optional compact coverage/prose yield to all prote
   witness.workCoverage = { omitted: true, sourceOriginals: raw.workContext.coverage.originals, sourceInspected: raw.workContext.coverage.inspected, sourceIncluded: raw.workContext.coverage.included };
   witness.scope = "Read-only, non-atomic. Current common/selected P2 apply; history/P3 grant no effects. IDs/digests select originals; reference freshness not inferred. Check current authority for effects.";
   witness.hostCapability = "Verified route only; never guess. No extra bind/save/repeated Session ID.";
-  witness.expansion = "Omitted work: head_session_work_read(project_root:projectRoot, ...route)";
+  witness.expansion = "Omitted work: lode_session_work_read(project_root:projectRoot, ...route)";
   const capacity = 10000 - JSON.stringify(witness).length;
   for (const delta of [-1, 0, 1]) {
     const candidate = serializerEntry(capacity + delta, 280), text = privateFormatter(candidate, pluginRoot), value = JSON.parse(text);
@@ -303,6 +306,6 @@ test("private formatter: actual protected overflow omits the largest whole block
   assert.deepEqual(value.sessionRecovery, checkpointView(raw));
   assert.deepEqual(value.currentProjectDirectionAvailability, unavailable);
   assert.match(value.requiredSourceExpansion, /no constraint or cancellation is assumed absent/);
-  assert.match(value.expansion, /head_conversation_enter.*project_root:projectRoot.*exact route.*workContext\.sessionPurpose/);
+  assert.match(value.expansion, /lode_conversation_enter.*project_root:projectRoot.*exact route.*workContext\.sessionPurpose/);
   assert.equal(value.ordinaryWorkBlocked, false);
 });

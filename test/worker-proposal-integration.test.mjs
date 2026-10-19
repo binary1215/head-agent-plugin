@@ -1,3 +1,4 @@
+import { relativeProjectArtifact, formatForVerifiedOwner } from "../scripts/lib/project-storage-format.mjs";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import fs from "node:fs";
@@ -69,6 +70,7 @@ async function fixture(t, { allowWrite = true, forbidWrite = false, noOp = false
     fs.rmSync(container, { recursive: true, force: true });
   });
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const storage = inspectProject(root).storage;
   fs.writeFileSync(path.join(root, "sum.mjs"), "export const sum = (a, b) => a - b;\n");
   const capsule = compileContext({ root, task: "Propose a bounded synthetic arithmetic fix", persist: true }).capsule;
   const plan = createWholePlanSnapshot({ root, objective: "Integrate a proposal as HEAD", plan: [{ id: "fix", outcome: "Correct arithmetic" }] }).artifact;
@@ -83,7 +85,7 @@ async function fixture(t, { allowWrite = true, forbidWrite = false, noOp = false
   const versionEvidence = await buildRuntimeVersionEvidence({ runtimes: ["codex"], environment, spawnImplementation: capabilitySpawn });
   const protocolEvidence = await buildRuntimeProtocolEvidence({ runtimes: ["codex"], environment, versionEvidence, spawnImplementation: capabilitySpawn });
   const inspected = inspectProject(root);
-  const projectBinding = buildRuntimeProjectBinding({ projectId: inspected.project.projectId, headSessionId: inspected.state.sessionId,
+  const projectBinding = buildRuntimeProjectBinding({ storage, projectId: inspected.project.projectId, headSessionId: inspected.state.sessionId,
     projectRoot: fs.realpathSync(root), projectStatus: "ready", versionEvidence, protocolEvidence });
   const sourceBasis = captureWorkerSourceBasis({ root, paths: ["sum.mjs"], maxBytes });
   const proposalBasis = captureWorkerWriteBasis({ root, paths: ["sum.mjs"], maxBytes });
@@ -112,15 +114,16 @@ async function fixture(t, { allowWrite = true, forbidWrite = false, noOp = false
     inputDigest: authorization.executionInput.digest, memberKey: workerMemberKey(authorization), dispatchId: dispatch.dispatchId, dispatchHash: dispatch.dispatchHash,
     lifecycleReceiptId: receipt.receiptId, draftId: draft.draftId, executionLeaseConsumptionId: draft.executionLeaseConsumptionId,
     executionLeaseReleaseId: draft.executionLeaseReleaseId, actualProviderInvoked: false, candidate };
-  const lineage = { projectId: authorization.projectId, projectRootDigest: authorization.projectRootDigest, headSessionId: authorization.headSessionId,
+  const lineage = { projectId: authorization.projectId, projectRootDigest: authorization.projectRootDigest,
+    [formatForVerifiedOwner(storage).sessionIdField]: authorization[formatForVerifiedOwner(storage).sessionIdField],
     runId: authorization.scope.runId, wholePlanId: authorization.scope.wholePlanId, executionContractId: authorization.scope.executionContractId,
     contextCapsuleId: authorization.scope.contextCapsuleId };
   const intent = identifyIntent({ kind: "WorkerPatchIntegrationIntent", protocolVersion: "0.1.0", authorityBoundary: artifactAuthorityBoundary("WorkerPatchIntegrationIntent"),
     lineage, members: [member], composition: composeWorkerPatchCandidates({ candidates: [candidate], maxBytes }), ...flags });
-  const directory = workerIntegrationDirectory(root, true);
+  const directory = workerIntegrationDirectory(root, true, storage);
   publishIntegrationJson(path.join(directory, `${intent.integrationId}.json`), intent);
-  return { root, container, directory, authorization, candidate, intent, input: { root, integrationId: intent.integrationId },
-    sessionFile: path.join(root, ".head/sessions/current.json"), source: path.join(root, "sum.mjs"), contract };
+  return { root, storage, container, directory, authorization, candidate, intent, input: { root, integrationId: intent.integrationId },
+    sessionFile: path.join(root, relativeProjectArtifact(storage, "sessions", "current.json")), source: path.join(root, "sum.mjs"), contract };
 }
 
 function syntheticEffects({ beforePreflight } = {}) {
@@ -204,7 +207,7 @@ test("a rehashed different candidate cannot replace the receipt-bound proposal",
 
 test("a rehashed draft and candidate cannot replace a different receipt-bound result", async t => {
   const f = await fixture(t);
-  const directory = path.join(f.root, ".head/runtime/invocations", f.authorization.authorizationId);
+  const directory = path.join(f.root, relativeProjectArtifact(f.storage, "runtime", "invocations"), f.authorization.authorizationId);
   const receiptBytes = fs.readFileSync(path.join(directory, "receipt.json"));
   const draft = JSON.parse(fs.readFileSync(path.join(directory, "draft.json"), "utf8"));
   draft.providerResult.patchProposal.changes[0].after.contentBase64 = Buffer.from("replaced proposal\n").toString("base64");

@@ -21,8 +21,8 @@ Repository World Model은 재구축 가능한 구체화 뷰입니다. Context Co
 현재 활성화된 종속성 없는 로컬 JSON 어댑터의 저장 위치는 다음과 같습니다.
 
 ```text
-.head/world-model/current.json                    Warm pointer and change summary
-.head/world-model/snapshots/world-model-*.json   Hot current / Cold prior snapshots
+.lode/world-model/current.json                    Warm pointer and change summary
+.lode/world-model/snapshots/world-model-*.json   Hot current / Cold prior snapshots
 ```
 
 `current.json`은 Hot 스냅샷을 가리키고 물리 어댑터 설명자를 기록하며 추가·변경·삭제된 경로를 Warm 티어로 기록합니다. 이전 콘텐츠 주소형 스냅샷이 Cold 티어를 이룹니다. 물리 어댑터 설명자는 시맨틱 스냅샷 해시에 포함되지 않으므로, 동일한 정규 입력은 규격을 준수하는 로컬, 메모리 또는 향후 GraphDB 어댑터에서 동일한 World Model ID를 생성합니다.
@@ -32,56 +32,56 @@ GraphDB는 필수가 아니며 원격 데이터베이스를 조회하거나 변�
 ## 명령
 
 ```text
-node scripts/head.mjs world-index <project>
-node scripts/head.mjs source-scope-set <project> --input <source-scope.json>
-node scripts/head.mjs source-scope-status <project>
-node scripts/head.mjs world-index <project> --git-log <host-exported-log-file>
-node scripts/head.mjs world-index <project> --runtime-state <host-exported-json-file>
-node scripts/head.mjs world-index <project> --parent-snapshot <source-snapshot-id,source-snapshot-id>
-node scripts/head.mjs world-index <project> --revision-parents <logical-entity-to-parent-revisions.json>
-node scripts/head.mjs world-refresh <project>
-node scripts/head.mjs world-refresh <project> --expect-changed <path,path>
-node scripts/head.mjs world-refresh-status <project>
-node scripts/head.mjs world-refresh-read <project> --receipt <incremental-refresh-receipt-id>
-node scripts/head.mjs world-refresh-events <project> --input <refresh-events.json>
-node scripts/head.mjs world-refresh-watch <project> --debounce-ms 350 --max-events 1024
-node scripts/head.mjs world-refresh-trigger-status <project>
-node scripts/head.mjs world-refresh-trigger-read <project> --delivery <refresh-trigger-delivery-id>
-node scripts/head.mjs world-status <project>
-node scripts/head.mjs world-graph-status <project>
-node scripts/head.mjs world-docs-build <project>
-node scripts/head.mjs world-docs-status <project>
-node scripts/head.mjs world-docs-capture <project>
-node scripts/head.mjs world-docs-candidates <project> --candidate-set <document-change-candidate-set-id>
-node scripts/head.mjs world-docs-policy-set <project> --input <policy.json>
-node scripts/head.mjs world-docs-policy-status <project>
-node scripts/head.mjs world-docs-refresh-status <project>
-node scripts/head.mjs world-docs-refresh-read <project> --receipt <post-refresh-projection-receipt-id>
-node scripts/head.mjs world-query <project> --query <symbol-or-path> --depth 1 --limit 100
-node scripts/head.mjs world-temporal <project> --query <path-or-symbol> --relations HAS_REVISION,CURRENT_REVISION,DECLARES --depth 2 --limit 100 --edge-limit 200
-node scripts/head.mjs world-temporal <project> --query <candidate-id> --include-candidates true --depth 1 --limit 100 --edge-limit 200
-node scripts/head.mjs world-history <project> --query <decision-terms> --limit 20
-node scripts/head.mjs world-runtime <project> --runtime codex --state active --kind session --limit 20
-node scripts/head.mjs change-set-status <project>
+node scripts/lode.mjs world-index <project>
+node scripts/lode.mjs source-scope-set <project> --input <source-scope.json>
+node scripts/lode.mjs source-scope-status <project>
+node scripts/lode.mjs world-index <project> --git-log <host-exported-log-file>
+node scripts/lode.mjs world-index <project> --runtime-state <host-exported-json-file>
+node scripts/lode.mjs world-index <project> --parent-snapshot <source-snapshot-id,source-snapshot-id>
+node scripts/lode.mjs world-index <project> --revision-parents <logical-entity-to-parent-revisions.json>
+node scripts/lode.mjs world-refresh <project>
+node scripts/lode.mjs world-refresh <project> --expect-changed <path,path>
+node scripts/lode.mjs world-refresh-status <project>
+node scripts/lode.mjs world-refresh-read <project> --receipt <incremental-refresh-receipt-id>
+node scripts/lode.mjs world-refresh-events <project> --input <refresh-events.json>
+node scripts/lode.mjs world-refresh-watch <project> --debounce-ms 350 --max-events 1024
+node scripts/lode.mjs world-refresh-trigger-status <project>
+node scripts/lode.mjs world-refresh-trigger-read <project> --delivery <refresh-trigger-delivery-id>
+node scripts/lode.mjs world-status <project>
+node scripts/lode.mjs world-graph-status <project>
+node scripts/lode.mjs world-docs-build <project>
+node scripts/lode.mjs world-docs-status <project>
+node scripts/lode.mjs world-docs-capture <project>
+node scripts/lode.mjs world-docs-candidates <project> --candidate-set <document-change-candidate-set-id>
+node scripts/lode.mjs world-docs-policy-set <project> --input <policy.json>
+node scripts/lode.mjs world-docs-policy-status <project>
+node scripts/lode.mjs world-docs-refresh-status <project>
+node scripts/lode.mjs world-docs-refresh-read <project> --receipt <post-refresh-projection-receipt-id>
+node scripts/lode.mjs world-query <project> --query <symbol-or-path> --depth 1 --limit 100
+node scripts/lode.mjs world-temporal <project> --query <path-or-symbol> --relations HAS_REVISION,CURRENT_REVISION,DECLARES --depth 2 --limit 100 --edge-limit 200
+node scripts/lode.mjs world-temporal <project> --query <candidate-id> --include-candidates true --depth 1 --limit 100 --edge-limit 200
+node scripts/lode.mjs world-history <project> --query <decision-terms> --limit 20
+node scripts/lode.mjs world-runtime <project> --runtime codex --state active --kind session --limit 20
+node scripts/lode.mjs change-set-status <project>
 ```
 
-`world-index`는 검증된 `repository.scan.v1` 작업을 호출하고 결정론적 스냅샷을 구체화합니다. 저장소 변경 없이 반복 실행하면 동일한 World Model ID를 반환합니다. 선택적 `.head/context/repository-source-scope.json` 선택 항목은 정규화된 포함/제외 루트를 제공하고, 증거 전용으로 유지되며, 스캔과 World Model 식별자에 참여합니다. `world-status`는 먼저 적격 파일 전체를 탐색하고 바이트 해싱을 수행합니다. 경로, 다이제스트, 바이트 길이, 분류, 언어 및 범위가 검증된 스냅샷과 일치하면 저장된 시맨틱 분석을 재사용하며, 단지 최신 상태임을 증명하기 위해 시간 그래프를 재구축하지 않습니다. 인벤토리가 변경되면 정확한 오래됨 상세 정보를 보고하기 전에 완전한 참조 스캔으로 폴백합니다.
+`world-index`는 검증된 `repository.scan.v1` 작업을 호출하고 결정론적 스냅샷을 구체화합니다. 저장소 변경 없이 반복 실행하면 동일한 World Model ID를 반환합니다. 선택적 `.lode/context/repository-source-scope.json` 선택 항목은 정규화된 포함/제외 루트를 제공하고, 증거 전용으로 유지되며, 스캔과 World Model 식별자에 참여합니다. `world-status`는 먼저 적격 파일 전체를 탐색하고 바이트 해싱을 수행합니다. 경로, 다이제스트, 바이트 길이, 분류, 언어 및 범위가 검증된 스냅샷과 일치하면 저장된 시맨틱 분석을 재사용하며, 단지 최신 상태임을 증명하기 위해 시간 그래프를 재구축하지 않습니다. 인벤토리가 변경되면 정확한 오래됨 상세 정보를 보고하기 전에 완전한 참조 스캔으로 폴백합니다.
 
 `world-refresh`는 검증된 기본 인덱스 이후의 명시적 증분 경로입니다. 여전히 모든 적격 파일을 다시 탐색하고 원시 바이트 해싱하지만, 경로, 다이제스트, 바이트 길이, 분류, 언어 및 분석 프로토콜이 검증된 이전 스냅샷과 일치하는 파일에만 심볼·종속성·시맨틱 분석을 재사용합니다. 결과 `RepositoryScanResult`는 완전한 참조 스캔과 동일하게 유지됩니다. 변경 없는 새로 고침은 현재 스냅샷 식별자를 유지합니다. 변경된 새로 고침은 이전 SourceSnapshot을 자동으로 연결하고, 변경되지 않은 리비전 식별자를 재사용하고, 변경된 리비전의 부모를 이전 리비전으로 지정하고, 그래프 구체화를 검증하며, 불변 요청/영수증 증거를 기록합니다. 관찰된 경로가 정확한 `--expect-changed` 집합과 다르면 포인터를 전진시키기 전에 실패합니다. [`incremental-refresh.md`](incremental-refresh.md)를 참고하세요.
 
 `world-refresh-events`는 엄격한 CI 배치 하나를 수집합니다. `world-refresh-watch`는 유일한 파일시스템 CLI 어댑터이며 `SIGINT` 또는 `SIGTERM`까지 포그라운드에서 재귀적으로 실행됩니다. 둘 다 제한된 결정론적 디바운스/병합 계약과 프로젝트 범위의 배타적 작성자 리스를 사용합니다. 이벤트 경로는 스캔 범위를 제한하지 않으며 실제 변경 파일과 다를 수 있습니다. 완전한 탐색과 해싱이 관찰된 구현에 대한 권위 있는 근거로 유지됩니다. 읽기 전용 트리거 상태 및 전달 검사는 감시자를 시작하지 않고 연결된 증분 요청/영수증을 검증합니다. [`refresh-trigger.md`](refresh-trigger.md)를 참고하세요.
 
-저장소 파일 변경, 제품 Git ref, 시맨틱 HEAD 수명주기 상태 및 인덱서 프로토콜 버전은 모두 소스 다이제스트에 참여합니다. 제품 Git ref는 정확히 로컬 브랜치, 원격 추적 ref 및 태그입니다. `refs/codex/turn-diffs/**` 같은 호스트 운영 ref는 loose 또는 packed 여부와 관계없이 제외됩니다. 이는 제품 증거가 아니라 P5 대화 장부이기 때문입니다. 현재 체크아웃된 HEAD는 제외된 네임스페이스를 가리키더라도 계속 관찰됩니다. 체크아웃 상태가 작업 트리 의미를 바꾸기 때문입니다. 변동 타임스탬프, ref 저장 레이아웃 및 물리 저장소 식별자는 제외됩니다.
+저장소 파일 변경, 제품 Git ref, 시맨틱 Lode 수명주기 상태 및 인덱서 프로토콜 버전은 모두 소스 다이제스트에 참여합니다. 제품 Git ref는 정확히 로컬 브랜치, 원격 추적 ref 및 태그입니다. `refs/codex/turn-diffs/**` 같은 호스트 운영 ref는 loose 또는 packed 여부와 관계없이 제외됩니다. 이는 제품 증거가 아니라 P5 대화 장부이기 때문입니다. 현재 체크아웃된 Lode는 제외된 네임스페이스를 가리키더라도 계속 관찰됩니다. 체크아웃 상태가 작업 트리 의미를 바꾸기 때문입니다. 변동 타임스탬프, ref 저장 레이아웃 및 물리 저장소 식별자는 제외됩니다.
 
-읽기 전용 MCP 도구 `head_world_model`은 `world-status`와 동일하게 완전한 스냅샷 다이제스트, 구조 및 저장소 최신 상태를 검증하지만, 제한된 `WorldModelStatusProjection`만 반환합니다. 이 프로젝션에는 식별자, 다이제스트, 수치형 개수, 변경 분류별 최대 20개 경로, 비활성 파일 샘플, 명시적인 생략 개수 및 생략된 전체 스냅샷의 간결한 직렬화 바이트 길이가 포함됩니다. 완전한 `snapshot`, 물리 스냅샷 경로 또는 제한 없는 최신 상태 배열은 절대 반환하지 않습니다. 프로젝션은 512 KiB로 제한되고 중복된 JSON-RPC 텍스트/구조화 MCP 봉투는 4 MiB로 제한됩니다. 이는 전송 한계이지, 검증이나 인덱싱 한계를 줄인 것이 아닙니다. 제한된 상세 정보에는 `head_world_query`, `head_temporal_graph`, `head_git_history` 또는 `head_runtime_state`를 사용하고, 완전한 스냅샷이 운영상 필요한 경우에만 로컬 `world-status` CLI를 사용하세요.
+읽기 전용 MCP 도구 `lode_world_model`은 `world-status`와 동일하게 완전한 스냅샷 다이제스트, 구조 및 저장소 최신 상태를 검증하지만, 제한된 `WorldModelStatusProjection`만 반환합니다. 이 프로젝션에는 식별자, 다이제스트, 수치형 개수, 변경 분류별 최대 20개 경로, 비활성 파일 샘플, 명시적인 생략 개수 및 생략된 전체 스냅샷의 간결한 직렬화 바이트 길이가 포함됩니다. 완전한 `snapshot`, 물리 스냅샷 경로 또는 제한 없는 최신 상태 배열은 절대 반환하지 않습니다. 프로젝션은 512 KiB로 제한되고 중복된 JSON-RPC 텍스트/구조화 MCP 봉투는 4 MiB로 제한됩니다. 이는 전송 한계이지, 검증이나 인덱싱 한계를 줄인 것이 아닙니다. 제한된 상세 정보에는 `lode_world_query`, `lode_temporal_graph`, `lode_git_history` 또는 `lode_runtime_state`를 사용하고, 완전한 스냅샷이 운영상 필요한 경우에만 로컬 `world-status` CLI를 사용하세요.
 
-`head_context_preview`는 비영속 `ContextWorkflowProjection`에서 World의 현재·부재·stale 제외를 공개합니다.
+`lode_context_preview`는 비영속 `ContextWorkflowProjection`에서 World의 현재·부재·stale 제외를 공개합니다.
 출처 연결 selection, 누락과 불확실성을 제공하며 고정 tier나 포함 증명 gate는 없습니다.
 World가 없어도 현재 source를 직접 맥락으로 사용할 수 있습니다.
-확대나 refresh가 유용한지는 HEAD가 판단합니다. preview는 World 변경, 승인,
+확대나 refresh가 유용한지는 Lode가 판단합니다. preview는 World 변경, 승인,
 의미 선택이나 복구 방향 쓰기를 수행하지 않습니다.
 
-`head_graph_projection_status`는 그래프 프로젝션 검증을 노출합니다. `head_incremental_refresh_status`와 `head_incremental_refresh_receipt`는 변경 권한 없이 새로 고침 최신 상태, 계보, 변경 및 활성 실행 드리프트를 노출합니다. `head_refresh_trigger_status`와 `head_refresh_trigger_delivery`는 이벤트를 수집하거나 감시자를 시작할 수 없지만 이벤트 배치, 직렬화된 전달 및 연결된 새로 고침 증거를 검증합니다. `head_post_refresh_projection_status`와 `head_post_refresh_projection_receipt`는 어느 쪽도 변경하지 않으면서 유효 정책과 정확한 문서 결과를 검증합니다. `head_world_query`는 제한된 0~3홉 휴리스틱 시맨틱 이웃을 반환합니다. `head_temporal_graph`는 현재 프로젝션 어댑터를 통해 그래프/쿼리/결과 다이제스트를 포함한 결정론적 허용 목록 기반 시간 순회를 반환하며, 프로젝션이 없으면 공개된 임베디드 그래프 폴백을 반환합니다. `head_git_history`는 검증된 현재 Git 증거에 대해 제한된 쿼리를 수행합니다. `head_runtime_state`는 검증된 특정 시점 런타임 관찰에 대해 제한된 쿼리를 수행합니다. 모든 시맨틱 쿼리는 오래된 인덱스를 거부합니다.
+`lode_graph_projection_status`는 그래프 프로젝션 검증을 노출합니다. `lode_incremental_refresh_status`와 `lode_incremental_refresh_receipt`는 변경 권한 없이 새로 고침 최신 상태, 계보, 변경 및 활성 실행 드리프트를 노출합니다. `lode_refresh_trigger_status`와 `lode_refresh_trigger_delivery`는 이벤트를 수집하거나 감시자를 시작할 수 없지만 이벤트 배치, 직렬화된 전달 및 연결된 새로 고침 증거를 검증합니다. `lode_post_refresh_projection_status`와 `lode_post_refresh_projection_receipt`는 어느 쪽도 변경하지 않으면서 유효 정책과 정확한 문서 결과를 검증합니다. `lode_world_query`는 제한된 0~3홉 휴리스틱 시맨틱 이웃을 반환합니다. `lode_temporal_graph`는 현재 프로젝션 어댑터를 통해 그래프/쿼리/결과 다이제스트를 포함한 결정론적 허용 목록 기반 시간 순회를 반환하며, 프로젝션이 없으면 공개된 임베디드 그래프 폴백을 반환합니다. `lode_git_history`는 검증된 현재 Git 증거에 대해 제한된 쿼리를 수행합니다. `lode_runtime_state`는 검증된 특정 시점 런타임 관찰에 대해 제한된 쿼리를 수행합니다. 모든 시맨틱 쿼리는 오래된 인덱스를 거부합니다.
 
 ## 시간적 출처 그래프
 
@@ -95,13 +95,13 @@ World Model 버전 `0.14.0`에는 저장소 스캔 프로토콜 `0.4.0`, 저장�
 
 `GitHistoryAdapter` 버전 `0.2.0`은 공급자 중립의 파생 증거 전용 경계입니다. 규격을 준수하는 어댑터는 `rebuildable: true`와 `uniqueAuthority: false`를 선언해야 합니다. 물리 식별자는 콘텐츠에서 파생된 Git 이력 ID와 World Model ID에서 제외됩니다. 버전 `0.1.0` 어댑터는 업그레이드 연속성을 위해 계속 읽을 수 있지만, 정규화, 호스트 ref 필터링 및 새로 생성되는 모든 GitDecisionHistory는 현재 `0.2.0` 계약을 사용합니다.
 
-기본 `git-cli` 어댑터는 World Model이 제공한 정확한 현재 브랜치, 원격 추적, 태그 및 HEAD 루트에서 도달 가능한 커밋을 비동기적으로 읽습니다. 커밋 및 부모 식별자, 작성/커밋 타임스탬프, 작성자 이메일의 다이제스트, 제품 ref, 제목, 본문 및 `git:<sha>` 증거 출처를 기록합니다. CLI와 바이트 보존 파서는 그 밖에는 제품에서 도달 가능한 커밋의 decoration을 포함하여 모두 `refs/codex/turn-diffs/**`를 제외합니다. 현재 로컬 브랜치, 원격 ref 및 태그는 `.git`에서 각각 독립적으로 읽히며, 어댑터 결과를 정확히 부모로 도달 가능한 집합에 맞춰 검증하고 가지치기하는 데 사용됩니다. 따라서 파일이 변경되지 않아도 시맨틱 대상이 변경되면 World Model이 오래된 상태가 됩니다. packing, 주석, 순서 또는 호스트 전용 ref는 오래된 상태로 만들지 않습니다.
+기본 `git-cli` 어댑터는 World Model이 제공한 정확한 현재 브랜치, 원격 추적, 태그 및 Lode 루트에서 도달 가능한 커밋을 비동기적으로 읽습니다. 커밋 및 부모 식별자, 작성/커밋 타임스탬프, 작성자 이메일의 다이제스트, 제품 ref, 제목, 본문 및 `git:<sha>` 증거 출처를 기록합니다. CLI와 바이트 보존 파서는 그 밖에는 제품에서 도달 가능한 커밋의 decoration을 포함하여 모두 `refs/codex/turn-diffs/**`를 제외합니다. 현재 로컬 브랜치, 원격 ref 및 태그는 `.git`에서 각각 독립적으로 읽히며, 어댑터 결과를 정확히 부모로 도달 가능한 집합에 맞춰 검증하고 가지치기하는 데 사용됩니다. 따라서 파일이 변경되지 않아도 시맨틱 대상이 변경되면 World Model이 오래된 상태가 됩니다. packing, 주석, 순서 또는 호스트 전용 ref는 오래된 상태로 만들지 않습니다.
 
 일부 제한된 호스트는 Node 프로세스가 Git을 실행하지 못하게 합니다. 이는 어댑터 수준의 fail-open 조건입니다. 인덱싱은 `gitHistory: none`과 안정적인 이유 코드를 사용하여 계속됩니다. 대신 호스트가 아래의 정확한 명령으로 바이트 보존 로그 파일을 생성하고 명시적으로 제공할 수 있습니다.
 
 ```text
 git -C <project> --no-pager log HEAD --branches --remotes --tags --topo-order --date-order --no-show-signature --decorate=full --decorate-refs-exclude=refs/codex/turn-diffs/** --format=%H%x00%P%x00%aI%x00%cI%x00%an%x00%ae%x00%D%x00%B%x00
-node scripts/head.mjs world-index <project> --git-log <host-exported-log-file>
+node scripts/lode.mjs world-index <project> --git-log <host-exported-log-file>
 ```
 
 로그 파일 어댑터는 누락 파일, 심볼릭 링크, 일반 파일이 아닌 항목 및 크기 초과 입력을 거부합니다. Core는 여전히 내보낸 커밋을 현재 ref와 대조하여 검증합니다. 커밋 메시지는 과거 결정 증거일 뿐입니다. 모든 레코드는 `instructionAuthority: false`와 `evidence-not-instruction`을 가지며, 인덱스는 메시지를 승인된 프로젝트 `Decision`으로 절대 바꾸지 않습니다.
@@ -141,12 +141,12 @@ node scripts/head.mjs world-index <project> --git-log <host-exported-log-file>
 - 교체 가능한 CLI 및 호스트 내보내기 어댑터를 통한 콘텐츠 주소형 전체 도달 가능 Git 커밋 메시지 증거;
 - create-only `BranchStateObservation`, `DeploymentResultObservation`, `ReleaseObservation` P3 evidence와 `AT_REVISION`, `OBSERVED_ON`, `EVIDENCED_BY`, 선택적 `DEPLOYS` P4 relation;
 - 교체 가능한 읽기 전용 호스트 내보내기 어댑터를 통한 콘텐츠 주소형 특정 시점 외부 런타임 관찰;
-- 현재 계획, 활성 Run/contract, 대기 중 검토 및 필수 계획 작업을 포함하는 시맨틱 HEAD 수명주기 상태;
+- 현재 계획, 활성 Run/contract, 대기 중 검토 및 필수 계획 작업을 포함하는 시맨틱 Lode 수명주기 상태;
 - 추가·변경·삭제된 경로 계산;
 - 파일 수준 최신 상태;
-- 경로, 다이제스트, 분류, 언어, 심볼, 종속성, 사전 인덱싱된 구조 인접 관계, 제한된 ProductContext와 현재 Project/World/Graph identity에 결속된 별도 HEAD-exact `GraphTraversalEvidence`를 포함하는 Context Compiler 후보. Compiler는 lexical task overlap으로 temporal anchor를 고르지 않습니다.
+- 경로, 다이제스트, 분류, 언어, 심볼, 종속성, 사전 인덱싱된 구조 인접 관계, 제한된 ProductContext와 현재 Project/World/Graph identity에 결속된 별도 Lode-exact `GraphTraversalEvidence`를 포함하는 Context Compiler 후보. Compiler는 lexical task overlap으로 temporal anchor를 고르지 않습니다.
 
-관리되는 루트 프로젝션과 다음 디렉터리는 제외됩니다. `.head`, `.git`, VCS 메타데이터, 종속성/벤더 디렉터리, 생성된 빌드 출력, 캐시(uv 및 pytest 캐시 포함), 가상 환경, 커버리지 출력입니다. 다른 도구가 생성한 증거는 기존 소스 범위(예: `excludeRoots: [".generated-evidence"]`)로 제외하며, 목록에 없는 `.github` 같은 숨김 디렉터리는 계속 수집 대상입니다. 심볼릭 링크와 지원되지 않는 파일, 바이너리 파일 또는 크기 초과 파일은 건너뛰고 개수에 포함합니다. 사용자가 선택한 소스 범위는 Product Canon을 변경하지 않고도 정규화된 프로젝트 상대 루트를 추가로 포함하거나 제외할 수 있습니다.
+관리되는 루트 프로젝션과 다음 디렉터리는 제외됩니다. `.lode`, `.git`, VCS 메타데이터, 종속성/벤더 디렉터리, 생성된 빌드 출력, 캐시(uv 및 pytest 캐시 포함), 가상 환경, 커버리지 출력입니다. 다른 도구가 생성한 증거는 기존 소스 범위(예: `excludeRoots: [".generated-evidence"]`)로 제외하며, 목록에 없는 `.github` 같은 숨김 디렉터리는 계속 수집 대상입니다. 심볼릭 링크와 지원되지 않는 파일, 바이너리 파일 또는 크기 초과 파일은 건너뛰고 개수에 포함합니다. 사용자가 선택한 소스 범위는 Product Canon을 변경하지 않고도 정규화된 프로젝트 상대 루트를 추가로 포함하거나 제외할 수 있습니다.
 
 ## Context Compiler 동작
 

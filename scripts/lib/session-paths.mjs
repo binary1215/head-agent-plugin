@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { formatForVerifiedOwner } from "./project-storage-format.mjs";
 
 const fail = (message, code) => { throw Object.assign(new Error(message), { code }); };
 
@@ -17,4 +18,4 @@ export function safeSessionPath(root, ...parts) {
   return file;
 }
 
-export function defaultSessionStatePath(root) { return safeSessionPath(root, ".head", "sessions", "current.json"); }
+export function defaultSessionStatePath(root, storage) { return safeSessionPath(root, formatForVerifiedOwner(storage).directory, "sessions", "current.json"); }

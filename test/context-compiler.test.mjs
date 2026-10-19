@@ -6,7 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import { compileContext, readContextCapsule, DEFAULT_CONTEXT_BUDGET } from "../scripts/lib/context-compiler.mjs";
 import { prepareContextWorkflow, previewContextWorkflow } from "../scripts/lib/context-workflow.mjs";
-import { initializeProject } from "../scripts/lib/head-core.mjs";
+import { initializeProject, inspectProject } from "../scripts/lib/head-core.mjs";
 import { buildWorldModel, readWorldModel } from "../scripts/lib/world-model.mjs";
 import { prepareSourceContext } from "../scripts/lib/source-context-workflow.mjs";
 import { updateProjectDirection } from "../scripts/lib/project-direction.mjs";
@@ -17,12 +17,13 @@ function fixture(t) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "head-light-context-")));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   initializeProject({ root, pluginRoot, runtimes: ["codex"] });
+  const layout = inspectProject(root).storage;
   fs.mkdirSync(path.join(root, "src"));
   fs.writeFileSync(path.join(root, "src/CacheRelay.mjs"), "export function preserveQueue(value) { return value; }\n");
   fs.writeFileSync(path.join(root, "src/무인큐.mjs"), "export const 무인큐 = true;\n");
-  return root;
+  return { root, layout };
 }
-function originalFiles(root) {
+function originalFiles(root, layout) {
   const out = {};
   function walk(directory) {
     for (const item of fs.readdirSync(directory, { withFileTypes: true })) {
@@ -31,15 +32,18 @@ function originalFiles(root) {
       else out[path.relative(root, file)] = fs.readFileSync(file).toString("base64");
     }
   }
-  walk(path.join(root, ".head")); return out;
+  walk(path.join(root, layout.directory));
+  assert.ok(Object.hasOwn(out, path.join(layout.directory, "project.json")));
+  assert.ok(Object.hasOwn(out, path.join(layout.directory, "sessions", "current.json")));
+  return out;
 }
 
 test("ordinary preparation preserves exact task and current direction without World or a new decision", t => {
-  const root = fixture(t);
+  const { root, layout } = fixture(t);
   const direction = updateProjectDirection({ root, expectedDirectionId: null,
     input: { goal: "Inspect the queue", constraints: ["Keep source local"], decisions: ["Retain pending requests"], cancelledActions: ["Deploy"] } }).direction;
   const task = "  CacheRelay를 조사한다\n";
-  const before = originalFiles(root);
+  const before = originalFiles(root, layout);
   const preview = previewContextWorkflow({ root, task,
     evidenceNeeds: [{ id: "source", kind: "repository-source", paths: ["src/CacheRelay.mjs"] }] });
   assert.equal(preview.capsule.task, task);
@@ -56,11 +60,11 @@ test("ordinary preparation preserves exact task and current direction without Wo
   const prepared = prepareContextWorkflow({ root, task });
   assert.equal(prepared.preparation.status, "ready_for_head_semantic_assessment");
   assert.deepEqual(prepared.preparation.currentDirection, direction);
-  assert.deepEqual(originalFiles(root), before);
+  assert.deepEqual(originalFiles(root, layout), before);
 });
 
 test("positive budgets are caller bounds, without fixed tiers or automatic retries", async t => {
-  const root = fixture(t);
+  const { root, layout } = fixture(t);
   await buildWorldModel({ root });
   for (const budget of [1, 8000, 50_000, 786_432]) {
     const preview = previewContextWorkflow({ root, task: "Inspect CacheRelay", budget,
@@ -80,7 +84,7 @@ test("positive budgets are caller bounds, without fixed tiers or automatic retri
 });
 
 test("lexical ranking never excludes otherwise eligible curated evidence", t => {
-  const root = fixture(t), file = path.join(root, ".head/context/knowledge.json");
+  const { root, layout } = fixture(t), file = path.join(root, layout.directory, "context/knowledge.json");
   const knowledge = JSON.parse(fs.readFileSync(file, "utf8"));
   knowledge.claims.push({ id: "claim-color", statement: "The login button uses a blue palette.", status: "active", importance: 1, tags: ["frontend"] });
   fs.writeFileSync(file, JSON.stringify(knowledge));
@@ -90,9 +94,9 @@ test("lexical ranking never excludes otherwise eligible curated evidence", t => 
 });
 
 test("case, Korean and exact paths guide context while original body consumption remains disclosed", async t => {
-  const root = fixture(t);
+  const { root, layout } = fixture(t);
   await buildWorldModel({ root });
-  const before = originalFiles(root);
+  const before = originalFiles(root, layout);
   for (const task of ["CacheRelay", "cacherelay", "CACHERELAY", "CacheRelay를 설명해", "src/CacheRelay.mjs"]) {
     const capsule = compileContext({ root, task }).capsule;
     assert.equal(capsule.repositoryContext[0].path, "src/CacheRelay.mjs", task);
@@ -100,14 +104,14 @@ test("case, Korean and exact paths guide context while original body consumption
     assert(capsule.uncertainty.some(text => text.includes("source bodies")));
   }
   assert.equal(compileContext({ root, task: "무인큐를 설명해" }).capsule.repositoryContext[0].path, "src/무인큐.mjs");
-  assert.deepEqual(originalFiles(root), before);
+  assert.deepEqual(originalFiles(root, layout), before);
 });
 
 test("stale World excludes metadata but permits selected current original source without indexing", async t => {
-  const root = fixture(t);
+  const { root, layout } = fixture(t);
   await buildWorldModel({ root });
   fs.writeFileSync(path.join(root, "src/CacheRelay.mjs"), "export function preserveQueue(value) { return [value]; }\n");
-  const before = originalFiles(root);
+  const before = originalFiles(root, layout);
   const stale = previewContextWorkflow({ root, task: "Inspect CacheRelay",
     evidenceNeeds: [{ id: "source", kind: "repository-source", paths: ["src/CacheRelay.mjs"] }] });
   assert.equal(stale.workflow.world.state, "stale-excluded");
@@ -118,11 +122,11 @@ test("stale World excludes metadata but permits selected current original source
   assert.equal(source.status, "observed");
   assert.equal(source.results[0].includedInContext, true);
   assert.deepEqual(source.context.capsule.evidenceGaps, []);
-  assert.deepEqual(originalFiles(root), before);
+  assert.deepEqual(originalFiles(root, layout), before);
 });
 
 test("missing evidence reports meaningful unknowns without a semantic or execution score", async t => {
-  const root = fixture(t);
+  const { root, layout } = fixture(t);
   await buildWorldModel({ root });
   const capsule = compileContext({ root, task: "Inspect queue",
     evidenceNeeds: [{ id: "missing-test", kind: "repository-test", paths: ["test/absent.mjs"] }], persist: true }).capsule;
@@ -134,16 +138,16 @@ test("missing evidence reports meaningful unknowns without a semantic or executi
 });
 
 test("durable Capsules preserve same-project identity and exact original hash on read", t => {
-  const root = fixture(t), other = fixture(t);
+  const { root, layout } = fixture(t), { root: other, layout: otherLayout } = fixture(t);
   const first = compileContext({ root, task: "Inspect queue", persist: true });
   assert.equal(readContextCapsule({ root, capsuleId: first.capsule.capsuleId }).capsule.capsuleHash, first.capsule.capsuleHash);
-  const copied = path.join(other, ".head/context/capsules", path.basename(first.file));
+  const copied = path.join(other, otherLayout.directory, "context/capsules", path.basename(first.file));
   fs.mkdirSync(path.dirname(copied), { recursive: true }); fs.copyFileSync(first.file, copied);
   assert.throws(() => readContextCapsule({ root: other, capsuleId: first.capsule.capsuleId }), { code: "CONTEXT_CAPSULE_PROJECT_MISMATCH" });
 });
 
 test("historical Capsule reader preserves old payload without enforcing an inclusion gate", t => {
-  const root = fixture(t);
+  const { root, layout } = fixture(t);
   const current = compileContext({ root, task: "Inspect queue" }).capsule;
   const payload = { kind: "ContextCapsule", schemaVersion: current.schemaVersion, task: "Legacy exact task",
     snapshot: current.snapshot, budget: { maxApproxTokens: 32768 },
@@ -153,13 +157,13 @@ test("historical Capsule reader preserves old payload without enforcing an inclu
     Object.fromEntries(Object.keys(value).sort().map(key => [key, sorted(value[key])])) : value; }
   const capsuleHash = crypto.createHash("sha256").update(JSON.stringify(sorted(payload))).digest("hex");
   const capsule = { ...payload, capsuleHash, capsuleId: "capsule-" + capsuleHash.slice(0, 24) };
-  const directory = path.join(root, ".head/context/capsules"); fs.mkdirSync(directory, { recursive: true });
+  const directory = path.join(root, layout.directory, "context/capsules"); fs.mkdirSync(directory, { recursive: true });
   fs.writeFileSync(path.join(directory, capsule.capsuleId + ".json"), JSON.stringify(capsule));
   assert.deepEqual(readContextCapsule({ root, capsuleId: capsule.capsuleId }).capsule, capsule);
 });
 
 test("exact bounded graph anchors retain Project and revision identity", async t => {
-  const root = fixture(t);
+  const { root, layout } = fixture(t);
   await buildWorldModel({ root });
   const snapshot = readWorldModel({ root }).snapshot, graph = snapshot.temporalProvenanceGraph;
   const node = graph.nodes.find(item => item.kind === "File" && item.path === "src/CacheRelay.mjs");
@@ -175,12 +179,12 @@ test("exact bounded graph anchors retain Project and revision identity", async t
 });
 
 test("HEAD exact Product keys retain current Canon revisions and missing facets remain advisory", async t => {
-  const root = fixture(t);
+  const { root, layout } = fixture(t);
   const { candidate } = await proposeProductPolicy({ root, operation: "create", key: "local-boundary",
     name: "LocalBoundary", statement: "Keep upload cancellation local." });
   await reviewProductPolicy({ root, candidateId: candidate.candidateId, disposition: "accept", rationale: "Adopt this local test policy." });
   await buildWorldModel({ root });
-  const before = originalFiles(root);
+  const before = originalFiles(root, layout);
   const selected = compileContext({ root, task: "Review local boundary", evidenceNeeds: [
     { id: "policy", kind: "product-context", entityKeys: ["local-boundary"] } ] }).capsule;
   const entities = selected.productContext.flatMap(record => record.entities);
@@ -193,11 +197,11 @@ test("HEAD exact Product keys retain current Canon revisions and missing facets 
   const metadata = compileContext({ root, task: "Review local boundary", evidenceNeeds: [
     { id: "metadata", kind: "product-context", entityKeys: ["local-boundary"], facets: ["instructionAuthority"] } ] }).capsule;
   assert.equal(metadata.evidenceGaps[0].available, 0);
-  assert.deepEqual(originalFiles(root), before);
+  assert.deepEqual(originalFiles(root, layout), before);
 });
 
 test("bounded source metadata omissions disclose counts without asserting total coverage", async t => {
-  const root = fixture(t);
+  const { root, layout } = fixture(t);
   fs.writeFileSync(path.join(root, "src/CacheRelay.mjs"), Array.from({ length: 24 }, (_, index) =>
     `export function relay${index}() { return ${index}; }`).join("\n"));
   await buildWorldModel({ root });

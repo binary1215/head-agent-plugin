@@ -1,7 +1,8 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { inspectProject, SCHEMA_VERSION } from "./head-core.mjs";
+import { familyFormatForOriginal, formatForVerifiedOwner } from "./project-storage-format.mjs";
+import { inspectProject, SCHEMA_VERSION } from "./lode-core.mjs";
 import {
   captureDocumentChangeCandidates,
   createDocumentProjectionAdapter,
@@ -92,48 +93,48 @@ function identity(prefix, payload) {
   return { id: `${prefix}-${hash.slice(0, 24)}`, hash };
 }
 
-function rootDirectory(projectRoot) {
-  return path.join(path.resolve(projectRoot), ".head", "document-projection", "post-refresh");
+function rootDirectory(projectRoot, storage) {
+  return path.join(path.resolve(projectRoot), formatForVerifiedOwner(storage).directory, "document-projection", "post-refresh");
 }
 
-function policyFile(projectRoot, policyId) {
+function policyFile(projectRoot, policyId, storage) {
   if (!POLICY_PATTERN.test(policyId || "")) fail("Post-refresh projection policy id is invalid.", "INVALID_POST_REFRESH_PROJECTION_POLICY_ID");
-  return path.join(rootDirectory(projectRoot), "policies", `${policyId}.json`);
+  return path.join(rootDirectory(projectRoot, storage), "policies", `${policyId}.json`);
 }
 
-function policyPointerFile(projectRoot) {
-  return path.join(rootDirectory(projectRoot), "current-policy.json");
+function policyPointerFile(projectRoot, storage) {
+  return path.join(rootDirectory(projectRoot, storage), "current-policy.json");
 }
 
-function receiptFile(projectRoot, receiptId) {
+function receiptFile(projectRoot, receiptId, storage) {
   if (!RECEIPT_PATTERN.test(receiptId || "")) fail("Post-refresh projection receipt id is invalid.", "INVALID_POST_REFRESH_PROJECTION_RECEIPT_ID");
-  return path.join(rootDirectory(projectRoot), "receipts", `${receiptId}.json`);
+  return path.join(rootDirectory(projectRoot, storage), "receipts", `${receiptId}.json`);
 }
 
-function receiptPointerFile(projectRoot) {
-  return path.join(rootDirectory(projectRoot), "current.json");
+function receiptPointerFile(projectRoot, storage) {
+  return path.join(rootDirectory(projectRoot, storage), "current.json");
 }
 
-function persistImmutable(file, document, verifier, label) {
+function persistImmutable(file, document, verifier, label, storage) {
   if (fs.existsSync(file)) {
-    const stored = verifier(readJson(file, label));
+    const stored = verifier(readJson(file, label), storage);
     if (canonicalJson(stored) !== canonicalJson(document)) fail(`${label} conflicts with an existing immutable artifact.`, "POST_REFRESH_PROJECTION_ARTIFACT_CONFLICT");
     return { file, created: false };
   }
   atomicWrite(file, json(document));
-  const stored = verifier(readJson(file, label));
+  const stored = verifier(readJson(file, label), storage);
   if (canonicalJson(stored) !== canonicalJson(document)) fail(`${label} changed during persistence.`, "POST_REFRESH_PROJECTION_ARTIFACT_WRITE_MISMATCH");
   return { file, created: true };
 }
 
-function buildPolicy({ projectId, mode, selection }) {
-  if (!/^head-[a-f0-9]{20}$/.test(projectId || "") || !MODES.has(mode) || !["implicit-safe-default", "explicit-user-selection"].includes(selection)) {
+function buildPolicy({ projectId, mode, selection }, storage) {
+  if (!new RegExp(`^${formatForVerifiedOwner(storage).projectPrefix}[a-f0-9]{20}$`).test(projectId || "") || !MODES.has(mode) || !["implicit-safe-default", "explicit-user-selection"].includes(selection)) {
     fail("Post-refresh projection policy input is invalid.", "INVALID_POST_REFRESH_PROJECTION_POLICY");
   }
   const payload = {
     schemaVersion: SCHEMA_VERSION,
     kind: "PostRefreshProjectionPolicy",
-    protocol: { name: "head-agent-core-post-refresh-projection", version: POST_REFRESH_PROJECTION_VERSION },
+    protocol: { name: formatForVerifiedOwner(storage).protocol("head-agent-core-post-refresh-projection"), version: POST_REFRESH_PROJECTION_VERSION },
     projectId,
     mode,
     formats: ["markdown"],
@@ -149,15 +150,15 @@ function buildPolicy({ projectId, mode, selection }) {
     canonMutation: "none",
   };
   const policyIdentity = identity("post-refresh-projection-policy", payload);
-  return verifyPostRefreshProjectionPolicy({ ...payload, policyId: policyIdentity.id, policyHash: policyIdentity.hash });
+  return verifyPostRefreshProjectionPolicy({ ...payload, policyId: policyIdentity.id, policyHash: policyIdentity.hash }, storage);
 }
 
-export function verifyPostRefreshProjectionPolicy(policy) {
+export function verifyPostRefreshProjectionPolicy(policy, storage = undefined) {
   assertFields(policy, ["schemaVersion", "kind", "protocol", "projectId", "mode", "formats", "selection", "safeguards", "authority", "instructionAuthority", "promotionAuthority", "canonMutation", "policyId", "policyHash"], "Post-refresh projection policy");
   assertFields(policy.safeguards, ["editedDocuments", "unmanagedDocuments", "projectionFailure"], "Post-refresh projection policy safeguards");
   if (policy.schemaVersion !== SCHEMA_VERSION || policy.kind !== "PostRefreshProjectionPolicy"
-    || canonicalJson(policy.protocol) !== canonicalJson({ name: "head-agent-core-post-refresh-projection", version: POST_REFRESH_PROJECTION_VERSION })
-    || !/^head-[a-f0-9]{20}$/.test(policy.projectId || "") || !POLICY_PATTERN.test(policy.policyId || "")
+    || canonicalJson(policy.protocol) !== canonicalJson({ name: familyFormatForOriginal("head-agent-core-post-refresh-projection", policy, storage)?.protocol("head-agent-core-post-refresh-projection"), version: POST_REFRESH_PROJECTION_VERSION })
+    || !new RegExp(`^${(familyFormatForOriginal("head-agent-core-post-refresh-projection", policy, storage)?.projectPrefix)}[a-f0-9]{20}$`).test(policy.projectId || "") || !POLICY_PATTERN.test(policy.policyId || "")
     || !/^[a-f0-9]{64}$/.test(policy.policyHash || "") || !MODES.has(policy.mode)
     || canonicalJson(policy.formats) !== canonicalJson(["markdown"])
     || !["implicit-safe-default", "explicit-user-selection"].includes(policy.selection)
@@ -188,10 +189,10 @@ function buildPolicyPointer(policy) {
   return { ...payload, pointerId: pointerIdentity.id, pointerHash: pointerIdentity.hash };
 }
 
-function verifyPolicyPointer(pointer) {
+function verifyPolicyPointer(pointer, storage) {
   assertFields(pointer, ["schemaVersion", "kind", "projectId", "policyId", "policyHash", "pointerId", "pointerHash"], "Post-refresh projection policy pointer");
   if (pointer.schemaVersion !== SCHEMA_VERSION || pointer.kind !== "PostRefreshProjectionPolicyPointer"
-    || !/^head-[a-f0-9]{20}$/.test(pointer.projectId || "") || !POLICY_PATTERN.test(pointer.policyId || "")
+    || !new RegExp(`^${formatForVerifiedOwner(storage).projectPrefix}[a-f0-9]{20}$`).test(pointer.projectId || "") || !POLICY_PATTERN.test(pointer.policyId || "")
     || !/^[a-f0-9]{64}$/.test(pointer.policyHash || "")
     || !/^post-refresh-projection-policy-pointer-[a-f0-9]{24}$/.test(pointer.pointerId || "")
     || !/^[a-f0-9]{64}$/.test(pointer.pointerHash || "")) fail("Post-refresh projection policy pointer is invalid.", "INVALID_POST_REFRESH_PROJECTION_POLICY_POINTER");
@@ -203,16 +204,16 @@ function verifyPolicyPointer(pointer) {
   return pointer;
 }
 
-function loadEffectivePolicy({ projectRoot, projectId }) {
-  const pointerLocation = policyPointerFile(projectRoot);
+function loadEffectivePolicy({ projectRoot, projectId }, storage) {
+  const pointerLocation = policyPointerFile(projectRoot, storage);
   if (!fs.existsSync(pointerLocation)) {
-    return { status: "implicit-default", policy: buildPolicy({ projectId, mode: DEFAULT_POST_REFRESH_PROJECTION_MODE, selection: "implicit-safe-default" }), policyFile: null, pointer: null, pointerFile: null };
+    return { status: "implicit-default", policy: buildPolicy({ projectId, mode: DEFAULT_POST_REFRESH_PROJECTION_MODE, selection: "implicit-safe-default" }, storage), policyFile: null, pointer: null, pointerFile: null };
   }
-  const pointer = verifyPolicyPointer(readJson(pointerLocation, "Post-refresh projection policy pointer"));
+  const pointer = verifyPolicyPointer(readJson(pointerLocation, "Post-refresh projection policy pointer"), storage);
   if (pointer.projectId !== projectId) fail("Post-refresh projection policy pointer belongs to another project.", "POST_REFRESH_PROJECTION_PROJECT_MISMATCH");
-  const file = policyFile(projectRoot, pointer.policyId);
+  const file = policyFile(projectRoot, pointer.policyId, storage);
   if (!fs.existsSync(file)) fail("Post-refresh projection policy pointer references a missing policy.", "POST_REFRESH_PROJECTION_POLICY_NOT_FOUND");
-  const policy = verifyPostRefreshProjectionPolicy(readJson(file, "Post-refresh projection policy"));
+  const policy = verifyPostRefreshProjectionPolicy(readJson(file, "Post-refresh projection policy"), storage);
   if (policy.projectId !== projectId || policy.policyHash !== pointer.policyHash) fail("Post-refresh projection policy and pointer disagree.", "POST_REFRESH_PROJECTION_POLICY_POINTER_MISMATCH");
   return { status: "configured", policy, policyFile: file, pointer, pointerFile: pointerLocation };
 }
@@ -221,20 +222,22 @@ export function setPostRefreshProjectionPolicy(options = {}) {
   assertFields(options, ["root", "mode"], "Post-refresh projection policy options");
   const { root = ".", mode } = options;
   const inspected = readyProject(root);
+  const storage = inspected.storage;
   if (!MODES.has(mode)) fail("Post-refresh projection mode must be manual or automatic.", "INVALID_POST_REFRESH_PROJECTION_MODE");
   const projectRoot = inspected.project.projectRoot;
-  const policy = buildPolicy({ projectId: inspected.project.projectId, mode, selection: "explicit-user-selection" });
-  const stored = persistImmutable(policyFile(projectRoot, policy.policyId), policy, verifyPostRefreshProjectionPolicy, "Post-refresh projection policy");
+  const policy = buildPolicy({ projectId: inspected.project.projectId, mode, selection: "explicit-user-selection" }, storage);
+  const stored = persistImmutable(policyFile(projectRoot, policy.policyId, storage), policy, verifyPostRefreshProjectionPolicy, "Post-refresh projection policy", storage);
   const pointer = buildPolicyPointer(policy);
-  atomicWrite(policyPointerFile(projectRoot), json(pointer));
-  const verifiedPointer = verifyPolicyPointer(readJson(policyPointerFile(projectRoot), "Post-refresh projection policy pointer"));
+  atomicWrite(policyPointerFile(projectRoot, storage), json(pointer));
+  const verifiedPointer = verifyPolicyPointer(readJson(policyPointerFile(projectRoot, storage), "Post-refresh projection policy pointer"), storage);
   if (canonicalJson(verifiedPointer) !== canonicalJson(pointer)) fail("Post-refresh projection policy pointer changed during persistence.", "POST_REFRESH_PROJECTION_POLICY_POINTER_WRITE_MISMATCH");
-  return { status: "configured", policy, policyFile: stored.file, pointer, pointerFile: policyPointerFile(projectRoot) };
+  return { status: "configured", policy, policyFile: stored.file, pointer, pointerFile: policyPointerFile(projectRoot, storage) };
 }
 
 export function inspectPostRefreshProjectionPolicy({ root = "." } = {}) {
   const inspected = readyProject(root);
-  return loadEffectivePolicy({ projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId });
+  const storage = inspected.storage;
+  return loadEffectivePolicy({ projectRoot: inspected.project.projectRoot, projectId: inspected.project.projectId }, storage);
 }
 
 function binding(snapshot) {
@@ -250,10 +253,10 @@ function normalizedErrorCode(error) {
   return /^[A-Z][A-Z0-9_]{0,79}$/.test(code) ? code : "DOCUMENT_PROJECTION_FAILED";
 }
 
-export function preparePostRefreshProjection({ projectRoot, projectId, graph, documentProjectionAdapter = null } = {}) {
+export function preparePostRefreshProjection({ projectRoot, storage, projectId, graph, documentProjectionAdapter = null } = {}) {
   let loaded;
   try {
-    loaded = loadEffectivePolicy({ projectRoot, projectId });
+    loaded = loadEffectivePolicy({ projectRoot, projectId }, storage);
   } catch (error) {
     return {
       policy: null,
@@ -276,7 +279,7 @@ export function preparePostRefreshProjection({ projectRoot, projectId, graph, do
     candidateSet: null,
   };
   try {
-    const inspected = inspectMarkdownProjection({ projectRoot, graph, adapter: documentProjectionAdapter });
+    const inspected = inspectMarkdownProjection({ projectRoot, storage, graph, adapter: documentProjectionAdapter });
     if (inspected.status === "unmanaged") return {
       policy,
       policyStatus: loaded.status,
@@ -296,7 +299,7 @@ export function preparePostRefreshProjection({ projectRoot, projectId, graph, do
         reasonCode: "DOCUMENT_PROJECTION_STALE_EDITED_VIEW",
         candidateSet: null,
       };
-      const captured = captureDocumentChangeCandidates({ projectRoot, graph, adapter: documentProjectionAdapter, persist: true });
+      const captured = captureDocumentChangeCandidates({ projectRoot, storage, graph, adapter: documentProjectionAdapter, persist: true });
       return {
         policy,
         policyStatus: loaded.status,
@@ -329,12 +332,12 @@ export function preparePostRefreshProjection({ projectRoot, projectId, graph, do
   }
 }
 
-function buildReceipt({ projectId, preflight, beforeSnapshot, afterSnapshot, refreshRequest, refreshReceipt, outcome }) {
+function buildReceipt({ projectId, preflight, beforeSnapshot, afterSnapshot, refreshRequest, refreshReceipt, outcome }, storage) {
   const candidateSet = preflight.candidateSet || null;
   const payload = {
     schemaVersion: SCHEMA_VERSION,
     kind: "PostRefreshProjectionReceipt",
-    protocol: { name: "head-agent-core-post-refresh-projection", version: POST_REFRESH_PROJECTION_VERSION },
+    protocol: { name: formatForVerifiedOwner(storage).protocol("head-agent-core-post-refresh-projection"), version: POST_REFRESH_PROJECTION_VERSION },
     projectId,
     policy: preflight.policy ? {
       policyId: preflight.policy.policyId,
@@ -370,7 +373,7 @@ function buildReceipt({ projectId, preflight, beforeSnapshot, afterSnapshot, ref
     activeRunMutation: "none",
   };
   const receiptIdentity = identity("post-refresh-projection-receipt", payload);
-  return verifyPostRefreshProjectionReceipt({ ...payload, postRefreshProjectionReceiptId: receiptIdentity.id, postRefreshProjectionReceiptHash: receiptIdentity.hash });
+  return verifyPostRefreshProjectionReceipt({ ...payload, postRefreshProjectionReceiptId: receiptIdentity.id, postRefreshProjectionReceiptHash: receiptIdentity.hash }, storage);
 }
 
 function validSnapshotBinding(value, label) {
@@ -380,7 +383,7 @@ function validSnapshotBinding(value, label) {
     || !/^graph-snapshot-[a-f0-9]{24}$/.test(value.graphSnapshotId || "")) fail(`${label} is invalid.`, "INVALID_POST_REFRESH_PROJECTION_RECEIPT");
 }
 
-export function verifyPostRefreshProjectionReceipt(receipt) {
+export function verifyPostRefreshProjectionReceipt(receipt, storage = undefined) {
   assertFields(receipt, ["schemaVersion", "kind", "protocol", "projectId", "policy", "refresh", "base", "target", "outcome", "authority", "instructionAuthority", "promotionAuthority", "canonMutation", "activeRunMutation", "postRefreshProjectionReceiptId", "postRefreshProjectionReceiptHash"], "Post-refresh projection receipt");
   assertFields(receipt.refresh, ["refreshRequestId", "refreshRequestHash", "refreshReceiptId", "refreshReceiptHash", "status"], "Post-refresh projection receipt refresh binding");
   assertFields(receipt.base, ["worldModelId", "sourceSnapshotId", "graphSnapshotId", "documentStatus", "documentProjectionId"], "Post-refresh projection receipt base");
@@ -389,8 +392,8 @@ export function verifyPostRefreshProjectionReceipt(receipt) {
   validSnapshotBinding(receipt.target, "Post-refresh projection receipt target snapshot");
   if (receipt.policy !== null) assertFields(receipt.policy, ["policyId", "policyHash", "mode", "selection"], "Post-refresh projection receipt policy binding");
   if (receipt.schemaVersion !== SCHEMA_VERSION || receipt.kind !== "PostRefreshProjectionReceipt"
-    || canonicalJson(receipt.protocol) !== canonicalJson({ name: "head-agent-core-post-refresh-projection", version: POST_REFRESH_PROJECTION_VERSION })
-    || !/^head-[a-f0-9]{20}$/.test(receipt.projectId || "")
+    || canonicalJson(receipt.protocol) !== canonicalJson({ name: familyFormatForOriginal("head-agent-core-post-refresh-projection", receipt, storage)?.protocol("head-agent-core-post-refresh-projection"), version: POST_REFRESH_PROJECTION_VERSION })
+    || !new RegExp(`^${(familyFormatForOriginal("head-agent-core-post-refresh-projection", receipt, storage)?.projectPrefix)}[a-f0-9]{20}$`).test(receipt.projectId || "")
     || !RECEIPT_PATTERN.test(receipt.postRefreshProjectionReceiptId || "")
     || !/^[a-f0-9]{64}$/.test(receipt.postRefreshProjectionReceiptHash || "")
     || !REFRESH_REQUEST_PATTERN.test(receipt.refresh.refreshRequestId || "")
@@ -445,10 +448,10 @@ function buildReceiptPointer(receipt) {
   return { ...payload, pointerId: pointerIdentity.id, pointerHash: pointerIdentity.hash };
 }
 
-function verifyReceiptPointer(pointer) {
+function verifyReceiptPointer(pointer, storage) {
   assertFields(pointer, ["schemaVersion", "kind", "projectId", "postRefreshProjectionReceiptId", "refreshReceiptId", "policyId", "pointerId", "pointerHash"], "Post-refresh projection pointer");
   if (pointer.schemaVersion !== SCHEMA_VERSION || pointer.kind !== "PostRefreshProjectionPointer"
-    || !/^head-[a-f0-9]{20}$/.test(pointer.projectId || "") || !RECEIPT_PATTERN.test(pointer.postRefreshProjectionReceiptId || "")
+    || !new RegExp(`^${formatForVerifiedOwner(storage).projectPrefix}[a-f0-9]{20}$`).test(pointer.projectId || "") || !RECEIPT_PATTERN.test(pointer.postRefreshProjectionReceiptId || "")
     || !REFRESH_RECEIPT_PATTERN.test(pointer.refreshReceiptId || "")
     || (pointer.policyId !== null && !POLICY_PATTERN.test(pointer.policyId || ""))
     || !/^post-refresh-projection-pointer-[a-f0-9]{24}$/.test(pointer.pointerId || "")
@@ -463,6 +466,7 @@ function verifyReceiptPointer(pointer) {
 
 export function completePostRefreshProjection({
   projectRoot,
+  storage,
   projectId,
   beforeSnapshot,
   afterSnapshot,
@@ -476,11 +480,11 @@ export function completePostRefreshProjection({
     outcome = { status: preflight.disposition, reasonCode: preflight.reasonCode, documentProjectionId: null, documentProjectionHash: null };
   } else {
     try {
-      const currentPolicy = loadEffectivePolicy({ projectRoot, projectId }).policy;
+      const currentPolicy = loadEffectivePolicy({ projectRoot, projectId }, storage).policy;
       if (currentPolicy.policyId !== preflight.policy.policyId || currentPolicy.policyHash !== preflight.policy.policyHash) {
         fail("Post-refresh projection policy changed during refresh; document publication was skipped.", "POST_REFRESH_PROJECTION_POLICY_CHANGED");
       }
-      const materialized = materializeMarkdownProjection({ projectRoot, graph: afterSnapshot.temporalProvenanceGraph, adapter: documentProjectionAdapter });
+      const materialized = materializeMarkdownProjection({ projectRoot, storage, graph: afterSnapshot.temporalProvenanceGraph, adapter: documentProjectionAdapter });
       outcome = {
         status: materialized.status,
         reasonCode: materialized.status === "projected" ? "AUTOMATIC_MARKDOWN_PROJECTION_CREATED" : "AUTOMATIC_MARKDOWN_PROJECTION_UNCHANGED",
@@ -491,42 +495,43 @@ export function completePostRefreshProjection({
       outcome = { status: "failed", reasonCode: normalizedErrorCode(error), documentProjectionId: null, documentProjectionHash: null };
     }
   }
-  const receipt = buildReceipt({ projectId, preflight, beforeSnapshot, afterSnapshot, refreshRequest, refreshReceipt, outcome });
-  const stored = persistImmutable(receiptFile(projectRoot, receipt.postRefreshProjectionReceiptId), receipt, verifyPostRefreshProjectionReceipt, "Post-refresh projection receipt");
+  const receipt = buildReceipt({ projectId, preflight, beforeSnapshot, afterSnapshot, refreshRequest, refreshReceipt, outcome }, storage);
+  const stored = persistImmutable(receiptFile(projectRoot, receipt.postRefreshProjectionReceiptId, storage), receipt, verifyPostRefreshProjectionReceipt, "Post-refresh projection receipt", storage);
   const pointer = buildReceiptPointer(receipt);
-  atomicWrite(receiptPointerFile(projectRoot), json(pointer));
-  const verifiedPointer = verifyReceiptPointer(readJson(receiptPointerFile(projectRoot), "Post-refresh projection pointer"));
+  atomicWrite(receiptPointerFile(projectRoot, storage), json(pointer));
+  const verifiedPointer = verifyReceiptPointer(readJson(receiptPointerFile(projectRoot, storage), "Post-refresh projection pointer"), storage);
   if (canonicalJson(verifiedPointer) !== canonicalJson(pointer)) fail("Post-refresh projection pointer changed during persistence.", "POST_REFRESH_PROJECTION_POINTER_WRITE_MISMATCH");
-  return { status: receipt.outcome.status, receipt, receiptFile: stored.file, pointer, pointerFile: receiptPointerFile(projectRoot) };
+  return { status: receipt.outcome.status, receipt, receiptFile: stored.file, pointer, pointerFile: receiptPointerFile(projectRoot, storage) };
 }
 
 export function readPostRefreshProjectionReceipt({ root = ".", postRefreshProjectionReceiptId, documentProjectionAdapter = null } = {}) {
   const inspected = readyProject(root);
+  const storage = inspected.storage;
   const projectRoot = inspected.project.projectRoot;
-  const file = receiptFile(projectRoot, postRefreshProjectionReceiptId);
+  const file = receiptFile(projectRoot, postRefreshProjectionReceiptId, storage);
   if (!fs.existsSync(file)) fail(`Post-refresh projection receipt is missing: ${postRefreshProjectionReceiptId}`, "POST_REFRESH_PROJECTION_RECEIPT_NOT_FOUND");
-  const receipt = verifyPostRefreshProjectionReceipt(readJson(file, "Post-refresh projection receipt"));
+  const receipt = verifyPostRefreshProjectionReceipt(readJson(file, "Post-refresh projection receipt"), storage);
   if (receipt.projectId !== inspected.project.projectId) fail("Post-refresh projection receipt belongs to another project.", "POST_REFRESH_PROJECTION_PROJECT_MISMATCH");
   let policy = null;
   if (receipt.policy) {
     policy = receipt.policy.selection === "implicit-safe-default"
-      ? buildPolicy({ projectId: receipt.projectId, mode: DEFAULT_POST_REFRESH_PROJECTION_MODE, selection: "implicit-safe-default" })
-      : verifyPostRefreshProjectionPolicy(readJson(policyFile(projectRoot, receipt.policy.policyId), "Post-refresh projection policy"));
+      ? buildPolicy({ projectId: receipt.projectId, mode: DEFAULT_POST_REFRESH_PROJECTION_MODE, selection: "implicit-safe-default" }, storage)
+      : verifyPostRefreshProjectionPolicy(readJson(policyFile(projectRoot, receipt.policy.policyId, storage), "Post-refresh projection policy"), storage);
     if (policy.policyId !== receipt.policy.policyId || policy.policyHash !== receipt.policy.policyHash || policy.mode !== receipt.policy.mode) {
       fail("Post-refresh projection receipt policy binding is inconsistent.", "POST_REFRESH_PROJECTION_POLICY_RECEIPT_MISMATCH");
     }
   }
   let candidateSet = null;
   if (receipt.outcome.candidateSetId) {
-    candidateSet = readDocumentChangeCandidateSet({ projectRoot, id: receipt.outcome.candidateSetId }).candidateSet;
+    candidateSet = readDocumentChangeCandidateSet({ projectRoot, storage, id: receipt.outcome.candidateSetId }).candidateSet;
     if (candidateSet.candidateSetHash !== receipt.outcome.candidateSetHash) fail("Post-refresh projection receipt candidate binding is inconsistent.", "POST_REFRESH_PROJECTION_CANDIDATE_RECEIPT_MISMATCH");
   }
   let projection = null;
   if (receipt.outcome.documentProjectionId) {
-    const adapter = createDocumentProjectionAdapter({ projectRoot, adapter: documentProjectionAdapter });
+    const adapter = createDocumentProjectionAdapter({ projectRoot, storage, adapter: documentProjectionAdapter });
     const entry = adapter.readProjection(receipt.outcome.documentProjectionId);
     if (!entry) fail("Post-refresh projection receipt references a missing DocumentProjection.", "POST_REFRESH_DOCUMENT_PROJECTION_NOT_FOUND");
-    projection = verifyDocumentProjection(entry.document);
+    projection = verifyDocumentProjection(entry.document, null, storage);
     if (projection.documentProjectionHash !== receipt.outcome.documentProjectionHash || projection.graphSnapshotId !== receipt.target.graphSnapshotId) {
       fail("Post-refresh projection receipt DocumentProjection binding is inconsistent.", "POST_REFRESH_DOCUMENT_PROJECTION_RECEIPT_MISMATCH");
     }
@@ -536,10 +541,11 @@ export function readPostRefreshProjectionReceipt({ root = ".", postRefreshProjec
 
 export function inspectPostRefreshProjection({ root = ".", documentProjectionAdapter = null } = {}) {
   const inspected = readyProject(root);
+  const storage = inspected.storage;
   const projectRoot = inspected.project.projectRoot;
   let policy;
   try {
-    policy = loadEffectivePolicy({ projectRoot, projectId: inspected.project.projectId });
+    policy = loadEffectivePolicy({ projectRoot, projectId: inspected.project.projectId }, storage);
   } catch (error) {
     policy = {
       status: "invalid",
@@ -547,9 +553,9 @@ export function inspectPostRefreshProjection({ root = ".", documentProjectionAda
       authority: "invalid-operational-policy-has-no-project-authority",
     };
   }
-  const file = receiptPointerFile(projectRoot);
+  const file = receiptPointerFile(projectRoot, storage);
   if (!fs.existsSync(file)) return { status: "not-evaluated", policy };
-  const pointer = verifyReceiptPointer(readJson(file, "Post-refresh projection pointer"));
+  const pointer = verifyReceiptPointer(readJson(file, "Post-refresh projection pointer"), storage);
   if (pointer.projectId !== inspected.project.projectId) fail("Post-refresh projection pointer belongs to another project.", "POST_REFRESH_PROJECTION_PROJECT_MISMATCH");
   const receipt = readPostRefreshProjectionReceipt({ root: projectRoot, postRefreshProjectionReceiptId: pointer.postRefreshProjectionReceiptId, documentProjectionAdapter });
   if (receipt.receipt.refresh.refreshReceiptId !== pointer.refreshReceiptId || (receipt.receipt.policy?.policyId || null) !== pointer.policyId) {

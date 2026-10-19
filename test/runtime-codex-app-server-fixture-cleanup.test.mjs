@@ -6,7 +6,7 @@ import test from "node:test";
 import { finishCodexAppServerFixture } from "./helpers/codex-app-server-fixture-cleanup.mjs";
 
 function directory(t) {
-  const dir = fs.mkdtempSync(path.join(process.env.HEAD_AGENT_TEST_TMP || os.tmpdir(), "head-fixture-cleanup-"));
+  const dir = fs.mkdtempSync(path.join(process.env.LODE_AGENT_TEST_TMP || process.env.HEAD_AGENT_TEST_TMP || os.tmpdir(), "head-fixture-cleanup-"));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   return dir;
 }

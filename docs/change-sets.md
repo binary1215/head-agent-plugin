@@ -52,14 +52,14 @@ These nodes and edges are derived evidence with `instructionAuthority: false`, `
 ## Commands
 
 ```text
-node scripts/head.mjs change-set-record <project> --input <change-set.json>
-node scripts/head.mjs change-set-status <project>
-node scripts/head.mjs change-set-read <project> --change-set <change-set-id>
-node scripts/head.mjs change-impact-candidates <project> --candidate-set <candidate-set-id>
-node scripts/head.mjs change-impact-review <project> --input <review.json>
-node scripts/head.mjs change-impact-review-read <project> --review <review-decision-id>
-node scripts/head.mjs change-set-vcs-attach <project> --input <vcs-evidence.json>
-node scripts/head.mjs change-set-vcs-read <project> --vcs-evidence <vcs-evidence-id>
+node scripts/lode.mjs change-set-record <project> --input <change-set.json>
+node scripts/lode.mjs change-set-status <project>
+node scripts/lode.mjs change-set-read <project> --change-set <change-set-id>
+node scripts/lode.mjs change-impact-candidates <project> --candidate-set <candidate-set-id>
+node scripts/lode.mjs change-impact-review <project> --input <review.json>
+node scripts/lode.mjs change-impact-review-read <project> --review <review-decision-id>
+node scripts/lode.mjs change-set-vcs-attach <project> --input <vcs-evidence.json>
+node scripts/lode.mjs change-set-vcs-read <project> --vcs-evidence <vcs-evidence-id>
 ```
 
 Minimal recording input:
@@ -95,20 +95,20 @@ VCS evidence attachment input:
 }
 ```
 
-The read-only MCP tools `head_change_set_status` and `head_vcs_evidence` expose verified state and attachments without recording, reviewing, or promoting anything. When an exact durable impact decision exists but its state pointer is pending, status reports recovery with `requiresNewUserDecision: false` and directs the caller to retry the unchanged decision.
+The read-only MCP tools `lode_change_set_status` and `lode_vcs_evidence` expose verified state and attachments without recording, reviewing, or promoting anything. When an exact durable impact decision exists but its state pointer is pending, status reports recovery with `requiresNewUserDecision: false` and directs the caller to retry the unchanged decision.
 
 ## Project artifacts
 
 ```text
-.head/change-sets/current.json
-.head/change-sets/records/change-set-*.json
-.head/change-sets/impact-candidate-sets/change-impact-candidates-*.json
-.head/change-sets/impact-review-decisions/change-impact-review-decision-*.json
-.head/change-sets/vcs-evidence/vcs-evidence-*.json
+.lode/change-sets/current.json
+.lode/change-sets/records/change-set-*.json
+.lode/change-sets/impact-candidate-sets/change-impact-candidates-*.json
+.lode/change-sets/impact-review-decisions/change-impact-review-decision-*.json
+.lode/change-sets/vcs-evidence/vcs-evidence-*.json
 ```
 
 Every artifact and pointer is content-derived and digest-verified. Source drift, unaccepted execution review, mismatched ResultPacket/ReviewDecision, missing pinned snapshots, stale candidate identity, tampering, active/pending Run conflict, and empty revision difference fail closed.
 
 ## Deferred boundaries
 
-Automatic ChangeSet creation from CI or filesystem events, inferred commit-to-ChangeSet matching, general execution-lineage graph projection, merge automation, imported ticket/backlog adapters, projection of document review receipts into later graphs, Obsidian/Notion projection, and GraphDB acceleration remain deferred. Non-blocking provider-HEAD Conformance candidates are active as a separate P3/P4/P5 subsystem and never reuse this blocking impact-review state pointer; see [Conformance reconciliation](conformance-reconciliation.md). Explicit DocumentChangeCandidate review/application is active but does not create a ChangeSet or alter ChangeSet authority.
+Automatic ChangeSet creation from CI or filesystem events, inferred commit-to-ChangeSet matching, general execution-lineage graph projection, merge automation, imported ticket/backlog adapters, projection of document review receipts into later graphs, Obsidian/Notion projection, and GraphDB acceleration remain deferred. Non-blocking provider-Lode Conformance candidates are active as a separate P3/P4/P5 subsystem and never reuse this blocking impact-review state pointer; see [Conformance reconciliation](conformance-reconciliation.md). Explicit DocumentChangeCandidate review/application is active but does not create a ChangeSet or alter ChangeSet authority.

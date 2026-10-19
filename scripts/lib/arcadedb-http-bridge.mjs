@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import fs from "node:fs";
+import { familyFormatForOriginal } from "./project-storage-format.mjs";
 
 const MAXIMUM_WIRE_BYTES = 64 * 1024 * 1024;
 const fail = (message, code, exitCode = 1, details = {}) => {
@@ -69,7 +70,7 @@ const queryBatch = operation === "query-batch" ? input.queries : null;
 if (operation === "query-batch" && (!Array.isArray(queryBatch) || queryBatch.length < 1 || queryBatch.length > 8)) {
   fail("ArcadeDB query batch must contain from one through eight queries.", "ARCADEDB_BRIDGE_INVALID_INPUT");
 }
-if (operation === "query-batch" && (input.protocol?.name !== "head-agent-core-arcadedb-query-batch" || input.protocol?.version !== "0.1.0")) {
+if (operation === "query-batch" && (!familyFormatForOriginal("head-agent-core-arcadedb-query-batch", input) || input.protocol?.version !== "0.1.0")) {
   fail("ArcadeDB query batch protocol is incompatible.", "ARCADEDB_BRIDGE_INVALID_INPUT");
 }
 

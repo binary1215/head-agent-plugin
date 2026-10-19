@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import {initializeProject} from '../scripts/lib/head-core.mjs';
+import {initializeProject,inspectProject} from '../scripts/lib/head-core.mjs';
 import {createHeadSession,withSessionRoute} from '../scripts/lib/session-routing.mjs';
 import {recordSessionWorkEvidence,readSessionWorkContext} from '../scripts/lib/session-work-context.mjs';
 import {updateProjectDirection} from '../scripts/lib/project-direction.mjs';
@@ -69,9 +69,10 @@ function fixture(t){
  const parent=process.env.HEAD_AGENT_TEST_TMP||os.tmpdir();fs.mkdirSync(parent,{recursive:true});
  const base=fs.realpathSync(fs.mkdtempSync(path.join(parent,'head-usefulness-surface-'))),root=path.join(base,'project'),operational=path.join(base,'host');
  fs.mkdirSync(root);initializeProject({root,pluginRoot,runtimes:['codex','claude','opencode']});
+ const layout=inspectProject(root).storage;
  const selected=createHeadSession({root,purpose:'Explain the synthetic cache behavior; no deployment or external calls.'});
  if(process.env.HEAD_AGENT_KEEP_TEST_TMP!=='1')t.after(()=>fs.rmSync(base,{recursive:true,force:true}));
- return{base,root,operational,selected,route:fn=>withSessionRoute(root,selected.sessionId,fn)};
+ return{base,root,layout,operational,selected,route:fn=>withSessionRoute(root,selected.sessionId,fn)};
 }
 function snapshot(root){
  return fs.readdirSync(root,{recursive:true,withFileTypes:true}).filter(e=>e.isFile()).map(e=>{
@@ -93,15 +94,15 @@ async function call(root,name,args={},routed=false){
  return value;
 }
 // Fixture-only compatibility variants; reads must never repair either index.
-function navigationCases(root){
- const file=path.join(root,'.head/graph-discovery/index.json'),raw=fs.readFileSync(file,'utf8'),legacy=JSON.parse(raw);
+function navigationCases(root,layout){
+ const file=path.join(root,layout.directory,'graph-discovery/index.json'),raw=fs.readFileSync(file,'utf8'),legacy=JSON.parse(raw);
  assert.equal(legacy.sessionWorkNavigation?.version,1);delete legacy.sessionWorkNavigation;
  return ['hinted','legacy','missing'].map(mode=>({mode,prepare(){
   if(mode==='missing')fs.unlinkSync(file);else fs.writeFileSync(file,mode==='hinted'?raw:JSON.stringify(legacy));
  }}));
 }
 test('generated instructions lead with the original outcome and preserve only necessary working boundaries',t=>{
- const f=fixture(t),text=fs.readFileSync(path.join(f.root,'.head/generated/head-instructions.md'),'utf8');
+ const f=fixture(t),text=fs.readFileSync(path.join(f.root,f.layout.directory,'generated/lode-instructions.md'),'utf8');
  assert.match(text,/understand the user's work.*finish the whole outcome/);
  assert.match(text,/Keep the user's original task as the active objective/);
  assert.match(text,/Work directly by default/);assert.match(text,/current request bounds action/);
@@ -150,7 +151,7 @@ test('CLI and direct/router MCP explain supplied Session work without changing o
 test('default selected work coverage crosses CLI and direct/router MCP without extra calls or writes',async t=>{
  const f=fixture(t);for(let i=0;i<10;i++)f.route(()=>recordSessionWorkEvidence({root:f.root,input:{summary:`Synthetic observation ${i}`,occurrenceKey:`useful-${i}`}}));
  let selectedBodies;
- for(const variant of navigationCases(f.root)){
+ for(const variant of navigationCases(f.root,f.layout)){
  variant.prepare();const before=snapshot(f.base),expected=f.route(()=>readSessionWorkContext({root:f.root}));
  const inspected=variant.mode==='hinted'?8:10;
  assert.equal(expected.status,'work_context_partial');assert.equal(expected.coverage.originals,10);

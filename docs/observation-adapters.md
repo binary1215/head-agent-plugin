@@ -2,11 +2,11 @@
 
 ## Task-scoped source collection
 
-`head_source_context` / `head source-context` collects HEAD-selected current
-source evidence and feeds it into the existing Context Compiler. HEAD translates
+`lode_source_context` / `head source-context` collects Lode-selected current
+source evidence and feeds it into the existing Context Compiler. Lode translates
 the conversational task into exact paths and qualified function names; users do
 not author hashes, IDs or JSON. No World scan, full reindex, Product onboarding or
-GraphDB is required. A task-only request returns a HEAD selection step rather
+GraphDB is required. A task-only request returns a Lode selection step rather
 than inventing semantic relevance from words.
 
 The current live collector is **Python stdlib AST**, not LSP: Python 3.8+ found
@@ -24,7 +24,7 @@ concurrent changes and non-UTF8/BOM/lone-CR input rather than silently rewriting
 it. AST UTF8 byte offsets are converted to exact UTF16 ranges, including CRLF and
 non-BMP text. Source files and raw responses each use the existing v0 1 MiB bound;
 ordinary source excerpts disclose omitted bytes and fit the common Observation
-64 KiB string contract. The batch has at most 32 HEAD-selected needs. A per-worker
+64 KiB string contract. The batch has at most 32 Lode-selected needs. A per-worker
 15-second default (Host-selectable up to 120 seconds), bounded stdout/stderr and
 explicit cancellation keep failures finite; these are operational bounds, not
 semantic sufficiency gates.
@@ -35,8 +35,8 @@ Default ephemeral inputs receive the same verification before Context use but
 make no durable-recovery claim. Cross-process reuse checks current source,
 query, Python/AST/tokenizer, worker and normalizer identities. Failed collection
 records preserve raw responses when available and coalesce identical outcomes.
-Read exact success/failure keys with `head_source_observation_read`; keys are
-returned to HEAD automatically. Retention is a task-local evidence choice, not
+Read exact success/failure keys with `lode_source_observation_read`; keys are
+returned to Lode automatically. Retention is a task-local evidence choice, not
 an extra user approval. Neither cache, observations, results nor Context previews
 alter Product Canon, ReviewDecision or P2 checkpoint/direction.
 
@@ -54,7 +54,7 @@ P2-typed **unpersisted, unbound preview**, not a recovery update.
 `pendingNeeds` applies only to dependent judgments. Independent needs still
 collect and compile; source-text fallback never satisfies a CALLS requirement.
 `observed` means selected observations were included, **not** task completion,
-whole-call-graph completeness or HEAD semantic acceptance. CLI interrupts and
+whole-call-graph completeness or Lode semantic acceptance. CLI interrupts and
 MCP cancellation/connection close settle after the owned worker terminates.
 
 Read [Architecture](architecture.md) and [Authority planes](authority-plane-contract.md) before changing this contract. Release-specific evidence remains documented in [Release observation](release-observation.md), per-target delivery history in [Delivery state observation](delivery-observation.md), and exact task inclusion in [Context Compiler](context-compiler.md).
@@ -75,7 +75,7 @@ Core publishes each create-only Observation artifact with an atomic same-directo
 
 Coverage is explicit: complete, sampled, partial, or unknown. Complete coverage is accepted only when a bounded enumeration supplies a query digest, equal examined and source totals, and zero omissions. An adapter cannot claim completeness from a sample.
 
-The rebuildable common `ObservationStatusProjection` creates `CONFORMS_TO`, `EVIDENCED_BY`, and `DERIVED_FROM`. It does not infer impact, motivation, measurement, ownership, success, or Feature links. The delivery specialization may additionally add `AT_REVISION` only after verifying an exact retained World `FileRevision`; declared revision strings receive no such edge. Product interpretation belongs to a HEAD-authored `ProductHypothesis` or the existing review-gated candidate flow. `ProductSignal` remains available for lossless human/source statements; it is not manufactured from arbitrary payload fields.
+The rebuildable common `ObservationStatusProjection` creates `CONFORMS_TO`, `EVIDENCED_BY`, and `DERIVED_FROM`. It does not infer impact, motivation, measurement, ownership, success, or Feature links. The delivery specialization may additionally add `AT_REVISION` only after verifying an exact retained World `FileRevision`; declared revision strings receive no such edge. Product interpretation belongs to a Lode-authored `ProductHypothesis` or the existing review-gated candidate flow. `ProductSignal` remains available for lossless human/source statements; it is not manufactured from arbitrary payload fields.
 
 Release evidence is a strict specialization, not a replacement by the generic adapter. `BranchStateObservation`, `DeploymentResultObservation`, and `ReleaseObservation` preserve their exact Git reachability, approval, commit, ref, and lineage checks.
 
@@ -85,11 +85,11 @@ Because a verified `delivery.state` record grants the graph-specific `AT_REVISIO
 
 ## Host adapter SDK and reference file adapter
 
-`ObservationAdapterRegistry` is a process-local P5 Host registry. It binds an adapter instance to one exact ready HEAD Project, `ObservationSourceBinding`, and `ObservationTypeDescriptor`, then delegates collection through the same Core verifier used by structured Host input. The same source alias may be used independently in different Projects, but its opaque source ID and collection remain Project-bound. Registration has no arbitrary Core source-count gate. Its non-persisted P4 discovery view returns at most 64 sources per page, supports exact type/adapter/availability filters, and exposes an opaque cursor bound to the current filtered registry projection. A stale cursor restarts at the first page with explicit resynchronization metadata because source discovery has no authority or mutation effect; collection still revalidates the exact current Project and source ID. The registry, source aliases, source paths, credentials, cursors, provider identities, and polling state are never written into the project. Core never discovers or dynamically loads project adapter code; only a trusted Host composition may register an adapter instance.
+`ObservationAdapterRegistry` is a process-local P5 Host registry. It binds an adapter instance to one exact ready Lode Project, `ObservationSourceBinding`, and `ObservationTypeDescriptor`, then delegates collection through the same Core verifier used by structured Host input. The same source alias may be used independently in different Projects, but its opaque source ID and collection remain Project-bound. Registration has no arbitrary Core source-count gate. Its non-persisted P4 discovery view returns at most 64 sources per page, supports exact type/adapter/availability filters, and exposes an opaque cursor bound to the current filtered registry projection. A stale cursor restarts at the first page with explicit resynchronization metadata because source discovery has no authority or mutation effect; collection still revalidates the exact current Project and source ID. The registry, source aliases, source paths, credentials, cursors, provider identities, and polling state are never written into the project. Core never discovers or dynamically loads project adapter code; only a trusted Host composition may register an adapter instance.
 
 Each source projection includes a bounded descriptor-shape summary: type/version, forms, and at most 16 field key/type/required triples with an omission count. A Host may attach only a bounded operational availability state (`unknown`, `ready`, `auth-missing`, `rate-limited`, or `unavailable`), timestamp, retry timestamp, and stable reason code. These hints are P5 operational evidence with false semantic authority. They cannot rank product relevance, establish freshness sufficiency, or become instructions.
 
-Product-specific adapters own authentication, API queries, pagination, rate limits, webhook acknowledgement, and cursor storage outside Core. They normalize one bounded result into the common contract; Core persists only the verified P3 record and receipt. Missing optional adapters do not block HEAD, and adapter output cannot assign product meaning.
+Product-specific adapters own authentication, API queries, pagination, rate limits, webhook acknowledgement, and cursor storage outside Core. They normalize one bounded result into the common contract; Core persists only the verified P3 record and receipt. Missing optional adapters do not block Lode, and adapter output cannot assign product meaning.
 
 `JsonEventFileObservationAdapter` is the provider-neutral reference for CI or webhook spool integration. It opens one regular, non-symlink JSON file from an absolute Host path, verifies the opened file identity, enforces a 512 KiB read bound, and hashes the raw event key and full evidence before collection. The source path, raw event key, source alias, and credential reference names are not persisted. The event file contains only the product-shaped event:
 
@@ -145,27 +145,27 @@ Run `observation-file-ingest` only from a trusted Host/CI integration. It intent
 
 ## Conversational configured-source flow
 
-A trusted Host composition passes its Project-bound registry to `serveMcp`. After provider HEAD selects one exact required `typeKey`, `head_observation_prepare` performs the read-only reuse-first flow: it queries current exact Observation IDs, then returns matching configured source IDs without selecting or collecting one. When existing evidence is not semantically sufficient and durable current evidence is actually needed, HEAD pages or filters `head_observation_sources` as necessary and calls `head_observation_collect_source` with one selected ID:
+A trusted Host composition passes its Project-bound registry to `serveMcp`. After provider Lode selects one exact required `typeKey`, `lode_observation_prepare` performs the read-only reuse-first flow: it queries current exact Observation IDs, then returns matching configured source IDs without selecting or collecting one. When existing evidence is not semantically sufficient and durable current evidence is actually needed, Lode pages or filters `lode_observation_sources` as necessary and calls `lode_observation_collect_source` with one selected ID:
 
 ```text
 trusted Host configuration
-  -> head_observation_prepare(exact HEAD-selected typeKey)
+  -> lode_observation_prepare(exact Lode-selected typeKey)
   -> existing exact Observation IDs first
-  -> head_observation_sources only for paging or diagnosis
+  -> lode_observation_sources only for paging or diagnosis
   -> opaque Project-bound sourceId
-  -> head_observation_collect_source
+  -> lode_observation_collect_source
   -> verified P3 ObservationRecord + ObservationCollectionReceipt
 ```
 
-The preparation projection does not judge semantic sufficiency, infer relevance from lexical overlap, select a source, or persist anything. Provider HEAD performs that judgment in the conversation. The model and user provide no file path, credential reference, binding, descriptor, digest, coverage claim, provider identity, or source alias on this path. Core verifies Project readiness before the adapter may access its source. Missing Host composition is disclosed as optional adapter unavailability; it does not fall back to user-authored provenance or weaken the common contract. An embedding Host may use the same injected registry with the advanced CLI composition, but the ordinary standalone CLI does not load adapter code or configuration dynamically.
+The preparation projection does not judge semantic sufficiency, infer relevance from lexical overlap, select a source, or persist anything. Provider Lode performs that judgment in the conversation. The model and user provide no file path, credential reference, binding, descriptor, digest, coverage claim, provider identity, or source alias on this path. Core verifies Project readiness before the adapter may access its source. Missing Host composition is disclosed as optional adapter unavailability; it does not fall back to user-authored provenance or weaken the common contract. An embedding Host may use the same injected registry with the advanced CLI composition, but the ordinary standalone CLI does not load adapter code or configuration dynamically.
 
 ## Metric evidence workflow
 
-The metric workflow is a thin provider-neutral use of the common contract, not a second analytics store. `head_metric_define` registers a versioned metric shape containing its unit and desired direction. An exact replay is idempotent; a conflicting shape under the same metric key and version fails with a request to use a new version instead of making later lookup ambiguous.
+The metric workflow is a thin provider-neutral use of the common contract, not a second analytics store. `lode_metric_define` registers a versioned metric shape containing its unit and desired direction. An exact replay is idempotent; a conflicting shape under the same metric key and version fails with a request to use a new version instead of making later lookup ambiguous.
 
-`head_metric_observe` records an exact subject, value, time scope, source scope, sample size when known, coverage, and collection-adapter identity. If a Host retries the same event without resupplying an observation time, Core reuses the durable event time; changed content under the same source event still fails closed. `head_metric_compare` permits a numeric difference only for the exact same descriptor, subject, unit, and direction. Different adapter key, adapter version, adapter descriptor digest, source scope, snapshot/aggregate form, period duration, sample size, or coverage state does not add an approval gate: the numeric comparison remains available, but the result marks the condition as same, different, or unknown, states that no normalization was applied, and downgrades derived coverage rather than presenting a like-for-like result. Even when every recorded collection condition matches, Core reports only `recordedCollectionConditionsEquivalent: true`; semantic equivalence remains `not-assessed` and is never mechanically inferred.
+`lode_metric_observe` records an exact subject, value, time scope, source scope, sample size when known, coverage, and collection-adapter identity. If a Host retries the same event without resupplying an observation time, Core reuses the durable event time; changed content under the same source event still fails closed. `lode_metric_compare` permits a numeric difference only for the exact same descriptor, subject, unit, and direction. Different adapter key, adapter version, adapter descriptor digest, source scope, snapshot/aggregate form, period duration, sample size, or coverage state does not add an approval gate: the numeric comparison remains available, but the result marks the condition as same, different, or unknown, states that no normalization was applied, and downgrades derived coverage rather than presenting a like-for-like result. Even when every recorded collection condition matches, Core reports only `recordedCollectionConditionsEquivalent: true`; semantic equivalence remains `not-assessed` and is never mechanically inferred.
 
-`head_metric_assess` records only a P3 ProductHypothesis and always states that causality is not established. A follow-up uses `head_product_initiative_propose` with the exact assessment hypothesis ID; there is no separate metric formatter. It creates only a Product Initiative candidate, which still needs the existing explicit user review before approval. `head_metric_status` and `head_metric_trace` are bounded read-only P4 views. None of these operations writes Product Canon, a ReviewDecision, Conformance disposition, or P2 recovery direction.
+`lode_metric_assess` records only a P3 ProductHypothesis and always states that causality is not established. A follow-up uses `lode_product_initiative_propose` with the exact assessment hypothesis ID; there is no separate metric formatter. It creates only a Product Initiative candidate, which still needs the existing explicit user review before approval. `lode_metric_status` and `lode_metric_trace` are bounded read-only P4 views. None of these operations writes Product Canon, a ReviewDecision, Conformance disposition, or P2 recovery direction.
 
 ## Context and use
 
@@ -187,10 +187,10 @@ neither a retry nor a World view grants Product or recovery authority.
 
 ### Optional Python declaration reads
 
-The user asks for the task once; HEAD chooses how to inspect it without requesting
+The user asks for the task once; Lode chooses how to inspect it without requesting
 JSON, digests, IDs, parser or budget choices. Keep ordinary file reads or an
 already-current World range read when sufficient; no Context workflow is needed
-just because the file is Python or a declaration name is known. HEAD may choose
+just because the file is Python or a declaration name is known. Lode may choose
 selected-source for useful narrow evidence, exact declaration boundaries or
 task-scoped Context inclusion, without a per-call benchmark, justification form
 or approval. Once chosen, read a known unique name directly; outline is optional.
@@ -200,7 +200,7 @@ Outline plus selection can cost more than one file read. Count World constructio
 separately if needed; ordinary World ranges may include trailing lines and do not
 create a Context Capsule. These outputs do not establish universal performance superiority.
 
-When parsing is unavailable, fails, or evidence drifts, HEAD can re-query or
+When parsing is unavailable, fails, or evidence drifts, Lode can re-query or
 continue ordinary reads without pretending that exact boundaries or Context
 inclusion were verified. Never reuse stale selection coordinates. Independent
 work continues; ask only about unresolved user intent or existing authority
@@ -216,12 +216,12 @@ affect latency; serialized in-process dispatch bytes are not stdio wire or
 installed Host cost. Provider tokens, billing and prompt-cache savings remain
 unknown. This measurement is optional, not a usage or deployment gate.
 
-The existing `head_source_context` accepts `declarations` for a bounded static
+The existing `lode_source_context` accepts `declarations` for a bounded static
 outline and `selected-source` for a known qualified declaration. The latter needs
 no prior outline. CLI uses `--kind`; an unqualified `--symbol` option retains its
-existing outgoing-call meaning. For ambiguous occurrences, HEAD supplies the
+existing outgoing-call meaning. For ambiguous occurrences, Lode supplies the
 returned exact selection through typed MCP or advanced CLI `--input` needs.
-HEAD authors that structure in normal conversation; explicit advanced API/CLI
+Lode authors that structure in normal conversation; explicit advanced API/CLI
 requests remain supported.
 
 New declaration Context details include a compact `collectionProfile`: producer,
@@ -248,11 +248,11 @@ records are not migrated or rehashed. New retained records are also checked for
 source drift before Context inclusion. Default retention remains off; no Canon,
 World, ReviewDecision or recovery direction is created by these optional reads.
 
-Context compilation excludes common observations by default. HEAD performs semantic analysis and requests exact identities through an EvidenceNeed whose kind is `observation` and whose `observationIds` are immutable current IDs. Core preserves selected evidence, exclusions and uncertainty without an inclusion-proof gate, lexical eligibility rule, semantic promotion or sufficiency judgment.
+Context compilation excludes common observations by default. Lode performs semantic analysis and requests exact identities through an EvidenceNeed whose kind is `observation` and whose `observationIds` are immutable current IDs. Core preserves selected evidence, exclusions and uncertainty without an inclusion-proof gate, lexical eligibility rule, semantic promotion or sufficiency judgment.
 
-Ordinary inspection remains ephemeral. Persist an Observation only when cross-Run, rebuttal/audit, handoff, or context-loss evidence is required. A Host adapter, not the user, constructs the exact source binding, descriptor, digests, coverage, and provenance confirmation. `observation-ingest` and `head_observation_ingest` are advanced Host/CI surfaces for already bounded input. The redundant collect compatibility alias is removed. `observation-source-collect` and `head_observation_collect_source` remain distinct configured Host-source collection surfaces, not aliases for ingesting already bounded input.
+Ordinary inspection remains ephemeral. Persist an Observation only when cross-Run, rebuttal/audit, handoff, or context-loss evidence is required. A Host adapter, not the user, constructs the exact source binding, descriptor, digests, coverage, and provenance confirmation. `observation-ingest` and `lode_observation_ingest` are advanced Host/CI surfaces for already bounded input. The redundant collect compatibility alias is removed. `observation-source-collect` and `lode_observation_collect_source` remain distinct configured Host-source collection surfaces, not aliases for ingesting already bounded input.
 
-`observation-query` and `head_observation_query` return both an unfiltered `inventorySummary` (all retained counts and graph policy) and a filtered page, without full payload nodes. No separate status call is needed. `inventorySummary` is not the filtered match count; an empty page cannot establish that the retained inventory is empty. Queries filter exact current identities by type, subject, source, time, and observed/derived kind with a maximum page of 100. Cursor continuation is bound to the exact current `ObservationStatusProjection`; drift fails closed. Query results contain payload digests rather than payload bodies. The exact read surface returns the selected record, descriptor, and bounded receipt or derivation lineage. Querying is discovery, not semantic selection, Context eligibility, or sufficiency judgment.
+`observation-query` and `lode_observation_query` return both an unfiltered `inventorySummary` (all retained counts and graph policy) and a filtered page, without full payload nodes. No separate status call is needed. `inventorySummary` is not the filtered match count; an empty page cannot establish that the retained inventory is empty. Queries filter exact current identities by type, subject, source, time, and observed/derived kind with a maximum page of 100. Cursor continuation is bound to the exact current `ObservationStatusProjection`; drift fails closed. Query results contain payload digests rather than payload bodies. The exact read surface returns the selected record, descriptor, and bounded receipt or derivation lineage. Querying is discovery, not semantic selection, Context eligibility, or sufficiency judgment.
 
 ## Acceptance properties
 
@@ -264,7 +264,7 @@ Ordinary inspection remains ephemeral. Persist an Observation only when cross-Ru
 - false completeness, schema drift, authority drift, and divergent replay fail closed;
 - status and query output stays bounded and never turns discovery into semantic selection;
 - default Capsule compilation includes no common observation, even with lexical overlap;
-- an exact HEAD EvidenceNeed includes only the named immutable records;
+- an exact Lode EvidenceNeed includes only the named immutable records;
 - derived records and projections cannot add semantic graph relations;
 - a hypothesis may reference exact observations while remaining non-authoritative;
 - CLI and MCP return the same Core identities.
@@ -274,7 +274,7 @@ Ordinary inspection remains ephemeral. Persist an Observation only when cross-Ru
 - stale source cursors restart with explicit non-authoritative resynchronization rather than creating a user-visible recovery ritual;
 - source shape and availability summaries stay bounded, non-semantic, non-instructional, and non-persisted;
 - reuse-first preparation returns existing exact Observation IDs before matching configured sources and never judges sufficiency or collects automatically;
-- every registered source ID is bound to one exact HEAD Project and cannot be collected into another Project;
+- every registered source ID is bound to one exact Lode Project and cannot be collected into another Project;
 - Project readiness is verified before external adapter collection;
 - the conversational source flow accepts only an opaque configured source ID and never asks the user for provenance structure;
 - the reference event-file adapter accepts unrelated product schemas without persisting Host paths, raw event keys, source aliases, or credential references;

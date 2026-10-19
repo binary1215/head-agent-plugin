@@ -1,7 +1,8 @@
+import { formatForVerifiedOwner, familyFormatForOriginal, relativeProjectArtifact } from "./project-storage-format.mjs";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { SCHEMA_VERSION } from "./head-core.mjs";
+import { SCHEMA_VERSION } from "./lode-core.mjs";
 import { verifyGitCommitObservation } from "./change-set-projection.mjs";
 import { OBSERVATION_PROTOCOL_VERSION } from "./observation-contract.mjs";
 
@@ -53,23 +54,23 @@ function authorityValid(document, authority) {
     && document.mutatesCanon === false && document.recoveryAuthority === false;
 }
 
-export function verifyBranchStateObservation(document, projectId = "") {
+export function verifyBranchStateObservation(document, projectId = "", storage) {
   verifyIdentity(document, "branch-state-observation", "branchStateObservationId", "branchStateObservationHash", "BranchStateObservation");
   if (document.schemaVersion !== SCHEMA_VERSION || document.kind !== "BranchStateObservation"
-    || document.protocol?.name !== "head-agent-core-release-observation" || document.protocol?.version !== RELEASE_OBSERVATION_VERSION
+    || !familyFormatForOriginal("head-agent-core-release-observation", document, storage) || document.protocol?.version !== RELEASE_OBSERVATION_VERSION
     || (projectId && document.projectId !== projectId) || document.vcsKind !== "git"
     || !REF_KINDS.has(document.refKind) || typeof document.ref !== "string" || !/^refs\/(?:heads|remotes|tags)\//.test(document.ref)
     || !/^[a-f0-9]{64}$/.test(document.referencesDigest || "")
     || !authorityValid(document, "non-authoritative-branch-state-observation")) fail("BranchStateObservation fields or authority are invalid.", "INVALID_BRANCH_STATE_OBSERVATION");
-  verifyGitCommitObservation(document.commitObservation);
+  verifyGitCommitObservation(document.commitObservation, familyFormatForOriginal("head-agent-core-release-observation", document, storage));
   if (document.commit !== document.commitObservation.objectId) fail("BranchStateObservation commit lineage is invalid.", "INVALID_BRANCH_STATE_OBSERVATION");
   return document;
 }
 
-export function verifyDeploymentResultObservation(document, projectId = "") {
+export function verifyDeploymentResultObservation(document, projectId = "", storage) {
   verifyIdentity(document, "deployment-result-observation", "deploymentResultObservationId", "deploymentResultObservationHash", "DeploymentResultObservation");
   if (document.schemaVersion !== SCHEMA_VERSION || document.kind !== "DeploymentResultObservation"
-    || document.protocol?.name !== "head-agent-core-release-observation" || document.protocol?.version !== RELEASE_OBSERVATION_VERSION
+    || !familyFormatForOriginal("head-agent-core-release-observation", document, storage) || document.protocol?.version !== RELEASE_OBSERVATION_VERSION
     || (projectId && document.projectId !== projectId) || !DEPLOYMENT_STATUSES.has(document.status)
     || !/^[a-f0-9]{40,64}$/.test(document.commit || "") || typeof document.observedAt !== "string" || Number.isNaN(Date.parse(document.observedAt))
     || stableKey(document.environmentKey, "Deployment environmentKey") !== document.environmentKey
@@ -80,10 +81,10 @@ export function verifyDeploymentResultObservation(document, projectId = "") {
   return document;
 }
 
-export function verifyReleaseObservation(document, projectId = "") {
+export function verifyReleaseObservation(document, projectId = "", storage) {
   verifyIdentity(document, "release-observation", "releaseObservationId", "releaseObservationHash", "ReleaseObservation");
   if (document.schemaVersion !== SCHEMA_VERSION || document.kind !== "ReleaseObservation"
-    || document.protocol?.name !== "head-agent-core-release-observation" || document.protocol?.version !== RELEASE_OBSERVATION_VERSION
+    || !familyFormatForOriginal("head-agent-core-release-observation", document, storage) || document.protocol?.version !== RELEASE_OBSERVATION_VERSION
     || (projectId && document.projectId !== projectId) || !/^deployment-result-observation-[a-f0-9]{24}$/.test(document.deploymentResultObservationId || "")
     || !Array.isArray(document.branchStateObservationIds) || !document.branchStateObservationIds.length
     || releaseObservationCanonicalJson(document.branchStateObservationIds) !== releaseObservationCanonicalJson([...new Set(document.branchStateObservationIds)].sort())
@@ -125,14 +126,15 @@ function readArtifacts(projectRoot, relative, label) {
   });
 }
 
-function projectionPayload({ projectId, branchStates, deploymentResults, releases }) {
+function projectionPayload({ projectId, branchStates, deploymentResults, releases, storage }) {
+  const format = formatForVerifiedOwner(storage);
   return {
     schemaVersion: SCHEMA_VERSION,
     kind: "ReleaseObservationProjectionInput",
-    protocol: { name: "head-agent-core-release-observation-projection", version: RELEASE_OBSERVATION_VERSION },
+    protocol: { name: format.protocol("head-agent-core-release-observation-projection"), version: RELEASE_OBSERVATION_VERSION },
     projectId,
     commonObservationContract: {
-      protocol: { name: "head-agent-core-observation", version: OBSERVATION_PROTOCOL_VERSION },
+      protocol: { name: format.protocol("head-agent-core-observation"), version: OBSERVATION_PROTOCOL_VERSION },
       role: "domain-specialization-with-exact-git-and-approved-deployment-lineage",
       genericReplacement: false,
       semanticAuthority: false,
@@ -146,21 +148,22 @@ function projectionPayload({ projectId, branchStates, deploymentResults, release
   };
 }
 
-export function verifyReleaseObservationProjectionInput(projection) {
+export function verifyReleaseObservationProjectionInput(projection, storage = undefined) {
+  const format = familyFormatForOriginal("head-agent-core-release-observation-projection", projection, storage);
   if (!projection || projection.kind !== "ReleaseObservationProjectionInput"
-    || projection.protocol?.name !== "head-agent-core-release-observation-projection" || projection.protocol?.version !== RELEASE_OBSERVATION_VERSION
+    || !format || projection.protocol?.version !== RELEASE_OBSERVATION_VERSION
     || !Array.isArray(projection.branchStates) || !Array.isArray(projection.deploymentResults) || !Array.isArray(projection.releases)
-    || projection.commonObservationContract?.protocol?.name !== "head-agent-core-observation"
+    || projection.commonObservationContract?.protocol?.name !== format.protocol("head-agent-core-observation")
     || projection.commonObservationContract?.protocol?.version !== OBSERVATION_PROTOCOL_VERSION
     || projection.commonObservationContract?.role !== "domain-specialization-with-exact-git-and-approved-deployment-lineage"
     || projection.commonObservationContract?.genericReplacement !== false || projection.commonObservationContract?.semanticAuthority !== false
     || projection.authority !== "derived-projection-input-not-release-authority" || projection.instructionAuthority !== false || projection.promotionAuthority !== false) fail("Release observation projection is invalid.", "INVALID_RELEASE_OBSERVATION_PROJECTION");
-  const branches = new Map(projection.branchStates.map((item) => [verifyBranchStateObservation(item, projection.projectId).branchStateObservationId, item]));
+  const branches = new Map(projection.branchStates.map((item) => [verifyBranchStateObservation(item, projection.projectId, format).branchStateObservationId, item]));
   if (branches.size !== projection.branchStates.length) fail("Duplicate BranchStateObservation.", "DUPLICATE_BRANCH_STATE_OBSERVATION");
   const deployments = new Map();
   const deploymentKeys = new Map();
   for (const item of projection.deploymentResults) {
-    verifyDeploymentResultObservation(item, projection.projectId);
+    verifyDeploymentResultObservation(item, projection.projectId, format);
     if (deployments.has(item.deploymentResultObservationId)) fail("Duplicate DeploymentResultObservation.", "DUPLICATE_DEPLOYMENT_RESULT_OBSERVATION");
     const existingKey = deploymentKeys.get(item.sourceEventKeyDigest);
     if (existingKey && existingKey !== item.deploymentResultObservationId) fail("Deployment source event has divergent persisted observations.", "DIVERGENT_DEPLOYMENT_RESULT_REPLAY");
@@ -169,7 +172,7 @@ export function verifyReleaseObservationProjectionInput(projection) {
   }
   const releaseIds = new Set();
   for (const release of projection.releases) {
-    verifyReleaseObservation(release, projection.projectId);
+    verifyReleaseObservation(release, projection.projectId, format);
     if (releaseIds.has(release.releaseObservationId)) fail("Duplicate ReleaseObservation.", "DUPLICATE_RELEASE_OBSERVATION");
     releaseIds.add(release.releaseObservationId);
     const deployment = deployments.get(release.deploymentResultObservationId);
@@ -182,13 +185,14 @@ export function verifyReleaseObservationProjectionInput(projection) {
   return projection;
 }
 
-export function loadReleaseObservationProjection({ projectRoot, projectId } = {}) {
-  const branchStates = readArtifacts(projectRoot, DIRECTORIES.branchStates, "BranchStateObservation").map((item) => verifyBranchStateObservation(item, projectId)).sort((a, b) => a.branchStateObservationId.localeCompare(b.branchStateObservationId));
-  const deploymentResults = readArtifacts(projectRoot, DIRECTORIES.deploymentResults, "DeploymentResultObservation").map((item) => verifyDeploymentResultObservation(item, projectId)).sort((a, b) => a.deploymentResultObservationId.localeCompare(b.deploymentResultObservationId));
-  const releases = readArtifacts(projectRoot, DIRECTORIES.releases, "ReleaseObservation").map((item) => verifyReleaseObservation(item, projectId)).sort((a, b) => a.releaseObservationId.localeCompare(b.releaseObservationId));
-  const payload = projectionPayload({ projectId, branchStates, deploymentResults, releases });
+export function loadReleaseObservationProjection({ projectRoot, projectId, storage } = {}) {
+  const directories = storage ? { branchStates: relativeProjectArtifact(storage, "release-observations", "branch-states"), deploymentResults: relativeProjectArtifact(storage, "release-observations", "deployment-results"), releases: relativeProjectArtifact(storage, "release-observations", "releases") } : DIRECTORIES;
+  const branchStates = readArtifacts(projectRoot, directories.branchStates, "BranchStateObservation").map((item) => verifyBranchStateObservation(item, projectId, storage)).sort((a, b) => a.branchStateObservationId.localeCompare(b.branchStateObservationId));
+  const deploymentResults = readArtifacts(projectRoot, directories.deploymentResults, "DeploymentResultObservation").map((item) => verifyDeploymentResultObservation(item, projectId, storage)).sort((a, b) => a.deploymentResultObservationId.localeCompare(b.deploymentResultObservationId));
+  const releases = readArtifacts(projectRoot, directories.releases, "ReleaseObservation").map((item) => verifyReleaseObservation(item, projectId, storage)).sort((a, b) => a.releaseObservationId.localeCompare(b.releaseObservationId));
+  const payload = projectionPayload({ projectId, branchStates, deploymentResults, releases, storage });
   const hash = releaseObservationDigest(releaseObservationCanonicalJson(payload));
-  return verifyReleaseObservationProjectionInput({ ...payload, projectionInputId: `release-observation-projection-${hash.slice(0, 24)}`, projectionInputHash: hash });
+  return verifyReleaseObservationProjectionInput({ ...payload, projectionInputId: `release-observation-projection-${hash.slice(0, 24)}`, projectionInputHash: hash }, storage);
 }
 
 export { DIRECTORIES, DEPLOYMENT_STATUSES, REF_KINDS, fail, requiredText, stableKey, safeDirectory };
