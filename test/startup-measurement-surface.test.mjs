@@ -11,6 +11,8 @@ import { readObservation } from "../scripts/lib/observation-store.mjs";
 import { buildWorldModel } from "../scripts/lib/world-model.mjs";
 import { createHeadSession } from "../scripts/lib/session-routing.mjs";
 import { createSessionHostAdapter } from "../scripts/lib/session-host-adapter.mjs";
+import { createNativeObservationStore, NATIVE_OBSERVATION_LIMITS } from "../scripts/lib/native-session-observations.mjs";
+import { sessionStartContext } from "../scripts/session-host-hook.mjs";
 import { updateProjectDirection } from "../scripts/lib/project-direction.mjs";
 import { runCommand } from "../scripts/head.mjs";
 import { dispatch } from "../scripts/mcp-server.mjs";
@@ -105,19 +107,23 @@ test("healthy metric consumer retains the original two-ID World response and JSO
   assert.deepEqual(JSON.parse(formatCliResult("metric-define", cli)), cli);
 });
 
-test("actual hook command stdin/stdout retains selected no-checkpoint purpose and unavailable direction without writes", t => {
+test("actual hook command retains no-checkpoint purpose and unavailable direction; only optional caller P5 is written", t => {
   const root = fixture(t), operational = `${root}-host`;
   if (process.env.HEAD_AGENT_KEEP_TEST_TMP !== "1") t.after(() => fs.rmSync(operational, { recursive: true, force: true }));
   const selected = createHeadSession({ root, purpose: "Explain this synthetic issue only; no external effects" });
-  const environment = { HEAD_AGENT_OPERATIONAL_STATE_ROOT: operational };
+  // An absent synthetic registry prevents consulting the user's actual Claude registry.
+  const environment = { HEAD_AGENT_OPERATIONAL_STATE_ROOT: operational, CLAUDE_CONFIG_DIR: path.join(root, "synthetic-claude-config") };
   const host = createSessionHostAdapter({ runtime: "claude", nativeSessionId: "synthetic-hook-caller", environment });
   assert.equal(host.select({ root, sessionId: selected.sessionId, expectedRevision: 0 }).retained, true);
   updateProjectDirection({ root, input: { goal: "Read locally", cancelledActions: ["deploy"] } });
   fs.unlinkSync(path.join(root, ".head/project-direction/current.json"));
   const before = snapshot(root), beforeOperational = snapshot(operational);
+  const event = { hook_event_name: "SessionStart", source: "compact", session_id: "synthetic-hook-caller", cwd: root,
+    prompt: "synthetic-private-prompt", last_assistant_message: "synthetic-private-response",
+    token: "synthetic-private-token", command: "synthetic-private-command" };
   const output = spawnSync(process.execPath, [path.join(pluginRoot, "scripts/session-host-hook.mjs"), "--runtime", "claude"], {
     cwd: root, windowsHide: true, encoding: "utf8", env: { ...process.env, ...environment },
-    input: JSON.stringify({ hook_event_name: "SessionStart", source: "compact", session_id: "synthetic-hook-caller", cwd: root }),
+    input: JSON.stringify(event),
   });
   assert.equal(output.status, 0, output.stderr);
   const hook = JSON.parse(output.stdout), text = hook.hookSpecificOutput.additionalContext, context = JSON.parse(text);
@@ -129,5 +135,27 @@ test("actual hook command stdin/stdout retains selected no-checkpoint purpose an
   assert.equal(context.persisted, false); assert.equal(context.ordinaryWorkBlocked, false);
   assert.equal(context.sessionRecovery, null); assert.equal(hook.hookSpecificOutput.permissionDecision, undefined);
   assert.deepEqual(snapshot(root), before);
-  assert.deepEqual(snapshot(operational), beforeOperational);
+  const project = JSON.parse(fs.readFileSync(path.join(root, ".head/project.json"), "utf8"));
+  const owner = { projectId: project.projectId, rootDigest: sha(fs.realpathSync(root)),
+    callerDigest: sha(JSON.stringify(["claude", "synthetic-hook-caller", null])) };
+  const snapshotRelative = path.join("native-observations", sha(JSON.stringify(owner)), "snapshot.json");
+  assert.deepEqual(snapshot(operational).filter(([file]) => file !== snapshotRelative), beforeOperational,
+    "Existing binding bytes/mtime/mode remain exact; no other operational artifact or lock may be added.");
+  assert.equal(snapshot(operational).length, beforeOperational.length + 1);
+  const raw = fs.readFileSync(path.join(operational, snapshotRelative), "utf8");
+  assert.ok(Buffer.byteLength(raw) <= NATIVE_OBSERVATION_LIMITS.bytes);
+  assert.doesNotMatch(raw, /synthetic-private-/u);
+  const afterOperational = snapshot(operational);
+  // Validates schema, exact owner, digest and every slot/replay bound without writing.
+  const state = createNativeObservationStore({ environment }).read({ root,
+    caller: { runtime: "claude", nativeSessionId: "synthetic-hook-caller", agentId: null } });
+  assert.deepEqual(state.owner, owner);
+  assert.equal(state.kind, "NativeObservationSnapshot"); assert.equal(state.version, 1);
+  assert.equal(state.sequence, 1); assert.equal(state.omitted, 0); assert.deepEqual(state.replay, []);
+  assert.equal(state.rows.length, 1);
+  assert.deepEqual(state.rows[0].observation, { kind: "event", event: "SessionStart", phase: "start-observed",
+    requestId: null, source: "compact", reason: null });
+  assert.deepEqual(sessionStartContext({ runtime: "claude", environment, event }), hook);
+  assert.deepEqual(snapshot(root), before);
+  assert.deepEqual(snapshot(operational), afterOperational, "Subsequent observation/startup reads have zero writes.");
 });

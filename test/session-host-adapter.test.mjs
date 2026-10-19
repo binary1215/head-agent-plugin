@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -7,6 +8,7 @@ import { initializeProject, inspectProject } from "../scripts/lib/head-core.mjs"
 import { createHeadSession, withSessionRoute } from "../scripts/lib/session-routing.mjs";
 import { createSessionHostAdapter } from "../scripts/lib/session-host-adapter.mjs";
 import { sessionStartContext } from "../scripts/session-host-hook.mjs";
+import { createNativeObservationStore, NATIVE_OBSERVATION_LIMITS } from "../scripts/lib/native-session-observations.mjs";
 import { recordSessionWorkEvidence } from "../scripts/lib/session-work-context.mjs";
 import { updateProjectDirection } from "../scripts/lib/project-direction.mjs";
 import { dispatch } from "../scripts/mcp-server.mjs";
@@ -185,8 +187,14 @@ test("real hidden Node command consumes official-style startup stdin and exits; 
   const a = createHeadSession({ root, purpose: "Command caller" });
   host("command-native").select({ root, sessionId: a.sessionId, expectedRevision: 0 });
   withSessionRoute(root, a.sessionId, () => recordSessionWorkEvidence({ root, input: { summary: "Command reads original evidence" } }));
-  const before = files(root).concat(files(operational));
-  const event = { hook_event_name: "SessionStart", source: "compact", session_id: "command-native", cwd: root };
+  const exactFiles = () => files(root).concat(files(operational)).map(([file, content]) => {
+    const stat = fs.statSync(file);
+    return [file, content, stat.mtimeMs, stat.mode];
+  });
+  const before = exactFiles();
+  const event = { hook_event_name: "SessionStart", source: "compact", session_id: "command-native", cwd: root,
+    prompt: "synthetic-private-prompt", last_assistant_message: "synthetic-private-response",
+    token: "synthetic-private-token", command: "synthetic-private-command" };
   const result = await localContinuityCommand([path.join(pluginRoot, "scripts/session-host-hook.mjs"), "--runtime", "codex"],
     { cwd: root, environment: { ...process.env, ...environment }, input: JSON.stringify(event) });
   assert.equal(result.code, 0, result.stderr);
@@ -197,7 +205,28 @@ test("real hidden Node command consumes official-style startup stdin and exits; 
   assert.match(capability, /no extra bind\/save\/repeated Session ID/i);
   assert.equal(output.continue, undefined);
   assert.equal(output.hookSpecificOutput.permissionDecision, undefined);
-  assert.deepEqual(files(root).concat(files(operational)), before);
+  const sha = value => crypto.createHash("sha256").update(value).digest("hex");
+  const owner = { projectId: inspectProject(root).project.projectId, rootDigest: sha(fs.realpathSync(root)),
+    callerDigest: sha(JSON.stringify(["codex", "command-native", null])) };
+  const snapshotFile = path.join(operational, "native-observations", sha(JSON.stringify(owner)), "snapshot.json");
+  assert.deepEqual(exactFiles().filter(([file]) => file !== snapshotFile), before,
+    "Only the exact caller's optional P5 snapshot may be added; canonical and binding bytes/mtime/mode stay unchanged.");
+  assert.equal(exactFiles().length, before.length + 1, "No lock or additional operational artifact remains.");
+  const raw = fs.readFileSync(snapshotFile, "utf8");
+  assert.ok(Buffer.byteLength(raw) <= NATIVE_OBSERVATION_LIMITS.bytes);
+  assert.doesNotMatch(raw, /synthetic-private-/u);
+  const after = exactFiles();
+  // The store reader verifies schema, owner, digest, slot/replay bounds and row keys.
+  const state = createNativeObservationStore({ environment }).read({ root,
+    caller: { runtime: "codex", nativeSessionId: "command-native", agentId: null } });
+  assert.deepEqual(state.owner, owner);
+  assert.equal(state.kind, "NativeObservationSnapshot"); assert.equal(state.version, 1);
+  assert.equal(state.sequence, 1); assert.equal(state.omitted, 0); assert.deepEqual(state.replay, []);
+  assert.equal(state.rows.length, 1);
+  assert.deepEqual(state.rows[0].observation, { kind: "event", event: "SessionStart", phase: "start-observed",
+    requestId: null, source: "compact", reason: null });
+  assert.deepEqual(sessionStartContext({ runtime: "codex", environment, event }), output);
+  assert.deepEqual(exactFiles(), after, "Observation read and pure startup projection write nothing.");
 });
 
 test("concurrent real local writers converge identical evidence and retain different Session work", async (t) => {

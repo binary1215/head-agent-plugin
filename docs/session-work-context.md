@@ -378,11 +378,15 @@ unconfirmed. Repair only that linkage. If storage fails before any intent is
 durable, a restart cannot discover the lost attempt: the Host must not claim
 lossless continuity from unwritten state.
 
-The bundled `scripts/session-host-hook.mjs` handles SessionStart only. It looks
-up a binding previously registered through the trusted Host API and returns
-bounded read-only context before MCP needs to be ready. It never creates that
-binding, parses a transcript, saves a note or infers direction. Large startup
-direction is explicitly marked for original expansion, not silently cut.
+The bundled `scripts/session-host-hook.mjs` separates optional lifecycle observation
+from startup projection. Its command may retain bounded native event evidence in
+the Host-local P5 `native-observations` namespace; this never changes the Project,
+an existing selection binding or recovery direction. The pure `sessionStartContext`
+reader looks up an already registered binding and returns bounded read-only context
+before MCP needs to be ready, without saving notes or inferring direction. It does
+not parse transcript bodies; the separate optional ancestry observer can read only
+an exact supplied Codex session metadata header. Large startup direction is
+explicitly marked for original expansion, not silently cut.
 
 Startup includes the selected Session's current `sessionPurpose` even without a
 checkpoint, separately from historical checkpoint purpose and decisions. It also
@@ -453,8 +457,8 @@ memory required to read already-valid unbounded P2 inputs.
 | --- | --- | --- |
 | Core CLI/MCP | Exact logical Session record → same Session entry; optional typed expansion | No native caller identity inferred |
 | Trusted embedding Host | Public select/register → restart lookup → request-local resolver → same Session | Host must actually acquire distinct per-request callers |
-| Codex native MCP transport | Actual request `params._meta.threadId` → existing init/resume selection → P5 link → request-local resolver; read-only SessionStart lookup | Installed engine `0.162.0-alpha.17.2` transport observed; GUI model, fork/child and actual restart/compaction require separate verification |
-| Stock Claude Code | Same-instance PreToolUse correlation → existing init/resume selection → P5 link → subsequent direct/router resolution; read-only SessionStart/resume | Installed CLI `2.1.289` with synthetic local protocol tested root/child separation and fresh-process resume; real model/account and actual compaction are separate |
+| Codex native MCP transport | Actual request `params._meta.threadId` → existing init/resume selection → P5 link → request-local resolver; pure SessionStart lookup is read-only, separate Hook observation is P5 | Installed engine `0.162.0-alpha.17.2` transport observed; GUI model, fork/child and actual restart/compaction require separate verification |
+| Stock Claude Code | Same-instance PreToolUse correlation → existing init/resume selection → P5 link → subsequent direct/router resolution; pure SessionStart/resume projection is read-only, separate Hook observation is P5 | Installed CLI `2.1.289` with synthetic local protocol tested root/child separation and fresh-process resume; real model/account and actual compaction are separate |
 | OpenCode | Core and trusted Host seam | No native Hook integration claimed |
 
 Codex tool Hooks expose the parent's session ID for child agents and cannot

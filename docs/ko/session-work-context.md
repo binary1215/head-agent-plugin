@@ -332,10 +332,14 @@ resolver에 전달합니다. native ID는 조회용 hash가 되며 canonical Ses
 어떤 intent도 저장되기 전에 저장소가 실패했다면 재시작으로 유실된 시도 자체를
 발견할 수 없으므로, 기록되지 않은 상태에서 무손실 연속성을 주장하면 안 됩니다.
 
-동봉된 `scripts/session-host-hook.mjs`는 SessionStart만 처리합니다. 신뢰된 Host API로
-미리 등록된 연결을 조회하고 MCP 준비 전에도 제한된 읽기 전용 맥락을 반환합니다.
-연결 생성·transcript 해석·메모 저장·방향 추론은 하지 않습니다. 시작 방향이 크면
-조용히 잘라 쓰지 않고 원본을 펼쳐 읽어야 한다고 표시합니다.
+동봉된 `scripts/session-host-hook.mjs`는 선택적 lifecycle 관측과 시작 맥락 투영을
+분리합니다. 명령은 Host 로컬 P5 `native-observations` 영역에 제한된 native 이벤트
+근거를 보관할 수 있지만 Project·기존 선택 binding·복구 방향은 변경하지 않습니다.
+순수 reader인 `sessionStartContext`는 이미 등록된 연결을 조회하고 MCP 준비 전에도
+제한된 읽기 전용 맥락을 반환하며, 메모 저장이나 방향 추론을 하지 않습니다.
+transcript 본문은 해석하지 않으며 별도의 선택적 계보 관측기만 정확히 지정된
+Codex session metadata header를 읽을 수 있습니다. 시작 방향이 크면 조용히 잘라
+쓰지 않고 원본을 펼쳐 읽어야 한다고 표시합니다.
 
 시작 맥락은 checkpoint가 없어도 선택된 Session의 현재 `sessionPurpose`를
 전달하며, 과거 checkpoint의 목적·결정과 구분합니다. 이미 명시된 현재 공통 방향의
@@ -394,8 +398,8 @@ descriptor는 전체를 보존하고 추측하지 않습니다. 해시는 압축
 | --- | --- | --- |
 | Core CLI/MCP | 정확한 논리 Session 기록 → 같은 Session 진입, 선택적 typed 확대 | native caller identity를 추론하지 않음 |
 | 신뢰된 embedding Host | public 선택·등록 → 재시작 조회 → 요청별 resolver → 같은 Session | 실제 요청별 caller를 구분해 얻는 것은 Host의 책임 |
-| Codex native MCP transport | 실제 요청의 `params._meta.threadId` → 기존 초기화·재개 선택 → P5 연결 → 요청별 resolver; 읽기 전용 SessionStart 조회 | 설치 엔진 `0.162.0-alpha.17.2` transport 확인; GUI 모델·fork/child·실제 재시작/압축은 별도 검증 필요 |
-| stock Claude Code | 같은 서버의 PreToolUse 연결 → 기존 초기화·재개 선택 → P5 연결 → 후속 direct/router 요청 해석; 읽기 전용 SessionStart·재개 | 설치 CLI `2.1.289`와 합성 로컬 프로토콜로 부모·자식 분리 및 새 프로세스 재개 확인; 실제 모델·계정·압축은 별도 검증 |
+| Codex native MCP transport | 실제 요청의 `params._meta.threadId` → 기존 초기화·재개 선택 → P5 연결 → 요청별 resolver; 순수 SessionStart 조회는 읽기 전용이고 별도 Hook 관측은 P5 | 설치 엔진 `0.162.0-alpha.17.2` transport 확인; GUI 모델·fork/child·실제 재시작/압축은 별도 검증 필요 |
+| stock Claude Code | 같은 서버의 PreToolUse 연결 → 기존 초기화·재개 선택 → P5 연결 → 후속 direct/router 요청 해석; 순수 SessionStart·재개 투영은 읽기 전용이고 별도 Hook 관측은 P5 | 설치 CLI `2.1.289`와 합성 로컬 프로토콜로 부모·자식 분리 및 새 프로세스 재개 확인; 실제 모델·계정·압축은 별도 검증 |
 | OpenCode | Core와 신뢰된 Host 연결 지점 | native Hook 통합은 주장하지 않음 |
 
 Codex tool Hook는 child에도 부모 session ID를 제공하므로 그 필드만으로 caller 선택을
