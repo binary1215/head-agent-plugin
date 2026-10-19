@@ -75,8 +75,8 @@ function writeNewJson(file, value) {
   fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`, { flag: "wx" });
 }
 
-async function launcherVersion() {
-  const launcher = path.join(binDirectory, process.platform === "win32" ? "head-agent.cmd" : "head-agent");
+async function launcherVersion(command = "lode-agent") {
+  const launcher = path.join(binDirectory, process.platform === "win32" ? `${command}.cmd` : command);
   const output = process.platform === "win32"
     ? await run(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", `""${launcher}" --version"`], { windowsVerbatimArguments: true })
     : await run(launcher, ["--version"]);
@@ -95,18 +95,18 @@ try {
   const binaryRoot = path.join(nativeRoot, "dist", targetDirectory);
   fs.mkdirSync(binaryRoot, { recursive: true });
   const suffix = process.platform === "win32" ? ".exe" : "";
-  for (const binary of ["head-agent-worker", "head-agent-supervisor", "head-agent-arcadedb-bridge"]) {
+  for (const binary of ["lode-agent-worker", "lode-agent-supervisor", "lode-agent-arcadedb-bridge"]) {
     await run("go", ["build", "-trimpath", "-buildvcs=false", `-ldflags=-s -w -X main.version=${version} -X main.commit=${commit}`, "-o", path.join(binaryRoot, `${binary}${suffix}`), `./cmd/${binary}`], {
-      cwd: path.join(sourceRoot, "native", "head-agent-worker"), env: { CGO_ENABLED: "0", GOOS: goos, GOARCH: goarch },
+      cwd: path.join(sourceRoot, "native", "lode-agent-worker"), env: { CGO_ENABLED: "0", GOOS: goos, GOARCH: goarch },
     });
   }
   const manifestOptions = { platform: process.platform, arch: process.arch, manifestDirectory: binaryRoot };
   writeNewJson(path.join(binaryRoot, "WORKER-MANIFEST.json"), createGoWorkerManifest({
-    ...manifestOptions, binaryFile: path.join(binaryRoot, `head-agent-worker${suffix}`),
+    ...manifestOptions, binaryFile: path.join(binaryRoot, `lode-agent-worker${suffix}`),
     operations: ["worker.health.v1", "worker.lifecycle.v1", "repository.scan.v1"],
   }));
-  writeNewJson(path.join(binaryRoot, "SUPERVISOR-MANIFEST.json"), createProcessSupervisorManifest({ ...manifestOptions, binaryFile: path.join(binaryRoot, `head-agent-supervisor${suffix}`) }));
-  writeNewJson(path.join(binaryRoot, "ARCADEDB-BRIDGE-MANIFEST.json"), createArcadeDbNativeBridgeManifest({ ...manifestOptions, binaryFile: path.join(binaryRoot, `head-agent-arcadedb-bridge${suffix}`) }));
+  writeNewJson(path.join(binaryRoot, "SUPERVISOR-MANIFEST.json"), createProcessSupervisorManifest({ ...manifestOptions, binaryFile: path.join(binaryRoot, `lode-agent-supervisor${suffix}`) }));
+  writeNewJson(path.join(binaryRoot, "ARCADEDB-BRIDGE-MANIFEST.json"), createArcadeDbNativeBridgeManifest({ ...manifestOptions, binaryFile: path.join(binaryRoot, `lode-agent-arcadedb-bridge${suffix}`) }));
   writeNewJson(path.join(binaryRoot, "BUILD-METADATA.json"), { version, commit, goos, goarch, cgoEnabled: false });
   fs.copyFileSync(path.join(sourceRoot, "native", "GO-NOTICES.txt"), path.join(binaryRoot, "GO-NOTICES.txt"), fs.constants.COPYFILE_EXCL);
 
@@ -114,6 +114,7 @@ try {
   const baseline = installDistribution(locations);
   assert.equal(baseline.status, "installed");
   assert.equal(await launcherVersion(), version);
+  assert.equal(await launcherVersion("head-agent"), version);
   const installed = installDistribution({ ...locations, nativeOverlayRoot: nativeRoot });
   assert.equal(installed.status, "upgraded");
   assert.equal(installed.native.status, "verified");
@@ -123,6 +124,7 @@ try {
   assert.equal(doctor.native, "verified");
   assert.equal(doctor.activeReleaseId, installed.releaseId);
   assert.equal(await launcherVersion(), version);
+  assert.equal(await launcherVersion("head-agent"), version);
   // Native health, real scan parity, interactive EOF, cancellation, and descendant cleanup are asserted
   // by existing verifiers against the installed bytes, without any live provider account.
   await run(process.execPath, [path.join(installedRoot, "scripts", "verify-go-worker.mjs"), "--plugin-root", installedRoot, "--repository-root", path.join(sourceRoot, "benchmarks", "repository-scan-v1", "basic")]);
@@ -137,9 +139,12 @@ try {
   assert.equal(rolledBack.activeReleaseId, baseline.releaseId);
   assert.equal(inspectDistribution({ installRoot, binDirectory }).native, "javascript-fallback");
   assert.equal(await launcherVersion(), version);
+  assert.equal(await launcherVersion("head-agent"), version);
   const uninstalled = uninstallDistribution({ installRoot, binDirectory, purge: true });
   assert.equal(uninstalled.status, "uninstalled");
   assert.equal(fs.existsSync(installRoot), false);
+  assert.equal(fs.existsSync(path.join(binDirectory, "lode-agent")), false);
+  assert.equal(fs.existsSync(path.join(binDirectory, "lode-agent.cmd")), false);
   assert.equal(fs.existsSync(path.join(binDirectory, "head-agent")), false);
   assert.equal(fs.existsSync(path.join(binDirectory, "head-agent.cmd")), false);
   process.stdout.write(`${JSON.stringify({

@@ -265,14 +265,26 @@ for (const scenario of ["wrong-model", "wrong-root", "inherited-thread", "wrong-
 
 for (const mode of ["cancel", "timeout"]) {
   test(`fresh ${mode} holds the consumed lease until owned-tree cleanup`, async t => {
-    const f = await fixture(t, { timeoutMs: mode === "timeout" ? 3000 : 6000 });
+    // The absolute deadline includes current-policy and executable verification.
+    // Leave CI setup margin so timeout exercises the owned hanging turn.
+    const f = await fixture(t, { timeoutMs: mode === "timeout" ? 12000 : 6000 });
+    const leaseCheckpoints = [];
     const controller = new AbortController(); let timer;
     t.after(() => clearTimeout(timer));
     const result = await f.execute("hang-turn", { signal: controller.signal, onProcessEvent: event => {
       f.processEvents.push(event); console.log(JSON.stringify(event));
+      if (event.phase === "provider" && ["spawn", "exit"].includes(event.type)) {
+        const lease = f.lease();
+        leaseCheckpoints.push({ phase: event.type, status: lease.status, release: lease.release });
+      }
       if (mode === "cancel" && event.type === "spawn") timer = setTimeout(() => controller.abort(), 300);
     } });
     assert.equal(result.receipt.status, mode === "cancel" ? "cancelled" : "timed-out");
+    if (mode === "timeout") assert.equal(result.modelCallAttempted, true);
+    assert.deepEqual(leaseCheckpoints, [
+      { phase: "spawn", status: "consumed-active", release: null },
+      { phase: "exit", status: "consumed-active", release: null },
+    ]);
     assert.equal(result.receipt.processBoundary.exactChildExitObserved, true);
     assert.equal(result.receipt.processBoundary.treeCleanupVerified, true);
     assert.equal(result.draft.providerResult, null);
