@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { isDeepStrictEqual } from "node:util";
+import { pathToFileURL } from "node:url";
 import { initializeProject, inspectProject } from "../scripts/lib/head-core.mjs";
 import { inspectProjectExperience } from "../scripts/lib/project-bootstrap.mjs";
 import { createHeadSession, withSessionRoute } from "../scripts/lib/session-routing.mjs";
@@ -721,4 +722,148 @@ test("escaped unknowns alone and surrogate-rich reasons preserve exact nonempty 
       }
     }
   }
+});
+
+test("predecessor-only reason remains bounded in entry and supports graph retrieval and Run-free local continuation", async t => {
+  const f = fixture(t), selected = f.session.sessionId;
+  const sibling = createHeadSession({ root: f.root, purpose: "Separate synthetic TTL experiment" });
+  const args = { project_root: f.root, session_id: selected }, exact = saved => ({
+    evidenceId: saved.evidence.evidenceId, evidenceDigest: saved.evidence.evidenceDigest,
+  });
+  let occurrence = 0;
+  const save = async (evidence, sessionId = selected) => {
+    // Public writers with deterministic ordering, never edited originals or sleeps.
+    const RealDate = globalThis.Date, time = Date.parse("2026-01-01T00:00:00Z") + occurrence++ * 1000;
+    globalThis.Date = class extends RealDate {
+      constructor(...values) { super(...(values.length ? values : [time])); }
+      static now() { return time; }
+    };
+    try {
+      const saved = (await call("head_session_work_record", { project_root: f.root, session_id: sessionId, evidence })).structuredContent;
+      assert.equal(saved.writes, 1);
+      return saved;
+    } finally { globalThis.Date = RealDate; }
+  };
+  const topic = "PredecessorOnlyCacheQmvt7813";
+  const root = await save({ summary: "ROOT: preserve cache generation ordering", workTopics: [topic] });
+  const reason = "TTL-only expiry was rejected because a paused older request can finish after its replacement and overwrite it; elapsed time does not prove causal generation order.";
+  const middle = await save({ summary: "MIDDLE: an earlier alternative was evaluated", workTopics: [topic],
+    workLink: { root: exact(root), predecessor: exact(root) },
+    judgments: [{ assessment: "Keep the generation fence", reason, alternatives: ["Rejected TTL-only expiry: late stale completion remains possible"] }],
+    unknowns: ["Installed Host and provider behavior remain untested"] });
+  for (let i = 0; i < 12; i++) await save({ summary: `Unrelated historical note ${i}`, occurrenceKey: `predecessor-only-${i}` });
+  const latest = await save({ summary: "LATEST: checksum export completed once; equal-generation handling remains", workTopics: [topic],
+    workLink: { root: exact(root), predecessor: exact(middle) }, observedWork: ["Local checksum export completed exactly once"],
+    pending: ["Decide whether TTL-only expiry is adequate for equal-generation duplicate handling"],
+    unknowns: ["Native resume and live activity remain unverified"] });
+  const other = await save({ summary: "SIBLING ONLY: independent TTL experiment", workTopics: [topic],
+    observedWork: ["Separate experiment is not a result of the selected task"] }, sibling.sessionId);
+  const current = updateProjectDirection({ root: f.root, input: { goal: "Complete only the authorized local cache correction",
+    constraints: ["No provider or remote release; preserve completed checksum export"], cancelledActions: ["publish cache release"] } }).direction;
+  const sourceFile = path.join(f.root, "cache.mjs"), effectFile = path.join(f.root, "completed-export.txt");
+  const originalCode = "export function apply(state, generation, value) { if (generation < state.generation) return false; state.generation = generation; state.value = value; state.effects += 1; return true; }\n";
+  fs.writeFileSync(sourceFile, originalCode); fs.writeFileSync(effectFile, "completed once\n");
+  const beforeReads = snapshot(f.base), beforeProject = snapshot(f.root), effectSnapshot = beforeProject["completed-export.txt"];
+  const assertEntry = value => {
+    assert.equal(value.workContext.sessionId, selected);
+    assert.ok(value.workContext.records.every(record => record.sessionId === selected));
+    assert.equal(value.workContext.records.some(record => record.evidenceId === other.evidence.evidenceId), false);
+    assert.deepEqual(value.projectStatus.currentProjectDirection, current);
+    assert.equal(value.projectStatus.state.latestCheckpoint, null);
+    assert.equal(value.projectStatus.state.activeRunId, null);
+    assert.equal(value.projectStatus.state.activeExecutionContractId, null);
+    assert.equal(value.projectStatus.readiness.context.worldModelId, null);
+    assert.equal(value.projectStatus.readiness.product.governanceActivated, false);
+    assert.equal(value.ordinaryWorkBlocked, false); assert.equal(value.userDecisionRequired, false);
+  };
+  let middleNode;
+  await withoutGraphWrites(async () => {
+    const entry = await call("head_conversation_enter", args), work = entry.structuredContent.workContext;
+    assertEntry(entry.structuredContent);
+    assert.ok(work.records.some(record => record.evidenceId === root.evidence.evidenceId));
+    const recent = work.records.find(record => record.evidenceId === latest.evidence.evidenceId);
+    assert.ok(recent); assert.deepEqual(recent.content, latest.evidence.content);
+    assert.deepEqual(recent.content.workLink.predecessor, exact(middle));
+    assert.equal(work.records.some(record => record.evidenceId === middle.evidence.evidenceId), false);
+    assert.equal(entry.content[0].text.includes(reason), false);
+    assert.ok(entry.content[0].text.includes("publish cache release"));
+    assert.equal(entry.content[0].text.includes("SIBLING ONLY"), false);
+    assert.equal(work.status, "work_context_partial");
+    assert.equal(work.coverage.maxRecords, 8); assert.equal(work.coverage.maxCharacters, 32768);
+    assert.equal(work.coverage.originals, 15); assert.equal(work.coverage.included, 8);
+    assert.equal(work.coverage.included, work.records.length);
+    assert.equal(work.coverage.originals, work.coverage.inspected + work.omissions.uninspected);
+    assert.equal(work.coverage.inspected, work.coverage.valid + work.coverage.unavailable);
+    assert.ok(work.omissions.uninspected > 0); assert.ok(work.coverage.included <= work.coverage.valid);
+    assert.equal(work.coverage.usedCharacters, JSON.stringify(work.records).length);
+    assert.ok(work.coverage.usedCharacters < work.coverage.maxCharacters);
+    assert.equal(new Set(work.records.map(record => record.evidenceId)).size, work.records.length);
+    assert.equal(work.omissions.byBudget, 0); assert.deepEqual(work.omissions.evidenceIds, []);
+    const graph = (await call("head_project_graph", { ...args, anchor_ids: [recent.evidenceId], depth: 1, max_nodes: 20, max_edges: 32 })).structuredContent;
+    middleNode = completeNode(graph, middle);
+    assert.equal(middleNode.workContent.judgments[0].reason, reason);
+    assert.equal(workNodes(graph).some(node => node.sessionId === sibling.sessionId), false);
+    const edge = graph.edges.find(item => item.type === "FOLLOWS_WORK_EVIDENCE"
+      && item.from === latest.evidence.evidenceId && item.to === middle.evidence.evidenceId);
+    assert.ok(edge, "The exact latest-to-middle typed predecessor edge must be returned");
+    for (const key of ["instructionAuthority", "promotionAuthority", "recoveryAuthority", "executionAuthority"]) assert.equal(edge[key], false);
+  });
+  assert.deepEqual(snapshot(f.base), beforeReads);
+
+  // The graph already supplied the fitting full reason. This harness deliberately
+  // chooses a synthetic correction; it does not measure a real model's judgment.
+  const beforeOrdinary = snapshot(path.join(f.root, ".head"));
+  const prior = await import(pathToFileURL(sourceFile).href + "?red"), red = { generation: 1, value: "old", effects: 0 };
+  prior.apply(red, 2, "new"); prior.apply(red, 2, "duplicate"); assert.equal(red.effects, 2);
+  fs.writeFileSync(sourceFile, originalCode.replace("generation < state.generation", "generation <= state.generation"));
+  const corrected = await import(pathToFileURL(sourceFile).href + "?green"), green = { generation: 1, value: "old", effects: 0 };
+  assert.equal(corrected.apply(green, 2, "new"), true);
+  assert.equal(corrected.apply(green, 2, "duplicate"), false);
+  assert.equal(corrected.apply(green, 1, "stale"), false);
+  assert.deepEqual(green, { generation: 2, value: "new", effects: 1 });
+  assert.deepEqual(snapshot(path.join(f.root, ".head")), beforeOrdinary);
+  const afterOrdinary = snapshot(f.root);
+  assert.deepEqual(Object.keys(afterOrdinary), Object.keys(beforeProject));
+  for (const file of Object.keys(beforeProject)) if (file !== "cache.mjs") assert.deepEqual(afterOrdinary[file], beforeProject[file], file);
+  assert.notEqual(afterOrdinary["cache.mjs"].digest, beforeProject["cache.mjs"].digest);
+  assert.deepEqual(afterOrdinary["completed-export.txt"], effectSnapshot);
+
+  // Reentry is an in-process logical CLI handler read, before any additional save
+  // or exact expansion. It is not native conversation resume or Host validation.
+  const beforeReentry = snapshot(f.base);
+  await withoutGraphWrites(async () => {
+    const reentry = await runCommand(["conversation-enter", f.root, "--session", selected]);
+    assertEntry(reentry);
+    assert.deepEqual(reentry.workContext.records.find(record => record.evidenceId === latest.evidence.evidenceId).content, latest.evidence.content);
+    assert.equal(reentry.workContext.records.some(record => record.evidenceId === middle.evidence.evidenceId), false,
+      "Reading graph context does not promise to save it or expand future default entry bodies");
+  });
+  assert.deepEqual(snapshot(f.base), beforeReentry);
+
+  // Optional contract witness only: ordinary work and no-save reentry already
+  // succeeded using the sufficient graph body, without this exact read.
+  const beforeExact = snapshot(f.base);
+  await withoutGraphWrites(async () => {
+    const expansionArgs = expansion(middleNode, f, middle);
+    exactResult((await call(middleNode.originalExpansion.tool, expansionArgs)).structuredContent, middle, expansionArgs);
+  });
+  assert.deepEqual(snapshot(f.base), beforeExact);
+
+  // Optional meaningful preservation after the no-save path, not a work gate.
+  const handoff = await save({ summary: "HANDOFF: equal-generation duplicate correction passed local checks", workTopics: [topic],
+    workLink: { root: exact(root), predecessor: exact(latest) },
+    references: [{ path: originalPath(f, middle), digest: sha(fs.readFileSync(middle.file)), kind: "artifact" }],
+    observedWork: ["Changed generation < to <=; duplicate and stale inputs add no further local effect"],
+    pending: ["Actual installed Host/model resume remains unverified"],
+    unknowns: ["This deterministic harness does not measure model judgment"] });
+  const beforeHandoffEntry = snapshot(f.base);
+  await withoutGraphWrites(async () => {
+    const reentry = await runCommand(["conversation-enter", f.root, "--session", selected]);
+    assertEntry(reentry);
+    assert.deepEqual(reentry.workContext.records.find(record => record.evidenceId === handoff.evidence.evidenceId).content, handoff.evidence.content);
+    assert.deepEqual(reentry.workContext.records.find(record => record.evidenceId === middle.evidence.evidenceId).content, middle.evidence.content);
+  });
+  assert.deepEqual(snapshot(f.base), beforeHandoffEntry);
+  assert.deepEqual(snapshot(f.root)["completed-export.txt"], effectSnapshot);
+  assert.equal(fs.readFileSync(effectFile, "utf8"), "completed once\n");
 });

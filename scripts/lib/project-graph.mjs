@@ -224,7 +224,7 @@ async function verifiedLayer(inventory, layer, entries, model) {
       if (document.reviewDecisionId) edges.push(relation("REVIEWS", node.nodeId, document.candidateId, node.origin));
     }
   } else if (layer === "releases" || layer === "changes") {
-    const projection = layer === "releases" ? await import("./release-observation.mjs") : await import("./change-set-projection.mjs");
+    const projection = layer === "releases" ? await import("./release-observation-projection.mjs") : await import("./change-set-projection.mjs");
     const projected = layer === "releases" ? projection.loadReleaseObservationProjection({ projectRoot: root, projectId })
       : projection.loadChangeSetProjection({ projectRoot: root, projectId });
     for (const documents of Object.values(projected)) if (Array.isArray(documents)) for (const document of documents) {

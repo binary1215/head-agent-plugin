@@ -4,7 +4,7 @@ import { artifactAuthorityBoundary } from "./authority-plane-contract.mjs";
 import { readChangeSet } from "./change-set.mjs";
 import { readObservation } from "./observation-store.mjs";
 import { readIncrementalRefreshReceipt } from "./incremental-refresh.mjs";
-import { loadReleaseObservationProjection } from "./release-observation.mjs";
+import { loadReleaseObservationProjection } from "./release-observation-projection.mjs";
 import { conformanceCanonicalJson, conformanceDigest } from "./conformance-contract.mjs";
 import { prepareConformanceAssessment } from "./conformance-reconciliation.mjs";
 

@@ -25,7 +25,7 @@ import {
 } from "./change-set-projection.mjs";
 import { DOCUMENT_CHANGE_GRAPH_PROJECTION_VERSION, loadDocumentChangeProjection } from "./document-change-projection.mjs";
 import { loadProductOperatingProjection, PRODUCT_OPERATING_LOOP_VERSION } from "./product-operating-projection.mjs";
-import { loadReleaseObservationProjection, RELEASE_OBSERVATION_VERSION } from "./release-observation.mjs";
+import { loadReleaseObservationProjection, RELEASE_OBSERVATION_VERSION } from "./release-observation-projection.mjs";
 import { loadObservationProjection } from "./observation-projection.mjs";
 import { OBSERVATION_PROTOCOL_VERSION } from "./observation-contract.mjs";
 import {
