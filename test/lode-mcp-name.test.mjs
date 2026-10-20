@@ -85,6 +85,10 @@ for (const identity of ["lode", "head"]) {
     assert.deepEqual(hooks.hooks.PreToolUse.map(group => group.hooks[0].server), ["lode", `plugin:${composition.pluginName}:lode`]);
     assert(hooks.hooks.PreToolUse[0].matcher.startsWith("^mcp__lode__"));
     const staged = await import(pathToFileURL(path.join(releaseRoot, "scripts/mcp-server.mjs")).href);
+    const stagedCli = await import(pathToFileURL(path.join(releaseRoot, "scripts/lode.mjs")).href);
+    const stagedHelp = stagedCli.runCommand(["help"]);
+    assert(stagedHelp.commands.every(line => line.startsWith(`${identity}-agent `)));
+    assert.equal(stagedHelp.advancedCommand, `${identity}-agent help-all`);
     assert(staged.tools.every(tool => tool.name.startsWith(composition.toolPrefix)));
     assert.equal(new Set(staged.tools.map(tool => tool.name)).size, staged.tools.length);
     assert.equal((await staged.dispatch({ id: 1, method: "initialize", params: {} })).result.serverInfo.name, "lode");

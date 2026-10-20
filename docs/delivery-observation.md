@@ -65,8 +65,8 @@ The graph remains a rebuildable view. Deleting GraphDB or a materialized graph c
 ## CLI and MCP
 
 ```text
-head delivery-observe <project> --input <delivery-observation.json>
-head delivery-status <project> [--environment <key>] [--target <key>] [--history-limit <1..4096>]
+lode-agent delivery-observe <project> --input <delivery-observation.json>
+lode-agent delivery-status <project> [--environment <key>] [--target <key>] [--history-limit <1..4096>]
 ```
 
 - `lode_delivery_observe`

@@ -107,8 +107,8 @@ CI는 `lode-claude-marketplace`와 기존 `claude-marketplace` 브랜치를 각�
 ```powershell
 npm run verify:distribution
 npm run verify:claude-marketplace
-node scripts/build-claude-marketplace.mjs --output C:\temporary\head-agent-claude-marketplace
-claude plugin validate C:\temporary\head-agent-claude-marketplace
+node scripts/build-claude-marketplace.mjs --output C:\temporary\lode-agent-claude-marketplace
+claude plugin validate C:\temporary\lode-agent-claude-marketplace
 ```
 
 게시자는 추가로 `--native-root`를 사용하여 빌드하고 `--require-native`로 검증합니다.

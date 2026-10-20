@@ -4,7 +4,7 @@
 
 ## 작업 범위 소스 수집
 
-`lode_source_context` / `head source-context`는 Lode가 선택한 현재 소스를
+`lode_source_context` / `lode-agent source-context`는 Lode가 선택한 현재 소스를
 수집해 기존 Context Compiler에 넣습니다. 사용자는 작업을 대화로 설명하고,
 Lode가 정확한 파일 경로와 함수 이름을 구성합니다. JSON·ID·해시를 직접 작성하거나
 전체 World 스캔, 재인덱싱, Product 온보딩, GraphDB를 요구하지 않습니다.

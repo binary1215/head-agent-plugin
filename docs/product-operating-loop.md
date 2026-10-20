@@ -114,20 +114,20 @@ Repeated `product-operating-status` and `head-continuity` reads in the same proc
 
 ## CLI
 
-`head help` exposes Core work and recovery. Reason about risk directly and keep
+`lode-agent help` exposes Core work and recovery. Reason about risk directly and keep
 ephemeral facts, hypotheses, inferences and their evidence in the conversation.
-Use `head help-all` only when durable Signal/Hypothesis, audit or recovery work is
+Use `lode-agent help-all` only when durable Signal/Hypothesis, audit or recovery work is
 needed. Lode chooses means and expresses ephemeral learning directly; no Core
 lane classifier or note-formatting operation is retained.
 
 ```text
-head product-signal-record <project> --input <signal.json>
-head product-hypothesis-record <project> --input <hypothesis.json>
-head product-initiative-propose <project> --input <initiative.json>
-head product-initiative-review <project> --input <review.json>
-head product-outcome-observe <project> --input <outcome.json>
-head product-operating-status <project> [--fresh]
-head head-continuity <project> [--fresh]
+lode-agent product-signal-record <project> --input <signal.json>
+lode-agent product-hypothesis-record <project> --input <hypothesis.json>
+lode-agent product-initiative-propose <project> --input <initiative.json>
+lode-agent product-initiative-review <project> --input <review.json>
+lode-agent product-outcome-observe <project> --input <outcome.json>
+lode-agent product-operating-status <project> [--fresh]
+lode-agent head-continuity <project> [--fresh]
 ```
 
 The record/review/observe commands attempt to rebuild the local World Model and Product Graph after primary storage in the same operation. A deferred projection is reported separately from the saved record. They do not activate a remote GraphDB.

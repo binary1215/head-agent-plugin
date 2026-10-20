@@ -11,7 +11,7 @@
   -> skills/lode-agent-core       human/agent operating contract
   -> .mcp.json                    read-only inspection surface
   -> scripts/lode.mjs             explicit mutation entrypoint
-       -> scripts/lib/head-core   project canon and projections
+       -> scripts/lib/lode-core   project canon and projections
        -> scripts/lib/session-routing independent logical Session routing
        -> scripts/lib/project-direction common current user direction
        -> scripts/lib/project-graph bounded graph-first discovery

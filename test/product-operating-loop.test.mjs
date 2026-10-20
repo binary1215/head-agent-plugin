@@ -207,8 +207,8 @@ test("removes prose formatting, defers Feature resolution to review, and caches 
   await buildWorldModel({ root, persist: true });
   assert.equal(productOperatingAPI.prepareProductLearningNote, undefined);
   assert.equal(fs.existsSync(path.join(root, directory, "product-operations")), false);
-  assert.equal(runCommand(["help"]).commands.includes("lode product-signal-record <project> --input <signal.json>"), false);
-  assert.equal(runCommand(["help-all"]).commands.includes("lode product-signal-record <project> --input <signal.json>"), true);
+  assert.equal(runCommand(["help"]).commands.includes("lode-agent product-signal-record <project> --input <signal.json>"), false);
+  assert.equal(runCommand(["help-all"]).commands.includes("lode-agent product-signal-record <project> --input <signal.json>"), true);
 
   const proposed = await proposeProductInitiative({
     root,

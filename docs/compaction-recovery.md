@@ -154,11 +154,11 @@ remains responsible for the actual compaction action; missing hooks do not block
 ordinary work.
 
 ```text
-head compact-prepare <project> --input <recovery.json>
-head compact-verify <project> --input <verification.json>
-head compact-continue <project> --input <continuation.json>
-head compact-status <project>
-head compact-abort <project> --input <abort.json>
+lode-agent compact-prepare <project> --input <recovery.json>
+lode-agent compact-verify <project> --input <verification.json>
+lode-agent compact-continue <project> --input <continuation.json>
+lode-agent compact-status <project>
+lode-agent compact-abort <project> --input <abort.json>
 ```
 
 The mutating commands are advanced `help-all` operations; read-only

@@ -2,7 +2,7 @@
 
 ## Task-scoped source collection
 
-`lode_source_context` / `head source-context` collects Lode-selected current
+`lode_source_context` / `lode-agent source-context` collects Lode-selected current
 source evidence and feeds it into the existing Context Compiler. Lode translates
 the conversational task into exact paths and qualified function names; users do
 not author hashes, IDs or JSON. No World scan, full reindex, Product onboarding or

@@ -106,8 +106,8 @@ newline rewriting from invalidating byte identities across operating systems.
 ```powershell
 npm run verify:distribution
 npm run verify:claude-marketplace
-node scripts/build-claude-marketplace.mjs --output C:\temporary\head-agent-claude-marketplace
-claude plugin validate C:\temporary\head-agent-claude-marketplace
+node scripts/build-claude-marketplace.mjs --output C:\temporary\lode-agent-claude-marketplace
+claude plugin validate C:\temporary\lode-agent-claude-marketplace
 ```
 
 The publisher additionally builds with `--native-root` and verifies with

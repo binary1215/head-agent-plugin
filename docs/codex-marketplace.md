@@ -95,8 +95,8 @@ Local verification:
 
 ```powershell
 npm run verify:codex-marketplace
-node scripts/build-codex-marketplace.mjs --output C:\temporary\head-agent-marketplace
-node scripts/verify-codex-marketplace.mjs --root C:\temporary\head-agent-marketplace
+node scripts/build-codex-marketplace.mjs --output C:\temporary\lode-agent-marketplace
+node scripts/verify-codex-marketplace.mjs --root C:\temporary\lode-agent-marketplace
 ```
 
 CI supplies `--native-root` to the builder and `--require-native` to the

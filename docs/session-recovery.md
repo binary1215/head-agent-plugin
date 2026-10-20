@@ -203,7 +203,7 @@ extra per-turn model call, or provider-session identity is required.
 Protocol `0.1.0` and `0.2.0` checkpoints remain readable through the checkpoint
 reader for audit and compaction compatibility. They cannot drive current
 artifact-only restore because they predate the immutable Session pointer. The
-public `head checkpoint` command now writes only the canonical content-addressed
+public `lode-agent checkpoint` command now writes only the canonical content-addressed
 P2 format. The old direct time-based API is retired and cannot advance
 `latestCheckpoint`.
 
@@ -287,23 +287,23 @@ owned cancellation remain available. Recovery alone, worker count, file edits
 and ordinary Host failures do not force managed execution.
 
 ```text
-head checkpoint <project> --summary <text> [--next <text>]
-head checkpoint-basis <project>
-head checkpoint-diagnose <project>
-head checkpoint-sync <project> --input <head-direction.json>
-head session-restore <project> [--checkpoint <checkpoint-id>]
-head session-continue <project> --runtime <codex|opencode> [--checkpoint <checkpoint-id>]
-head managed worker-dispatch <project> --authorization <authorization-id> --role <non-head-role>
-head worker-wait <project> --authorization <authorization-id> [--wait-timeout-ms <milliseconds>]
-head managed worker-execute <project> --authorization <authorization-id> --role <non-head-role>
-head managed worker-apply <project> --authorization <authorization-id>
-head managed worker-wave-create <project> --input <wave.json>
-head managed worker-wave-seal <project> --wave <bounded-worker-wave-id>
-head worker-wave-status <project> --wave <bounded-worker-wave-id>
-head worker-wave-wait <project> --wave <bounded-worker-wave-id>
-head managed worker-wave-abandon <project> --input <abandonment.json>
-head run-integrate-checkpoint <project> --input <integration.json>
-head run-integration-read <project> --review <review-decision-id>
+lode-agent checkpoint <project> --summary <text> [--next <text>]
+lode-agent checkpoint-basis <project>
+lode-agent checkpoint-diagnose <project>
+lode-agent checkpoint-sync <project> --input <head-direction.json>
+lode-agent session-restore <project> [--checkpoint <checkpoint-id>]
+lode-agent session-continue <project> --runtime <codex|opencode> [--checkpoint <checkpoint-id>]
+lode-agent managed worker-dispatch <project> --authorization <authorization-id> --role <non-head-role>
+lode-agent worker-wait <project> --authorization <authorization-id> [--wait-timeout-ms <milliseconds>]
+lode-agent managed worker-execute <project> --authorization <authorization-id> --role <non-head-role>
+lode-agent managed worker-apply <project> --authorization <authorization-id>
+lode-agent managed worker-wave-create <project> --input <wave.json>
+lode-agent managed worker-wave-seal <project> --wave <bounded-worker-wave-id>
+lode-agent worker-wave-status <project> --wave <bounded-worker-wave-id>
+lode-agent worker-wave-wait <project> --wave <bounded-worker-wave-id>
+lode-agent managed worker-wave-abandon <project> --input <abandonment.json>
+lode-agent run-integrate-checkpoint <project> --input <integration.json>
+lode-agent run-integration-read <project> --review <review-decision-id>
 ```
 
 Typed MCP exposes `lode_checkpoint_basis`, `lode_checkpoint_diagnose`,

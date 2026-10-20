@@ -220,7 +220,7 @@ function projectFiles(root, pluginRoot, runtimes, integrations, storage) {
   });
   const files = new Map([
     [relativeProjectArtifact(storage, "project.json"), json(project)],
-    [relativeProjectArtifact(storage, "instructions/project.md"), "# Project-specific HEAD context\n\nRecord project identity, canonical sources, repository boundaries, and fixed constraints here.\n"],
+    [relativeProjectArtifact(storage, "instructions/project.md"), "# Project-specific Lode context\n\nRecord project identity, canonical sources, repository boundaries, and fixed constraints here.\n"],
     [relativeProjectArtifact(storage, "generated/lode-instructions.md"), lodeInstructions()],
     [relativeProjectArtifact(storage, "generated/claude.mcp.json"), json(claudeMcpProjection(pluginRoot))],
     [relativeProjectArtifact(storage, "generated/opencode.json"), json(opencodeProjection(pluginRoot, storage))],
@@ -267,7 +267,7 @@ export function initializeProject({ root = ".", pluginRoot, runtimes } = {}) {
   const canonicalRoot = canonicalDirectory(root);
   const canonicalPluginRoot = fs.realpathSync(path.resolve(pluginRoot));
   const selectedRuntimes = normalizeRuntimes(runtimes);
-  if (resolveProjectStorage(canonicalRoot)) fail("HEAD Agent Core is already initialized for this project.", "ALREADY_INITIALIZED");
+  if (resolveProjectStorage(canonicalRoot)) fail("Lode Agent Core is already initialized for this project.", "ALREADY_INITIALIZED");
   const storage = Object.freeze({ projectRoot: canonicalRoot, projectId: `lode-${sha256(canonicalRoot).slice(0, 20)}`, dialect: "lode", directory: ".lode", projectFile: path.join(canonicalRoot, ".lode", "project.json") });
   const projectFile = storage.projectFile;
   assertNoSymlinkAncestors(canonicalRoot, projectFile);
@@ -326,7 +326,7 @@ export function convergeProjectInstallation({ root = ".", pluginRoot, runtimes =
   const canonicalPluginRoot = fs.realpathSync(path.resolve(pluginRoot));
   const packageVersion = packageVersionAt(canonicalPluginRoot);
   const inspected = inspectProject(root);
-  if (inspected.status === "not_initialized") fail("HEAD Agent Core is not initialized.", "NOT_INITIALIZED");
+  if (inspected.status === "not_initialized") fail("Lode Agent Core is not initialized.", "NOT_INITIALIZED");
   if (inspected.status !== "ready") {
     fail(`Managed project files must be drift-free before installation convergence; current status: ${inspected.status}.`, "PROJECT_NOT_READY");
   }
@@ -480,7 +480,7 @@ export function isProjectRecoveryReadable(inspected) {
 
 export async function inspectRuntimeAdapters(root = ".") {
   const inspected = inspectProject(root);
-  if (inspected.status === "not_initialized") fail("HEAD Agent Core is not initialized.", "NOT_INITIALIZED");
+  if (inspected.status === "not_initialized") fail("Lode Agent Core is not initialized.", "NOT_INITIALIZED");
   const contracts = inspectRuntimeAdapterContracts({ runtimes: inspected.project.runtimes });
   const machineInterfaces = inspectRuntimeMachineInterfaces({ runtimes: inspected.project.runtimes });
   const versionEvidence = await buildRuntimeVersionEvidence({
@@ -520,7 +520,7 @@ export function createCheckpoint({ root = ".", summary, next = "" } = {}) {
   void summary;
   void next;
   fail(
-    "The legacy time-based checkpoint API is retired. Use createRecoveryCheckpoint or the `head checkpoint` command, which creates the canonical content-addressed SessionRunCheckpoint.",
+    "The legacy time-based checkpoint API is retired. Use createRecoveryCheckpoint or the `lode-agent checkpoint` command, which creates the canonical content-addressed SessionRunCheckpoint.",
     "LEGACY_CHECKPOINT_API_RETIRED",
   );
 }

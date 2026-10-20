@@ -139,11 +139,11 @@ native compaction hook이 없는 Codex 또는 다른 runtime에서도 첫 turn�
 Host가 담당하며, hook 부재는 일반 작업을 막지 않습니다.
 
 ```text
-head compact-prepare <project> --input <recovery.json>
-head compact-verify <project> --input <verification.json>
-head compact-continue <project> --input <continuation.json>
-head compact-status <project>
-head compact-abort <project> --input <abort.json>
+lode-agent compact-prepare <project> --input <recovery.json>
+lode-agent compact-verify <project> --input <verification.json>
+lode-agent compact-continue <project> --input <continuation.json>
+lode-agent compact-status <project>
+lode-agent compact-abort <project> --input <abort.json>
 ```
 
 상태를 변경하는 command는 고급 `help-all` 작업이고, 읽기 전용

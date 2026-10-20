@@ -56,8 +56,8 @@ P4 graph는 `BranchStateObservation`, `DeploymentResultObservation`, `ReleaseObs
 ## CLI
 
 ```text
-head release-observe <project> --input <deployment-result.json>
-head release-status <project>
+lode-agent release-observe <project> --input <deployment-result.json>
+lode-agent release-status <project>
 ```
 
 ## MCP

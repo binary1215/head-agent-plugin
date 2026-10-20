@@ -127,11 +127,11 @@ CLI는 엄격한 JSON 객체를 받습니다.
 ## CLI
 
 ```text
-head world-docs-review <project> --input <review.json>
-head world-docs-apply <project> --review <document-change-review-decision-id>
-head world-docs-review-status <project> --candidate-set <document-change-candidate-set-id>
-head world-docs-review-read <project> --review <document-change-review-decision-id>
-head world-docs-application-read <project> --application <document-change-application-id>
+lode-agent world-docs-review <project> --input <review.json>
+lode-agent world-docs-apply <project> --review <document-change-review-decision-id>
+lode-agent world-docs-review-status <project> --candidate-set <document-change-candidate-set-id>
+lode-agent world-docs-review-read <project> --review <document-change-review-decision-id>
+lode-agent world-docs-application-read <project> --application <document-change-application-id>
 ```
 
 ## 읽기 전용 MCP

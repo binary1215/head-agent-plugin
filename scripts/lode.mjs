@@ -102,7 +102,7 @@ export function parse(argv) {
 
 export function usage({ all = false, surface = "ordinary" } = {}) {
   requireSurface(surface);
-  const cliDisplay = ARTIFACT_COMPOSITION.identity === "head" ? "head" : "lode";
+  const cliDisplay = `${ARTIFACT_COMPOSITION.identity}-agent`;
   const continuityName = ARTIFACT_COMPOSITION.identity === "head" ? "head-continuity" : "lode-continuity";
   const allCommands = [
       `${cliDisplay} init <project> [--runtime claude,codex,opencode] [--profile core|product] [--input <onboarding.json>]`,

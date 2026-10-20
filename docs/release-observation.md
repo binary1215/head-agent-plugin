@@ -54,8 +54,8 @@ The P4 graph adds `BranchStateObservation`, `DeploymentResultObservation`, and `
 ## CLI
 
 ```text
-head release-observe <project> --input <deployment-result.json>
-head release-status <project>
+lode-agent release-observe <project> --input <deployment-result.json>
+lode-agent release-status <project>
 ```
 
 ## MCP

@@ -108,19 +108,19 @@ deferred는 파생 갱신이 완료되지 않았다는 뜻이지 재시도 예�
 
 ## CLI
 
-`head help`는 Core 작업과 복구를 보여 줍니다. 위험은 Lode가 직접 판단하고,
+`lode-agent help`는 Core 작업과 복구를 보여 줍니다. 위험은 Lode가 직접 판단하고,
 임시 사실·가설·추론과 근거는 대화에서 구분합니다. 영속 Signal/Hypothesis,
-감사나 복구가 필요할 때 `head help-all`로 찾습니다. 실행 수단과 임시 학습은
+감사나 복구가 필요할 때 `lode-agent help-all`로 찾습니다. 실행 수단과 임시 학습은
 Lode가 직접 판단하고 표현하며 Core 분류기나 메모 형식화 호출은 없습니다.
 
 ```text
-head product-signal-record <project> --input <signal.json>
-head product-hypothesis-record <project> --input <hypothesis.json>
-head product-initiative-propose <project> --input <initiative.json>
-head product-initiative-review <project> --input <review.json>
-head product-outcome-observe <project> --input <outcome.json>
-head product-operating-status <project> [--fresh]
-head head-continuity <project> [--fresh]
+lode-agent product-signal-record <project> --input <signal.json>
+lode-agent product-hypothesis-record <project> --input <hypothesis.json>
+lode-agent product-initiative-propose <project> --input <initiative.json>
+lode-agent product-initiative-review <project> --input <review.json>
+lode-agent product-outcome-observe <project> --input <outcome.json>
+lode-agent product-operating-status <project> [--fresh]
+lode-agent head-continuity <project> [--fresh]
 ```
 
 record/review/observe 명령은 primary 저장 뒤 같은 작업에서 로컬 World Model과 Product Graph 재구축을 시도합니다. 파생 갱신 미완료는 저장 성공과 별도로 표시하며 원격 GraphDB를 활성화하지는 않습니다.

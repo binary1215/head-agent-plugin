@@ -98,12 +98,12 @@ P4 감사 graph는 `CHECKS_AGAINST`, `EVIDENCED_BY`, `DISPOSITIONED_BY`, `REASSE
 일반 대화는 typed MCP를 사용합니다. CLI는 신뢰된 자동화와 진단에 계속 사용할 수 있습니다.
 
 ```text
-head conformance-prepare <project>
-head conformance-propose <project> --input <provider-head-proposal.json>
-head conformance-queue <project>
-head conformance-read <project> --finding <conformance-finding-id>
-head conformance-disposition <project> --input <user-confirmed-disposition.json>
-head conformance-resolution-propose <project> --input <provider-head-resolution.json>
+lode-agent conformance-prepare <project>
+lode-agent conformance-propose <project> --input <provider-head-proposal.json>
+lode-agent conformance-queue <project>
+lode-agent conformance-read <project> --finding <conformance-finding-id>
+lode-agent conformance-disposition <project> --input <user-confirmed-disposition.json>
+lode-agent conformance-resolution-propose <project> --input <provider-head-resolution.json>
 ```
 
 페이지에는 최대 64개 entity 또는 Finding이 포함됩니다. 이는 output bound이며 eligibility, registration, persistence gate가 아닙니다. opaque cursor로 65번째 이후 항목도 노출합니다.

@@ -67,8 +67,8 @@ Graph는 계속 재구축 가능한 view입니다. GraphDB 또는 materialized g
 ## CLI와 MCP
 
 ```text
-head delivery-observe <project> --input <delivery-observation.json>
-head delivery-status <project> [--environment <key>] [--target <key>] [--history-limit <1..4096>]
+lode-agent delivery-observe <project> --input <delivery-observation.json>
+lode-agent delivery-status <project> [--environment <key>] [--target <key>] [--history-limit <1..4096>]
 ```
 
 - `lode_delivery_observe`

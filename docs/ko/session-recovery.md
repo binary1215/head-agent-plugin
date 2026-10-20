@@ -185,7 +185,7 @@ provider-session identity도 필요하지 않습니다.
 
 Protocol `0.1.0` 및 `0.2.0` checkpoint는 audit 및 compaction compatibility를 위해
 checkpoint reader로 계속 읽을 수 있습니다. 그러나 immutable Session pointer보다 이전
-형식이므로 현재 artifact-only restore를 구동할 수 없습니다. 공개 `head checkpoint`
+형식이므로 현재 artifact-only restore를 구동할 수 없습니다. 공개 `lode-agent checkpoint`
 명령은 이제 canonical content-addressed P2 형식만 씁니다. 과거의 직접 time-based API는
 폐기되었으며 `latestCheckpoint`를 전진시킬 수 없습니다.
 
@@ -264,23 +264,23 @@ ResultPacket은 참조 증거로 남으며 나중에 없어져도 checkpoint의 
 강제하지 않습니다.
 
 ```text
-head checkpoint <project> --summary <text> [--next <text>]
-head checkpoint-basis <project>
-head checkpoint-diagnose <project>
-head checkpoint-sync <project> --input <head-direction.json>
-head session-restore <project> [--checkpoint <checkpoint-id>]
-head session-continue <project> --runtime <codex|opencode> [--checkpoint <checkpoint-id>]
-head managed worker-dispatch <project> --authorization <authorization-id> --role <non-head-role>
-head worker-wait <project> --authorization <authorization-id> [--wait-timeout-ms <milliseconds>]
-head managed worker-execute <project> --authorization <authorization-id> --role <non-head-role>
-head managed worker-apply <project> --authorization <authorization-id>
-head managed worker-wave-create <project> --input <wave.json>
-head managed worker-wave-seal <project> --wave <bounded-worker-wave-id>
-head worker-wave-status <project> --wave <bounded-worker-wave-id>
-head worker-wave-wait <project> --wave <bounded-worker-wave-id>
-head managed worker-wave-abandon <project> --input <abandonment.json>
-head run-integrate-checkpoint <project> --input <integration.json>
-head run-integration-read <project> --review <review-decision-id>
+lode-agent checkpoint <project> --summary <text> [--next <text>]
+lode-agent checkpoint-basis <project>
+lode-agent checkpoint-diagnose <project>
+lode-agent checkpoint-sync <project> --input <head-direction.json>
+lode-agent session-restore <project> [--checkpoint <checkpoint-id>]
+lode-agent session-continue <project> --runtime <codex|opencode> [--checkpoint <checkpoint-id>]
+lode-agent managed worker-dispatch <project> --authorization <authorization-id> --role <non-head-role>
+lode-agent worker-wait <project> --authorization <authorization-id> [--wait-timeout-ms <milliseconds>]
+lode-agent managed worker-execute <project> --authorization <authorization-id> --role <non-head-role>
+lode-agent managed worker-apply <project> --authorization <authorization-id>
+lode-agent managed worker-wave-create <project> --input <wave.json>
+lode-agent managed worker-wave-seal <project> --wave <bounded-worker-wave-id>
+lode-agent worker-wave-status <project> --wave <bounded-worker-wave-id>
+lode-agent worker-wave-wait <project> --wave <bounded-worker-wave-id>
+lode-agent managed worker-wave-abandon <project> --input <abandonment.json>
+lode-agent run-integrate-checkpoint <project> --input <integration.json>
+lode-agent run-integration-read <project> --review <review-decision-id>
 ```
 
 Typed MCP는 `lode_checkpoint_basis`, `lode_checkpoint_diagnose`,

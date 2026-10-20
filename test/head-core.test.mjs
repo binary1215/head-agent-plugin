@@ -2359,10 +2359,10 @@ test("activates an ArcadeDB projection only after adapter-neutral conformance an
     },
   });
   assert.equal(onboarding.storageSelection.graphdb.capabilityStatus, "pending-unverified-adapter");
-  assert.equal(runCommand(["help"]).commands.includes("lode world-graph-remote-activate <project>"), false);
+  assert.equal(runCommand(["help"]).commands.includes("lode-agent world-graph-remote-activate <project>"), false);
   assert.equal(runCommand(["help"]).surface, "light-default");
   assert.equal(runCommand(["help"]).laneRecommendationRequired, false);
-  assert.equal(runCommand(["help-all"]).commands.includes("lode world-graph-remote-activate <project>"), true);
+  assert.equal(runCommand(["help-all"]).commands.includes("lode-agent world-graph-remote-activate <project>"), true);
   assert.equal(runCommand(["help-all"]).surface, "ordinary-complete");
   assert.equal(mcpTools.some((tool) => tool.name === "lode_graphdb_projection_status"), true);
   assert.equal(mcpTools.some((tool) => tool.name === "lode_graphdb_database_initialize"), true);

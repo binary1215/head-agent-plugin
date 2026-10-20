@@ -93,8 +93,8 @@ GraphSnapshot, Context Capsule 또는 Execution Lineage의 입력이 되지 않�
 
 ```powershell
 npm run verify:codex-marketplace
-node scripts/build-codex-marketplace.mjs --output C:\temporary\head-agent-marketplace
-node scripts/verify-codex-marketplace.mjs --root C:\temporary\head-agent-marketplace
+node scripts/build-codex-marketplace.mjs --output C:\temporary\lode-agent-marketplace
+node scripts/verify-codex-marketplace.mjs --root C:\temporary\lode-agent-marketplace
 ```
 
 CI는 빌더에 `--native-root`를, 검증기에 `--require-native`를 제공합니다. 개발을 위해

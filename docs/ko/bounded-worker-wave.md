@@ -77,13 +77,13 @@ dispatch와 실행 소유권으로 유지됩니다. HF-010은 각 fragment가 �
 ## CLI와 typed MCP
 
 ```text
-head managed worker-wave-create <project> --input <wave.json>
-head worker-wave-read <project> --wave <bounded-worker-wave-id>
-head managed worker-wave-seal <project> --wave <bounded-worker-wave-id>
-head worker-wave-status <project> --wave <bounded-worker-wave-id>
-head worker-wave-results <project> --wave <bounded-worker-wave-id>
-head worker-wave-wait <project> --wave <bounded-worker-wave-id> [--wait-timeout-ms <0..600000>]
-head managed worker-wave-abandon <project> --input <abandonment.json>
+lode-agent managed worker-wave-create <project> --input <wave.json>
+lode-agent worker-wave-read <project> --wave <bounded-worker-wave-id>
+lode-agent managed worker-wave-seal <project> --wave <bounded-worker-wave-id>
+lode-agent worker-wave-status <project> --wave <bounded-worker-wave-id>
+lode-agent worker-wave-results <project> --wave <bounded-worker-wave-id>
+lode-agent worker-wave-wait <project> --wave <bounded-worker-wave-id> [--wait-timeout-ms <0..600000>]
+lode-agent managed worker-wave-abandon <project> --input <abandonment.json>
 ```
 
 Typed MCP는 동일한 Core 함수와 ID를 사용합니다. 관리형 변경 schema를

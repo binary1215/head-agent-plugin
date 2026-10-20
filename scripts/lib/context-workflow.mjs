@@ -33,7 +33,7 @@ function projection(capsule) {
       semanticSufficiencyOwner: format.value("HEAD"), userDecisionRequired: false, persisted: false },
     nextAction: { id: "head_assess_semantic_sufficiency",
       summary: "Use the selected context and inspect original sources or expand relevant graph anchors where evidence is missing.",
-      note: "HEAD decides which evidence is needed and whether it is sufficient; preparation does not require a World refresh, Product approval, Run or Capsule persistence." },
+      note: "Lode decides which evidence is needed and whether it is sufficient; preparation does not require a World refresh, Product approval, Run or Capsule persistence." },
     authority: { advisoryOnly: true, persisted: false, mutatesWorldModel: false, persistsCapsule: false,
       selectsEvidenceNeeds: false, judgesSemanticSufficiency: false, grantsExecutionAuthorization: false,
       createsReviewDecision: false, writesRecoveryDirection: false },

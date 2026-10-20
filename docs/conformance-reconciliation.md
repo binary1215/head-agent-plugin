@@ -99,12 +99,12 @@ Duplicate triggers converge across both queued and pending evidence. An empty qu
 Normal conversation uses typed MCP. CLI remains available for trusted automation and diagnosis:
 
 ```text
-head conformance-prepare <project>
-head conformance-propose <project> --input <provider-head-proposal.json>
-head conformance-queue <project>
-head conformance-read <project> --finding <conformance-finding-id>
-head conformance-disposition <project> --input <user-confirmed-disposition.json>
-head conformance-resolution-propose <project> --input <provider-head-resolution.json>
+lode-agent conformance-prepare <project>
+lode-agent conformance-propose <project> --input <provider-head-proposal.json>
+lode-agent conformance-queue <project>
+lode-agent conformance-read <project> --finding <conformance-finding-id>
+lode-agent conformance-disposition <project> --input <user-confirmed-disposition.json>
+lode-agent conformance-resolution-propose <project> --input <provider-head-resolution.json>
 ```
 
 Pages contain at most 64 entities or Findings. This is an output bound, not an eligibility, registration, or persistence gate; opaque cursors expose the 65th and later items.
