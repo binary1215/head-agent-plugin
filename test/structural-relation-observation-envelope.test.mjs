@@ -222,8 +222,31 @@ test("SEO11 envelope is isolated and rejects legacy kind", async () => {
   const graph = graphApi.buildSemanticGraph({ files, sourceRelationEvidence: evidence });
   assert.equal(evidence.evidenceSetId, "source-relation-evidence-2a3612e23ebe669d19e70bcd");
   assert.equal(evidence.evidenceSetHash, "2a3612e23ebe669d19e70bcd5b819453a6cd6844c4d16d3a5ca3437d91bbdda2");
-  assert.equal(graph.semanticGraphId, "semantic-graph-d4b9ddfb4b6ff9b205818d8f");
-  assert.equal(graph.semanticGraphHash, "d4b9ddfb4b6ff9b205818d8fe6df669f7962a0f8d2637bba16c25166143646c1");
+  // This historical fixture used analyzer 0.3.0. The accepted 0.3.1 scanner
+  // produces the same facts here, but DECLARES provenance is hash input. Build
+  // the old payload without changing Core or relabeling a stored original.
+  assert.equal(analysis.SOURCE_ANALYSIS_VERSION, "0.3.1");
+  const currentBefore = JSON.stringify(graph), historical = structuredClone(graph);
+  for (const edge of historical.edges) if (edge.type === "DECLARES") {
+    assert.equal(edge.evidenceSource.sourceAnalysisVersion, analysis.SOURCE_ANALYSIS_VERSION);
+    edge.evidenceSource.sourceAnalysisVersion = "0.3.0";
+    const { id, ...payload } = edge;
+    edge.id = contentId("semantic-edge", payload);
+  }
+  historical.edges.sort((a, b) => a.id.localeCompare(b.id));
+  const { semanticGraphId, semanticGraphHash, ...historicalPayload } = historical;
+  historical.semanticGraphHash = H(historicalPayload);
+  historical.semanticGraphId = `semantic-graph-${historical.semanticGraphHash.slice(0, 24)}`;
+  assert.equal(historical.semanticGraphId, "semantic-graph-d4b9ddfb4b6ff9b205818d8f");
+  assert.equal(historical.semanticGraphHash, "d4b9ddfb4b6ff9b205818d8fe6df669f7962a0f8d2637bba16c25166143646c1");
+  const oldBefore = JSON.stringify(historical);
+  graphApi.verifySemanticGraph(historical); graphApi.verifySemanticGraph(graph);
+  assert.equal(JSON.stringify(historical), oldBefore); assert.equal(JSON.stringify(graph), currentBefore);
+  assert.deepEqual(graph.nodes, historical.nodes);
+  assert.deepEqual(graph.edges.filter(edge => edge.type !== "DECLARES"), historical.edges.filter(edge => edge.type !== "DECLARES"));
+  assert.equal(graph.edges.filter(edge => edge.type === "DECLARES").length, 2);
+  assert.notEqual(graph.semanticGraphId, historical.semanticGraphId);
+  assert.notEqual(graph.semanticGraphHash, historical.semanticGraphHash);
   assert.deepEqual(graph.summary, { nodeCount: 4, edgeCount: 3, fileNodeCount: 2, symbolNodeCount: 2, externalDependencyNodeCount: 0, importEdgeCount: 0, callEdgeCount: 1, astEvidenceEdgeCount: 1, unresolvedImportCount: 0, unresolvedCallCount: 1 });
   const { document } = build(); assert.throws(() => legacy.verifySourceRelationEvidenceSet(document));
 });

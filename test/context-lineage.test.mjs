@@ -184,8 +184,8 @@ test("local exact Git bytes connect writer, query, typed MCP, CLI and Explorer w
   const mcp = await dispatch({ id: 1, method: "tools/call", params: { name: "head_project_graph", arguments: { project_root: f.root, paths: ["src/action.mjs"], details: true, depth: 3 } } });
   assert(!mcp.error); assert(!mcp.result.isError); assert(JSON.stringify(mcp.result).includes("declaration-bytes-unchanged"));
   const cli = await run(t, process.execPath, [path.join(pluginRoot, "scripts/lode.mjs"), "graph-query", f.root, "--paths", "src/action.mjs", "--details"], pluginRoot);
-  assert(cli.includes("Recorded code context")); assert(cli.includes("'allow'")); assert(cli.includes("'block'"));
-  assert(formatCliResult("graph-query", found).includes("Recorded reason, not proven change cause"));
+  assert(cli.includes("Source context")); assert(cli.includes("'allow'")); assert(cli.includes("'block'"));
+  assert(formatCliResult("graph-query", found).includes("Recorded reason (not proven change cause)"));
   const explorer = await buildGraphExplorerSnapshot({ root: f.root, query: "src/action.mjs" });
   assert(explorer.graph.contextLineage.files.some(file => file.path === "src/action.mjs"));
   const exported = await exportGraphExplorer({ root: f.root, query: "src/action.mjs", output: path.join(f.base, "context.html") });
@@ -233,7 +233,7 @@ test("work event anchors expose code and document citation comparisons without c
   assert.deepEqual(snapshot(f.base), before);
   assert(found.contextLineage.files.some(file => file.path === "src/action.mjs")); assert(found.contextLineage.files.some(file => file.path === "notes.md"));
   for (const file of found.contextLineage.files) assert(file.comparisons.some(pair => pair.scope === "explicit-work-chain-citation-pair-not-request-boundary" && pair.timeOrder.includes("not-established")));
-  const body = formatCliResult("graph-query", found); assert(body.includes("Do not deploy")); assert(body.includes("기존 기록을 지우지 말고")); assert(body.includes("Cited version A")); assert(body.includes("not-user-transcript"));
+  const body = formatCliResult("graph-query", found); assert(body.includes("Do not deploy")); assert(body.includes("기존 기록을 지우지 말고")); assert(body.includes("Cited version A")); assert(body.includes("not a captured user message"));
   const again = await queryProjectGraph({ root: f.root, anchorIds: [observed.evidence.evidenceId], details: true, depth: 3, previousResult: found });
   assert.deepEqual(again.contextLineage.files, found.contextLineage.files);
   // Historical availability changes without changing the same current sources.

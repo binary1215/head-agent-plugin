@@ -13,6 +13,7 @@ import { runCommand } from "../scripts/lode.mjs";
 import { dispatch } from "../scripts/mcp-server.mjs";
 import { formatCliResult } from "../scripts/lib/cli-presentation.mjs";
 import { sha, encoded, exact, link, citation } from "./helpers/session-work-linkage-fixture.mjs";
+import { assertTerminalGraphPresentation } from "./helpers/terminal-graph-assertions.mjs";
 
 // Portable public-API synthetic cases. No subprocess, installed Host, provider,
 // model, external database or machine-local .agent-work dependency.
@@ -27,6 +28,7 @@ function assertJsonMember(text, name, value) {
   if (value !== undefined) assert.ok(text.includes(JSON.stringify({ [name]: value }, null, 2).slice(2, -2)), `Missing original ${name}`);
 }
 function assertHistoricalPresentation(text, result, node) {
+  if (text.startsWith("Selected connections:")) return assertTerminalGraphPresentation(text, result);
   const index = result.nodes.indexOf(node), start = text.indexOf(`Node[${index}]:\n`);
   assert.ok(start >= 0, `Missing Node[${index}]`);
   const ends = [text.indexOf(`Node[${index + 1}]:\n`, start), text.indexOf("Edge[0]:\n", start)].filter(offset => offset >= 0);

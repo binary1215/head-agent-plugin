@@ -45,6 +45,10 @@ test("terminal uses every selected directed edge without tree inference, path me
 test("all graph labels, originals, reasons, diffs and errors are inert and cannot forge outer status rows", () => {
   const value = graph(); value.query.query = attack; value.basis.projectId = attack; value.nodes[1].path = attack; value.nodes[1].revisionId = attack;
   value.nodes[0].workContent.summary = attack; value.nodes[0].workContent.judgments[0].reason = attack; value.edges[0].type = attack;
+  value.nodes[0].workContent.workTopics = [attack];
+  value.nodes[0].workContentExcerpts = [{ field: attack, index: 1, start: 0, end: 1, totalCharacters: 2, text: attack }];
+  value.nodes[0].referenceEvidence = [{ path: attack, status: "missing", reasonCode: attack, historicalContentAvailable: false, contentReconstructed: false }];
+  value.sourceFallback = { needed: true, action: attack, reasonCodes: [attack] };
   value.contextLineage = { files: [{ path: attack, unrecordedIntervals: attack, comparisons: [{ status: "observed", scope: "exact-cited-pair", symbols: [],
     diff: { changed: true, before: { startLine: 1, text: attack }, after: { startLine: 1, text: "한글e\u0301🙂\n  keep indentation  \n" } } }] }],
     recordedReasons: [{ reason: attack }], canonChanges: [], gaps: [{ reasonCode: attack }] };
@@ -54,6 +58,27 @@ test("all graph labels, originals, reasons, diffs and errors are inert and canno
   }
   assert.equal(JSON.stringify(value), before);
   assert.equal(terminalBlock("Original", "first\n  code  \n", 88), "Original\n  | first\n  |   code  \n  | \n");
+});
+
+test("default terminal restores partial topics, historical reference gaps and owner/root navigation without inventing authority", () => {
+  const value = graph(), node = value.nodes[0];
+  node.evidenceDigest = "digest-A"; node.contentPartial = true;
+  node.workContent.workTopics = ["Only a navigation label"];
+  node.workContent.workLink = { root: { evidenceId: "unreturned-root", evidenceDigest: "exact-root-digest" } };
+  node.workContentExcerpts = [{ field: "workTopics", index: 2, start: 5, end: 20, totalCharacters: 40, text: "Partial label X" }];
+  node.referenceEvidence = [{ path: "src/removed.mjs", kind: "source", status: "missing", currentness: "missing", reasonCode: "ENOENT",
+    historicalContentAvailable: false, contentReconstructed: false }];
+  value.sourceFallback = { needed: true, action: "Read an independent current original", reasonCodes: ["PROJECT_GRAPH_COMPACT_CONTENT_PARTIAL"] };
+  value.authority = { instructionAuthority: false, ordinaryWorkBlocked: false };
+  const before = JSON.stringify(value), text = formatTerminalGraph(value);
+  for (const term of ["partial text", "Only a navigation label", "Partial original workTopics[2]: characters 5-20 of 40", "Partial label X", "src/removed.mjs",
+    "missing", "ENOENT", "historical content unavailable", "content not reconstructed", "declared root outside selection", "Members: [1]", "Read an independent current original",
+    "not a new approval gate", "not current tasks or activity", "No runtime PASS", "Do not deploy"]) assert(text.includes(term), term);
+  assert(!text.includes("exact-root-digest"));
+  const diagnostic = formatTerminalGraph(value, { diagnostics: true, columns: 240 });
+  assert(diagnostic.includes("exact-root-digest")); assert(diagnostic.includes('"historicalContentAvailable": false'));
+  assert.equal(text.split(node.workContent.summary).length - 1, 1);
+  assert.equal(JSON.stringify(value), before);
 });
 
 test("narrow no-color text preserves Korean paths, graphemes and all body text instead of truncating evidence", () => {

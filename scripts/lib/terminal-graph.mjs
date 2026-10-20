@@ -1,5 +1,6 @@
 // Presentation only: consumes the already selected graph/A explanation. No
 // readers, traversal, state, model calls, color or effect controls belong here.
+import { organizeSelectedWorkBodies, workBodyTuples } from "./session-work-body-organization.mjs";
 export function terminalColumns(value) {
   const width = Number(value ?? process.stdout.columns ?? process.env.COLUMNS ?? 88);
   return Number.isFinite(width) ? Math.max(16, Math.min(240, Math.floor(width))) : 88;
@@ -46,7 +47,15 @@ export function formatTerminalGraph(value, { columns, diagnostics = false } = {}
   const list = (label, items) => { if (Array.isArray(items)) for (const item of items) block(label, typeof item === "string" ? item : JSON.stringify(item)); };
   for (const [i, node] of value.nodes.entries()) if (node?.nodeId) refs.set(node.nodeId, [...(refs.get(node.nodeId) || []), `[${i + 1}]`]);
   const ref = id => refs.get(id)?.length === 1 ? refs.get(id)[0] : `${refs.has(id) ? "ambiguous" : "outside selection"}: ${inline(id)}`;
+  const sessionRef = id => {
+    if (!id) return "owner unknown";
+    if (!sessions.has(id)) sessions.set(id, `S${sessions.size + 1}`);
+    return sessions.get(id);
+  };
+  const typedWork = node => node?.kind === "Evidence" && node.subtype === "SessionWorkEvidence" && node.origin?.layer === "sessionWork";
+  for (const node of value.nodes) sessionRef(node?.sessionId || node?.ownerSessionId);
   row(`Selected connections: ${value.nodes.length} records, ${value.edges.length} directed edges`);
+  if (value.status) row(`Graph observation: ${inline(value.status)}`);
   if (value.query?.query) block("Question", value.query.query);
   if (value.basis?.projectId) block("Project", value.basis.projectId);
   if (!value.edges.length) row("No selected edges; this does not prove absence.");
@@ -55,6 +64,13 @@ export function formatTerminalGraph(value, { columns, diagnostics = false } = {}
     if (edge?.historical || edge?.status || edge?.state || edge?.reviewState || edge?.freshness) row(`  edge state: ${[edge.historical ? "historical" : null, edge.status, edge.state, edge.reviewState, edge.freshness].filter(Boolean).map(inline).join("; ")}`);
     for (const state of edge?.endpointStates || []) if (!refs.has(state.nodeId))
       block(`Outside endpoint ${inline(state.nodeId)}`, [state.reviewState, state.freshness, state.revisionId].filter(Boolean).join("; "));
+  }
+  const workGroups = organizeSelectedWorkBodies(workBodyTuples(value.nodes, { projectId: value.basis?.projectId, bodyKey: "workContent" })
+    .filter((_, index) => typedWork(value.nodes[index])));
+  if (workGroups.groups.length) row("Declared historical work groups; navigation only, not current tasks or activity.");
+  for (const [index, group] of workGroups.groups.entries()) {
+    row(`Work group G${index + 1}: ${sessionRef(group.sessionId)}; ${group.rootKind} root ${group.rootBodyIndex === null ? "outside selection (exact reference in diagnostics)" : `[${group.rootBodyIndex + 1}]`}`);
+    row(`  Members: ${group.recordIndices.map(i => `[${i + 1}]`).join(", ")}; bodies appear once below.`);
   }
   // Index every returned record, without merging by title/path/layer or inventing a tree.
   for (const [i, node] of value.nodes.entries()) {
@@ -65,12 +81,12 @@ export function formatTerminalGraph(value, { columns, diagnostics = false } = {}
     if (states.length) row(`  ${states.map(inline).join("; ")}`);
     if (node.projectId && node.projectId !== value.basis?.projectId) block("Record Project", node.projectId);
     const session = node.sessionId || node.ownerSessionId;
-    if (session) { if (!sessions.has(session)) sessions.set(session, `S${sessions.size + 1}`); row(`  Logical Session ${sessions.get(session)}`); }
+    if (session) row(`  Logical Session ${sessionRef(session)}`);
     if (node.revisionId) row(`  Revision ${inline(node.revisionId).slice(0, 16)} (exact value in diagnostics)`);
-    const typedWork = node.kind === "Evidence" && node.subtype === "SessionWorkEvidence" && node.origin?.layer === "sessionWork";
-    if (node.workContent && typedWork) {
+    if (node.workContent && typedWork(node)) {
       row("  HEAD-authored work evidence; not a captured user message.");
       block("Recorded work", node.workContent.summary);
+      list("Authored topic (navigation only)", node.workContent.workTopics);
       list("Observed work", node.workContent.observedWork);
       list("Pending", node.workContent.pending); list("Unknown", node.workContent.unknowns);
       list("Suggested follow-up (historical; not permission)", node.workContent.suggestedFollowUp);
@@ -82,7 +98,17 @@ export function formatTerminalGraph(value, { columns, diagnostics = false } = {}
         block("Recorded judgment", judgment.assessment); block("Recorded reason (not proven cause)", judgment.reason); list("Alternative", judgment.alternatives);
       }
     }
-    if (node.workContent && !typedWork) block("Unverified work-shaped fields (not HEAD-authored evidence)", JSON.stringify(node.workContent, null, 2));
+    if (node.workContent && !typedWork(node)) block("Unverified work-shaped fields (not HEAD-authored evidence)", JSON.stringify(node.workContent, null, 2));
+    for (const excerpt of node.workContentExcerpts || []) {
+      const location = `${excerpt.field}${excerpt.index == null ? "" : `[${excerpt.index}]`}${excerpt.subfield ? `.${excerpt.subfield}` : ""}${excerpt.alternativeIndex == null ? "" : `[${excerpt.alternativeIndex}]`}`;
+      block(`Partial original ${location}: characters ${excerpt.start}-${excerpt.end} of ${excerpt.totalCharacters}`, excerpt.text);
+    }
+    for (const reference of node.referenceEvidence || []) {
+      block("Historical reference (not reconstructed content)", [reference.path, reference.kind, reference.status, reference.currentness, reference.reasonCode,
+        reference.historicalContentAvailable === false ? "historical content unavailable" : null,
+        reference.contentReconstructed === false ? "content not reconstructed" : null].filter(Boolean).join("; "));
+    }
+    if (node.reasonCode) block("Record evidence gap", node.reasonCode);
     const typedDirection = node.kind === "ProjectDirection" && node.origin?.layer === "direction";
     if (node.directionEvidence && typedDirection) {
       row("  Caller-conveyed direction; not a transcript capture.");
@@ -134,6 +160,13 @@ export function formatTerminalGraph(value, { columns, diagnostics = false } = {}
   row(""); row(`Selection: ${inline(value.coverage?.state || value.status || "coverage unknown")}; not proof of completeness or absence.`);
   if (value.truncated || value.coverage?.inventoryBoundReached || value.omittedMatchCount) row(`Partial bounds: truncated ${Boolean(value.truncated)}; inventory bound ${Boolean(value.coverage?.inventoryBoundReached)}; omitted matches ${value.omittedMatchCount || 0}.`);
   for (const layer of value.coverage?.layers || []) if (!["verified", "current"].includes(layer.status)) row(`  ${inline(layer.layer)}: ${inline(layer.status)}${layer.reasonCode ? `; ${inline(layer.reasonCode)}` : ""}`);
+  if (value.sourceFallback?.needed) {
+    row("Source follow-up needed for this selection; not a new approval gate.");
+    block("Source follow-up", value.sourceFallback.action);
+    list("Source gap", value.sourceFallback.reasonCodes);
+  }
+  for (const [key, state] of Object.entries(value.authority || {})) if (state !== false)
+    block(`Returned authority condition: ${key} (not a new permission)`, JSON.stringify(state));
   if (value.unmatchedAnchorIds?.length) list("Anchor not found in selected evidence", value.unmatchedAnchorIds);
   row("Links/text differences do not prove cause, completion or current approval.");
   row("Exact IDs, basis and unknown fields: --json or --diagnostics.");

@@ -18,6 +18,7 @@ import { inspectWorldModel } from "../scripts/lib/world-model.mjs";
 import { startFeatureMapping, reviewFeatureMapping } from "../scripts/lib/feature-mapping.mjs";
 import { sha, snapshot } from "./helpers/session-work-linkage-fixture.mjs";
 import { publicToolName } from "../scripts/lib/lode-artifact-composition.mjs";
+import { assertTerminalGraphPresentation } from "./helpers/terminal-graph-assertions.mjs";
 
 const pluginRoot = path.resolve(import.meta.dirname, "..");
 const isWork = node => node.kind === "Evidence" && node.subtype === "SessionWorkEvidence";
@@ -54,6 +55,7 @@ function assertCommonNodes(text, nodes) {
   return expected;
 }
 function assertGraphPresentation(text, value) {
+  if (text.startsWith("Selected connections:")) return assertTerminalGraphPresentation(text, value);
   const common = assertCommonNodes(text, value.nodes);
   for (const name of ["coverage", "sourceFallback", "boundary"]) assertJsonMember(text, name, value[name]);
   for (const [index, node] of value.nodes.entries()) {
@@ -340,8 +342,10 @@ test("same topic keeps two Session owners, two declared roots, standalone work a
       completeNode(value, original);
       assert.equal(text.split(original.evidence.content.summary).length - 1, 1, "Each actual body is rendered once across topic associations");
     }
-    assert.ok(text.includes(f.session.sessionId)); assert.ok(text.includes(other.sessionId));
-    assert.ok(text.includes(a.evidence.evidenceId)); assert.ok(text.includes(b.evidence.evidenceId));
+    const { sessions } = assertTerminalGraphPresentation(text, value);
+    assert.notEqual(sessions.get(f.session.sessionId), sessions.get(other.sessionId));
+    const diagnostics = formatCliResult("graph-query", value, { diagnostics: true, columns: 240 });
+    for (const id of [f.session.sessionId, other.sessionId, a.evidence.evidenceId, b.evidence.evidenceId]) assert.ok(diagnostics.includes(id));
     assert.ok(text.includes("SecondaryTopicGfks7755"));
     assert.deepEqual(completeNode(value, standalone).workContent.workLink, undefined);
     for (const session of [f.session, other]) {
@@ -374,6 +378,25 @@ test("real graph basis ownership groups nested roots in CLI and direct/router MC
     assert.equal(workNodes(value).length, saved.length);
     assert.ok(workNodes(value).every(node => !Object.hasOwn(node, "projectId")), "Do not inject owner fields into actual graph work nodes");
     assertGraphPresentation(text, value);
+    if (text.startsWith("Selected connections:")) {
+      const { sessions } = assertTerminalGraphPresentation(text, value);
+      const headings = [...text.matchAll(/^Work group G(\d+): (S\d+); (declared|standalone) root \[(\d+)\]\n  Members: ([^\n]+); bodies appear once below\./gmu)];
+      assert.equal(headings.length, expectedGroups.size, "All exact owner/root groups remain visible");
+      const seen = new Set();
+      for (const heading of headings) {
+        const rootNode = value.nodes[Number(heading[4]) - 1], members = expectedGroups.get(rootNode.nodeId);
+        assert.ok(members); assert(!seen.has(rootNode.nodeId)); seen.add(rootNode.nodeId);
+        assert.equal(rootNode.evidenceDigest, exact(rootNode.nodeId === a1.evidence.evidenceId ? a1 : members[0]).evidenceDigest);
+        assert.equal(heading[2], sessions.get(members[0].evidence.sessionId));
+        const displayedIds = [...heading[5].matchAll(/\[(\d+)\]/gu)].map(match => value.nodes[Number(match[1]) - 1].nodeId);
+        assert.deepEqual(new Set(displayedIds), new Set(members.map(member => member.evidence.evidenceId)));
+      }
+      for (const original of saved) {
+        completeNode(value, original);
+        assert.equal(text.split(original.evidence.content.summary).length - 1, 1, "Grouping references never repeat actual bodies");
+      }
+      return;
+    }
     const headings = [...text.matchAll(/^Session work group \((.+)\):\nDeclared historical work root: (.+)\n/gmu)];
     assert.equal(headings.length, expectedGroups.size, "Six actual bodies form four exact owner/root groups");
     const seenRoots = new Set();

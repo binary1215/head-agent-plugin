@@ -409,26 +409,27 @@ test("defaults to the constitutional core without activating Product or Graph go
   assert.equal(mcpContract.result.structuredContent.runtime.activePackageVersion, pluginVersion);
   assert.equal(mcpContract.result.structuredContent.runtime.providerSessionIdentityPersisted, false);
 
-  const humanStatus = spawnSync(process.execPath, [path.join(pluginRoot, "scripts", "head.mjs"), "status", root], { encoding: "utf8" });
+  const humanStatus = spawnSync(process.execPath, [path.join(pluginRoot, "scripts", "head.mjs"), "status", root], { encoding: "utf8", windowsHide: true });
   assert.equal(humanStatus.status, 0, humanStatus.stderr);
   assert.match(humanStatus.stdout, /Lode is ready — continue the task/u);
   assert.doesNotMatch(humanStatus.stdout, /Project:|Product knowledge:|Context:|Recovery:/u);
   assert.equal(humanStatus.stdout.includes(`Active package: ${pluginVersion}`), false);
   assert.equal(humanStatus.stdout.trimStart().startsWith("{"), false);
 
-  const humanDoctor = spawnSync(process.execPath, [path.join(pluginRoot, "scripts", "head.mjs"), "doctor", root], { encoding: "utf8" });
+  const humanDoctor = spawnSync(process.execPath, [path.join(pluginRoot, "scripts", "head.mjs"), "doctor", root], { encoding: "utf8", windowsHide: true });
   assert.equal(humanDoctor.status, 0, humanDoctor.stderr);
-  assert.equal(humanDoctor.stdout.includes(`Loaded package: ${pluginVersion}`), true);
+  assert.equal(humanDoctor.stdout.includes(`Executing CLI/library package: ${pluginVersion}`), true);
   assert.equal(humanDoctor.stdout.includes(`Configured package: ${pluginVersion}`), true);
-  assert.match(humanDoctor.stdout, /Host restart: not required/u);
+  assert.match(humanDoctor.stdout, /Host tools\/loading: not observed/u);
+  assert.doesNotMatch(humanDoctor.stdout, /Host restart: not required/u);
   assert.match(humanDoctor.stdout, /Next: Continue the user's original task\./u);
   assert.doesNotMatch(humanDoctor.stdout, /^(?:Command|MCP):/mu);
 
-  const jsonStatus = spawnSync(process.execPath, [path.join(pluginRoot, "scripts", "head.mjs"), "status", root, "--json"], { encoding: "utf8" });
+  const jsonStatus = spawnSync(process.execPath, [path.join(pluginRoot, "scripts", "head.mjs"), "status", root, "--json"], { encoding: "utf8", windowsHide: true });
   assert.equal(jsonStatus.status, 0, jsonStatus.stderr);
   assert.equal(JSON.parse(jsonStatus.stdout).runtime.activePackageVersion, pluginVersion);
 
-  const humanHelp = spawnSync(process.execPath, [path.join(pluginRoot, "scripts", "head.mjs"), "help"], { encoding: "utf8" });
+  const humanHelp = spawnSync(process.execPath, [path.join(pluginRoot, "scripts", "head.mjs"), "help"], { encoding: "utf8", windowsHide: true });
   assert.equal(humanHelp.status, 0, humanHelp.stderr);
   assert.match(humanHelp.stdout, /Core-first by default/u);
   assert.match(humanHelp.stdout, /describe the task in ordinary language/u);
@@ -436,18 +437,18 @@ test("defaults to the constitutional core without activating Product or Graph go
   assert.match(humanHelp.stdout, /Read needed files directly/u);
   assert.equal(humanHelp.stdout.trimStart().startsWith("{"), false);
 
-  const jsonHelp = spawnSync(process.execPath, [path.join(pluginRoot, "scripts", "head.mjs"), "help", "--json"], { encoding: "utf8" });
+  const jsonHelp = spawnSync(process.execPath, [path.join(pluginRoot, "scripts", "head.mjs"), "help", "--json"], { encoding: "utf8", windowsHide: true });
   assert.equal(jsonHelp.status, 0, jsonHelp.stderr);
   assert.equal(JSON.parse(jsonHelp.stdout).surface, "light-default");
   assert.equal(JSON.parse(jsonHelp.stdout).contextPreparationRequired, false);
   assert.equal(runCommand(["help-all"]).commands.some((command) => command.includes("context-prepare")), true);
 
-  const humanFailure = spawnSync(process.execPath, [path.join(pluginRoot, "scripts", "head.mjs"), "not-a-command", root], { encoding: "utf8" });
+  const humanFailure = spawnSync(process.execPath, [path.join(pluginRoot, "scripts", "head.mjs"), "not-a-command", root], { encoding: "utf8", windowsHide: true });
   assert.notEqual(humanFailure.status, 0);
   assert.match(humanFailure.stdout, /Lode could not complete that step/u);
   assert.equal(humanFailure.stdout.trimStart().startsWith("{"), false);
 
-  const jsonFailure = spawnSync(process.execPath, [path.join(pluginRoot, "scripts", "head.mjs"), "not-a-command", root, "--json"], { encoding: "utf8" });
+  const jsonFailure = spawnSync(process.execPath, [path.join(pluginRoot, "scripts", "head.mjs"), "not-a-command", root, "--json"], { encoding: "utf8", windowsHide: true });
   assert.notEqual(jsonFailure.status, 0);
   assert.equal(JSON.parse(jsonFailure.stdout).code, "HEAD_CLI_ERROR");
 });

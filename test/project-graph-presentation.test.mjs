@@ -8,6 +8,8 @@ import { organizeSelectedWorkBodies, workBodyTuples } from "../scripts/lib/sessi
 import { initializeProject } from "../scripts/lib/head-core.mjs";
 import { prepareSourceContext } from "../scripts/lib/source-context-workflow.mjs";
 import { dispatch } from "../scripts/mcp-server.mjs";
+import { terminalBlock } from "../scripts/lib/terminal-graph.mjs";
+import { assertTerminalGraphPresentation } from "./helpers/terminal-graph-assertions.mjs";
 
 const render = value => formatMcpToolContent("head_project_graph", value);
 const call = (root, args = {}) => dispatch({ id: 1, method: "tools/call",
@@ -26,13 +28,13 @@ function bytes(root) {
   walk(root); return entries.sort((a, b) => a[0].localeCompare(b[0]));
 }
 
-test("unrecognized graph shapes keep their original exact JSON fallback", () => {
+test("unrecognized graph shapes keep exact MCP JSON and an inert labeled CLI fallback", () => {
   for (const value of [null, false, "unknown", {}, { kind: "ProjectGraphDiscoveryProjection", nodes: null, edges: [] }]) {
     const original = JSON.stringify(value);
     assert.equal(render(value), original);
     assert.deepEqual(JSON.parse(render(value)), JSON.parse(original));
     assert.equal(JSON.stringify(value), original);
-    assert.equal(formatCliResult("graph-query", value), `${JSON.stringify(value, null, 2)}\n`);
+    assert.equal(formatCliResult("graph-query", value), terminalBlock("Unrecognized graph result", JSON.stringify(value, null, 2)));
   }
 });
 
@@ -48,7 +50,10 @@ test("readable graph preserves unknown fields and empty values in their original
     edges: [{ from: "rejected", to: "other", kind: "REFERENCES", future: false }, {}],
     coverage: { state: "partial", emptyResultProvesAbsence: false }, future: [] };
   const original = JSON.stringify(value), text = render(value);
-  assert.equal(text, formatCliResult("graph-query", value));
+  const cli = formatCliResult("graph-query", value);
+  const { sections, sessions } = assertTerminalGraphPresentation(cli, value);
+  assert(sections[0].includes(value.nodes[0].excerpt));
+  assert(sections[0].includes("rejected")); assert.notEqual(sessions.get("owner-A"), sessions.get("owner-B"));
   assert.equal(JSON.stringify(value), original);
   assert(text.includes(value.nodes[0].excerpt));
   const nodeA = text.slice(text.indexOf("Node[0]:"), text.indexOf("Node[1]:"));
@@ -76,7 +81,7 @@ test("actual MCP default, compact and detailed text retain structuredContent and
     assert(value.nodes.length > 0); assert(value.edges.length > 0);
     assert.equal(value.query.details, args.details ?? false);
     assert.equal(content[0].text, render(value));
-    assert.equal(content[0].text, formatCliResult("graph-query", value));
+    assertTerminalGraphPresentation(formatCliResult("graph-query", value), value);
     for (const node of value.nodes) assert(content[0].text.includes(node.nodeId));
     for (const key of ["coverage", "sourceFallback", "boundary"]) if (Object.hasOwn(value, key)) jsonMember(content[0].text, key, value[key]);
     const original = JSON.stringify(value); Object.freeze(value);
