@@ -2,6 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createNativeObservationStore, nativeId, projectNativeObservations, appendNativeStatus } from "./lib/native-session-observations.mjs";
+import { createSessionHostAdapter } from "./lib/session-host-adapter.mjs";
+import { startupProjection, MAX_CONTEXT_CHARACTERS } from "./lib/session-host-context-projection.mjs";
 
 // Dependency-free OpenCode V1 server entry, source-shaped against v1.19.0.
 // No client creation, daemon, auth/config edits or canonical HEAD mutation.
@@ -26,6 +28,7 @@ export default {
   id: "head-agent-native-observations",
   async server({ client, project, directory }, { environment = process.env } = {}) {
     let aliases = new Map(), disposed = false, pending = 0, queue = Promise.resolve();
+    let contextSupported = true, deliveries = new WeakMap();
     const store = createNativeObservationStore({ environment });
     const caller = id => ({ runtime: "opencode", nativeSessionId: id, agentId: null });
     function sessionScope(session, id) {
@@ -48,6 +51,7 @@ export default {
     return {
       async config(config) {
         aliases = new Map();
+        contextSupported = config?.experimental?.code_mode !== true;
         if (disposed || config?.experimental?.code_mode === true) return;
         const entries = Object.entries(config?.mcp || {}), counts = new Map();
         for (const [name] of entries) counts.set(sanitize(name), (counts.get(sanitize(name)) || 0) + 1);
@@ -62,6 +66,46 @@ export default {
             for (const tool of ["head_project_status", "head_tools_read", "head_tools_call"]) aliases.set(sanitize(name) + "_" + tool, tool);
           } catch { /* Unsupported config shape is not a user setup gate. */ }
         }
+      },
+      async "experimental.chat.system.transform"(input, output) {
+        try {
+          const system = output?.system;
+          if (!Array.isArray(system) || !system.every(text => typeof text === "string")
+            || !Object.isExtensible(system) || !Object.getOwnPropertyDescriptor(system, "length")?.writable) return;
+          const previous = deliveries.get(system);
+          const ownsSlot = previous && previous.index !== null && system[previous.index] === previous.text
+            && Object.getOwnPropertyDescriptor(system, String(previous.index))?.writable;
+          // Only our own slot may be refreshed. Other plugins' strings/order and
+          // the caller's array stay intact. No last-Session or basis cache.
+          const delivery = { index: ownsSlot ? previous.index : null, text: "" };
+          deliveries.set(system, delivery);
+          if (ownsSlot) system[delivery.index] = "";
+          if (disposed || !contextSupported || !nativeId(input?.sessionID)) return;
+          const session = await exactSession(input.sessionID);
+          if (!session || disposed || !contextSupported || deliveries.get(system) !== delivery) return;
+          if (![".head", ".lode"].some(name => fs.existsSync(path.join(directory, name, "project.json")))) return;
+          let text;
+          try {
+            const adapter = createSessionHostAdapter({ runtime: "opencode", nativeSessionId: session.id, environment });
+            text = startupProjection(adapter.enter({ root: directory }), directory, "opencode");
+            if (text.length > MAX_CONTEXT_CHARACTERS.opencode) throw new Error("Context exceeds its delivery bound.");
+          } catch (error) {
+            const code = typeof error?.code === "string" && /^[A-Z0-9_]{1,128}$/.test(error.code)
+              ? error.code : "HOST_CONTEXT_UNAVAILABLE";
+            text = "Lode optional request context unavailable (" + code + "). Continue independent work; no default Session was substituted or recovery state written.";
+          }
+          if (disposed || !contextSupported || output.system !== system || deliveries.get(system) !== delivery
+            || !sessionScope(session, input.sessionID)) return;
+          if (delivery.index === null) {
+            delivery.index = system.length;
+            Array.prototype.push.call(system, text);
+          } else {
+            const descriptor = Object.getOwnPropertyDescriptor(system, String(delivery.index));
+            if (!descriptor?.writable || system[delivery.index] !== delivery.text) return;
+            system[delivery.index] = text;
+          }
+          delivery.text = text;
+        } catch { /* Unsupported optional delivery never blocks the Host request. */ }
       },
       async event({ event }) {
         if (!supportedEvents.has(event?.type) || !nativeId(event.id)) return;
@@ -114,7 +158,7 @@ export default {
           output.structuredContent = next.structuredContent;
         } catch { /* Unsupported/malformed/optional API errors leave Core untouched. */ }
       },
-      async dispose() { disposed = true; aliases.clear(); await queue; },
+      async dispose() { disposed = true; aliases.clear(); deliveries = new WeakMap(); await queue; },
     };
   },
 };

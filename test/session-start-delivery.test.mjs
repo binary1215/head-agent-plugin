@@ -3,8 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { sessionStartContext } from "../scripts/session-host-hook.mjs";
-import { fitSelectedBodyGroups, workBodyTuples } from "../scripts/lib/session-work-body-organization.mjs";
-import { publicToolName } from "../scripts/lib/lode-artifact-composition.mjs";
+import { startupProjection as format, COMPACT_SCOPE as compactScope } from "../scripts/lib/session-host-context-projection.mjs";
 import { createSessionHostAdapter } from "../scripts/lib/session-host-adapter.mjs";
 import { enterConversationRecovery } from "../scripts/lib/compaction-lifecycle.mjs";
 import { updateProjectDirection } from "../scripts/lib/project-direction.mjs";
@@ -12,16 +11,11 @@ import { inspectRecoveryCheckpointBasis, syncRecoveryCheckpoint } from "../scrip
 import { fixture, link, exact, citation, snapshot, pluginRoot } from "./helpers/session-work-linkage-fixture.mjs";
 
 // Serializer and injected local Host seam only, not installed/native/model tests.
-const source = fs.readFileSync(path.join(pluginRoot, "scripts/session-host-hook.mjs"), "utf8");
-const format = new Function("path", "fitSelectedBodyGroups", "workBodyTuples", "publicToolName", source.slice(source.indexOf("const MAX_CONTEXT_CHARACTERS"),
-  source.indexOf("// A read-only command Hook")) + "\nreturn startupProjection;")(path, fitSelectedBodyGroups, workBodyTuples, publicToolName);
 const digest = "a".repeat(64), sessionId = "session-AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE";
 const empty = () => ({ status: "conversation_ready", workContext: { status: "work_context_available", sessionId,
   sessionPurpose: "Current purpose", records: [], omissions: { byBudget: 0, uninspected: 0 } } });
 
 
-const compactScope = new Function("path", "fitSelectedBodyGroups", "workBodyTuples", "publicToolName", source.slice(source.indexOf("const MAX_CONTEXT_CHARACTERS"),
-  source.indexOf("// A read-only command Hook")) + "\nreturn COMPACT_SCOPE;")(path, fitSelectedBodyGroups, workBodyTuples, publicToolName);
 const prosePurpose = "선택 Session 목적: 캐시 키의 차이를 설명하고 외부 효과는 실행하지 않는다.";
 function proseOriginals(f, reason) {
   updateProjectDirection({ root: f.root, input: { goal: "현재 공통 지시: 로컬 캐시만 조사한다.",

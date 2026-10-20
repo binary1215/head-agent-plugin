@@ -14,8 +14,8 @@ import { compileContext } from "../scripts/lib/context-compiler.mjs";
 import { createWholePlanSnapshot, createExecutionContract } from "../scripts/lib/execution-lineage.mjs";
 import { startRun, finishRun } from "../scripts/lib/run-lineage.mjs";
 import { sessionStartContext } from "../scripts/session-host-hook.mjs";
-import { fitSelectedBodyGroups, workBodyTuples } from "../scripts/lib/session-work-body-organization.mjs";
-import { publicToolName } from "../scripts/lib/lode-artifact-composition.mjs";
+import { startupProjection } from "../scripts/lib/session-host-context-projection.mjs";
+import { fitSelectedBodyGroups } from "../scripts/lib/session-work-body-organization.mjs";
 import { fixture, exact, link, representative, snapshot, recordFor, accounting, pluginRoot } from "./helpers/session-work-linkage-fixture.mjs";
 
 const directionView = value => value ? Object.fromEntries(["directionId", "directionHash", "input"].filter(key => value[key] !== undefined).map(key => [key, value[key]])) : null;
@@ -221,10 +221,7 @@ function assertGroupedBodyOwnership(text, records) {
 }
 
 function privateStartupFormatter(groupFitter = fitSelectedBodyGroups) {
-  const source = fs.readFileSync(path.join(pluginRoot, "scripts/session-host-hook.mjs"), "utf8");
-  return new Function("path", "fitSelectedBodyGroups", "workBodyTuples", "publicToolName",
-    source.slice(source.indexOf("const MAX_CONTEXT_CHARACTERS"), source.indexOf("// A read-only command Hook")) + "\nreturn startupProjection;")
-    (path, groupFitter, workBodyTuples, publicToolName);
+  return (entry, root, runtime) => startupProjection(entry, root, runtime, groupFitter);
 }
 
 test("shared optional schema travels through direct record, CLI JSON and checkpoint work_evidence without extra saves", async t => {

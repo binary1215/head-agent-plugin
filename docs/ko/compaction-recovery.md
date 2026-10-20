@@ -134,9 +134,30 @@ credential, PID, socket 및 UI identity는 이 계약에서 거부됩니다.
 5. P2 복원이 성공한 뒤 transport continuation을 사용할 수 없다면 epoch를 닫고
    검증된 artifact에서 새로운 논리적 Lode로 계속함을 명시합니다.
 
-native compaction hook이 없는 Codex 또는 다른 runtime에서도 첫 turn의 artifact
-복구는 자동으로 동작합니다. 실제 compaction은 provider UI 또는 신뢰할 수 있는
-Host가 담당하며, hook 부재는 일반 작업을 막지 않습니다.
+Codex와 Claude는 이미 패키지의 `SessionStart` hook으로 기록된 Lode 맥락을
+전달하며 `compact`도 포함합니다. Codex는 root Session 압축 뒤 즉시 이어지는
+모델 요청 전에 이 hook을 실행합니다.
+[Codex hook 계약](https://learn.chatgpt.com/docs/hooks#sessionstart)을 참고하세요.
+
+OpenCode V1 플러그인은 각 모델 요청의 `experimental.chat.system.transform`에
+읽기 전용 맥락을 추가합니다. 요약 요청과 다음 일반 요청 모두에 적용하며,
+압축 직후 정확히 한 번 실행되는 이벤트는 아닙니다. 지원 근거는 OpenCode
+v1.19.0의 `733b2c627e5aec39cb33cc22373bdce33053ef2c` 소스입니다.
+Code-mode/V2는 지원 주장에 포함하지 않습니다. 사용자·요약 prompt와 다른
+플러그인의 system 문장은 보존합니다. 매번 정확한 native Session·Project·경로를
+확인한 뒤 기존 선택 Session과 현재 공통 제약을 읽습니다. 선택이 없거나
+상실돼도 기본·부모 Session으로 대신하지 않으며 일반 작업을 막지 않습니다.
+
+추가 맥락은 기존 Codex 전달 경계와 같은 32,768 UTF-16 문자 이내이며,
+Claude의 10,000문자 경계는 유지합니다. 이는 직렬화 용량 경계이고 맥락이
+충분하다는 판정은 아닙니다. 빠진 내용은 기존 누락 안내와 원문 참조로 확인합니다.
+
+이 전달은 기록된 원문만 읽습니다. 저장되지 않은 최신 대화를 보존하거나,
+checkpoint·압축 epoch를 만들거나, 실행을 승인하거나, 관리형 일회성
+continuation을 구현하지 않습니다. 관리형 lifecycle에는 기존의 정확한 증거를
+제공하는 신뢰된 Host adapter가 여전히 필요합니다. 로컬 SDK stub·고정 소스
+소비 경로·생성 패키지 시험은 설치된 Host나 실제 모델 실행의 증거가 아닙니다.
+선택적 연동이 없어도 일반 작업은 계속할 수 있습니다.
 
 ```text
 lode-agent compact-prepare <project> --input <recovery.json>

@@ -148,10 +148,33 @@ operational fields to the user:
    epoch is closed and Lode continues as a disclosed fresh logical Lode from the
    verified artifacts.
 
-With Codex or another runtime that lacks a native compaction hook, automatic
-first-turn artifact restore still works. The provider UI or another trusted Host
-remains responsible for the actual compaction action; missing hooks do not block
+Codex and Claude already deliver recorded Lode context through their packaged
+`SessionStart` hooks, including `compact`. Codex runs that hook before the
+immediate continuation after root-session compaction. See the
+[Codex hook contract](https://learn.chatgpt.com/docs/hooks#sessionstart).
+
+For OpenCode V1, the packaged plugin appends read-only context through
+`experimental.chat.system.transform` on each model request. This includes the
+summary request and the next ordinary request; it is not an exactly-once
+post-compaction event. The supported source contract is OpenCode v1.19.0 at
+`733b2c627e5aec39cb33cc22373bdce33053ef2c`. Code-mode/V2 is outside this support
+claim. The plugin preserves user and summary prompts and other plugins' system
+text. It rechecks the exact native Session, Project and directory, then reads
+the existing selected Session and current shared constraints. Missing or lost
+selection never substitutes the default or parent Session and does not block
 ordinary work.
+
+The OpenCode addition is capped at 32,768 UTF-16 characters, matching the
+existing Codex delivery resource bound; Claude retains its 10,000-character
+bound. These are serialization bounds, not a claim of sufficient context.
+Omitted content keeps its existing disclosure and references for expansion.
+
+This delivery reads recorded originals only. It does not capture the latest
+unsaved conversation, create a checkpoint or compaction epoch, authorize an
+effect, or implement managed one-shot continuation. That managed lifecycle still
+requires a trusted Host adapter with its existing exact evidence. Local SDK-stub,
+pinned-source consumer and generated-package tests do not prove an installed
+Host or live model run. Missing optional integration leaves ordinary work usable.
 
 ```text
 lode-agent compact-prepare <project> --input <recovery.json>
