@@ -567,7 +567,7 @@ jobs:
             release-assets/SHA256SUMS
 
   marketplace:
-    name: Publish verified Codex marketplace snapshot
+    name: Publish verified Codex marketplace snapshot (${{ matrix.identity }})
     needs:
       - prepare
       - test
@@ -576,10 +576,21 @@ jobs:
       - host_smoke
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.prepare.outputs.enabled == 'true' && needs.test.result == 'success' && needs.build.result == 'success' && needs.javascript.result == 'success' && needs.host_smoke.result == 'success' }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - identity: lode
+            marketplace_name: lode-agent-plugin
+            branch: lode-codex-marketplace
+          - identity: head
+            marketplace_name: head-agent-plugin
+            branch: codex-marketplace
     permissions:
       contents: write
     env:
-      MARKETPLACE_BRANCH: codex-marketplace
+      MARKETPLACE_BRANCH: ${{ matrix.branch }}
+      MARKETPLACE_NAME: ${{ matrix.marketplace_name }}
     steps:
       - name: Checkout verified source
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -617,7 +628,7 @@ jobs:
           marketplace_root="${RUNNER_TEMP}/head-agent-codex-marketplace"
           echo "MARKETPLACE_ROOT=${marketplace_root}" >> "${GITHUB_ENV}"
           node scripts/build-codex-marketplace.mjs \
-            --marketplace-name "head-agent-plugin" \
+            --marketplace-name "${MARKETPLACE_NAME}" \
             --output "${marketplace_root}" \
             --source-repository "${GITHUB_REPOSITORY}" \
             --source-commit "${GITHUB_SHA}" \
@@ -625,7 +636,7 @@ jobs:
           node scripts/verify-codex-marketplace.mjs \
             --root "${marketplace_root}" \
             --expected-repository "${GITHUB_REPOSITORY}" \
-            --expected-marketplace-name "head-agent-plugin" \
+            --expected-marketplace-name "${MARKETPLACE_NAME}" \
             --require-native
 
       - name: Refuse to replace an unowned marketplace branch
@@ -642,13 +653,15 @@ jobs:
             # One exact predecessor published before the owner-approved repository rename.
             # Verify its original repository and bytes, never rewrite historical markers.
             previous_repository="${GITHUB_REPOSITORY}"
-            if [[ "${GITHUB_REPOSITORY}" == "binary1215/lode" && "${expected_sha}" == "d0b9b6bee9e6aaed5c76de1c881520067d61e985" ]]; then
+            if [[ "${MARKETPLACE_NAME}" == "head-agent-plugin" && "${GITHUB_REPOSITORY}" == "binary1215/lode" && "${expected_sha}" == "d0b9b6bee9e6aaed5c76de1c881520067d61e985" ]]; then
               previous_repository="binary1215/head-agent-plugin"
             fi
             if ! node scripts/verify-codex-marketplace.mjs \
               --root "${previous_root}" \
               --expected-repository "${previous_repository}" \
-              --expected-marketplace-name "head-agent-plugin"; then
+              --expected-marketplace-name "${MARKETPLACE_NAME}"; then
+              # Historical exceptions belong only to the existing HEAD address.
+              if [[ "${MARKETPLACE_NAME}" != "head-agent-plugin" ]]; then exit 1; fi
               node scripts/verify-codex-marketplace.mjs \
                 --root "${previous_root}" \
                 --expected-repository "${previous_repository}" \
@@ -686,7 +699,7 @@ jobs:
           fi
 
   claude_marketplace:
-    name: Publish verified Claude Code marketplace snapshot
+    name: Publish verified Claude Code marketplace snapshot (${{ matrix.identity }})
     needs:
       - prepare
       - test
@@ -695,10 +708,21 @@ jobs:
       - host_smoke
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.prepare.outputs.enabled == 'true' && needs.test.result == 'success' && needs.build.result == 'success' && needs.javascript.result == 'success' && needs.host_smoke.result == 'success' }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - identity: lode
+            marketplace_name: lode-agent-plugin
+            branch: lode-claude-marketplace
+          - identity: head
+            marketplace_name: head-agent-plugin
+            branch: claude-marketplace
     permissions:
       contents: write
     env:
-      MARKETPLACE_BRANCH: claude-marketplace
+      MARKETPLACE_BRANCH: ${{ matrix.branch }}
+      MARKETPLACE_NAME: ${{ matrix.marketplace_name }}
     steps:
       - name: Checkout verified source
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -736,7 +760,7 @@ jobs:
           marketplace_root="${RUNNER_TEMP}/head-agent-claude-marketplace"
           echo "MARKETPLACE_ROOT=${marketplace_root}" >> "${GITHUB_ENV}"
           node scripts/build-claude-marketplace.mjs \
-            --marketplace-name "head-agent-plugin" \
+            --marketplace-name "${MARKETPLACE_NAME}" \
             --output "${marketplace_root}" \
             --source-repository "${GITHUB_REPOSITORY}" \
             --source-commit "${GITHUB_SHA}" \
@@ -744,7 +768,7 @@ jobs:
           node scripts/verify-claude-marketplace.mjs \
             --root "${marketplace_root}" \
             --expected-repository "${GITHUB_REPOSITORY}" \
-            --expected-marketplace-name "head-agent-plugin" \
+            --expected-marketplace-name "${MARKETPLACE_NAME}" \
             --expected-commit "${GITHUB_SHA}" \
             --require-native
 
@@ -761,13 +785,15 @@ jobs:
             git archive FETCH_HEAD | tar -x -C "${previous_root}"
             # The exact old snapshot remains verified under its original repository.
             previous_repository="${GITHUB_REPOSITORY}"
-            if [[ "${GITHUB_REPOSITORY}" == "binary1215/lode" && "${expected_sha}" == "d22c0e04a8bcaf83814f452fb69ae99a13de8f0a" ]]; then
+            if [[ "${MARKETPLACE_NAME}" == "head-agent-plugin" && "${GITHUB_REPOSITORY}" == "binary1215/lode" && "${expected_sha}" == "d22c0e04a8bcaf83814f452fb69ae99a13de8f0a" ]]; then
               previous_repository="binary1215/head-agent-plugin"
             fi
             if ! node scripts/verify-claude-marketplace.mjs \
               --root "${previous_root}" \
               --expected-repository "${previous_repository}" \
-              --expected-marketplace-name "head-agent-plugin"; then
+              --expected-marketplace-name "${MARKETPLACE_NAME}"; then
+              # Historical exceptions belong only to the existing HEAD address.
+              if [[ "${MARKETPLACE_NAME}" != "head-agent-plugin" ]]; then exit 1; fi
               node legacy/marketplace-ownership/verify.mjs \
                 --provider claude \
                 --root "${previous_root}" \

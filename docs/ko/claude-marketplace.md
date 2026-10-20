@@ -9,19 +9,19 @@
 ## 목적
 
 CI는 통합 계약 제품군과 네이티브 빌드 매트릭스가 통과한 뒤 별도의 생성
-`claude-marketplace` 브랜치를 만듭니다. 소스 저장소는 직접 실행 가능한 Core로
+`lode-claude-marketplace` 브랜치를 만듭니다. 소스 저장소는 직접 실행 가능한 Core로
 유지되며, Claude 전용 카탈로그와 캐시 경로 세부 정보는 `.head/`, Product Canon,
 Session/Run 계보 또는 런타임 권한 부여에 들어가지 않습니다.
 
-생성된 기존 주소용 호환 배포판에는 정확히 다음 항목이 포함됩니다.
+기본 Lode 배포판에는 정확히 다음 항목이 포함됩니다.
 
 ```text
 .claude-plugin/marketplace.json
 .gitattributes
-.head-agent-claude-marketplace-generated.json
-plugins/head-agent-core/.claude-plugin/plugin.json
-plugins/head-agent-core/.head-source-distribution-manifest.json
-plugins/head-agent-core/<allowlisted distribution files>
+.lode-agent-claude-marketplace-generated.json
+plugins/lode-agent-core/.claude-plugin/plugin.json
+plugins/lode-agent-core/.lode-source-distribution-manifest.json
+plugins/lode-agent-core/<allowlisted distribution files>
 ```
 
 빌더는 Codex 마켓플레이스에서 사용하는 것과 동일한 불변 사용자 배포 허용 목록을
@@ -30,7 +30,7 @@ plugins/head-agent-core/<allowlisted distribution files>
 검증된 빌드 매트릭스 대상을 덧씌웁니다. 각 대상은 동일한 플러그인 버전과 소스
 커밋을 공유하고 worker, supervisor 및 읽기 전용 ArcadeDB bridge 무결성 계약을
 통과해야 합니다. 모든 네이티브 바이트를 포함한 원래의 검증된 매니페스트는 소스
-릴리스 계보를 바인딩하기 위해 `.head-source-distribution-manifest.json`으로
+릴리스 계보를 바인딩하기 위해 `.lode-source-distribution-manifest.json`으로
 보존됩니다.
 
 Claude Code는 설치된 플러그인을 버전이 지정된 캐시에 복사하므로, 상대 프로세스
@@ -60,13 +60,13 @@ Claude Code는 설치된 플러그인을 버전이 지정된 캐시에 복사하
 요구 사항: Claude Code와 최신 Node.js LTS 릴리스.
 
 ```powershell
-claude plugin marketplace add binary1215/lode@claude-marketplace
-claude plugin install head-agent-core@head-agent-plugin
+claude plugin marketplace add binary1215/lode@lode-claude-marketplace
+claude plugin install lode-agent-core@lode-agent-plugin
 ```
 
 설치 후 새 Claude Code 세션을 시작하세요. 일반 사용은 번들
-`head-agent-core` Skill과 typed `lode` MCP 작업을 통해 시작합니다.
-설치만으로 `.head/`를 생성하거나, 프로젝트를 수정하거나, GraphDB에 연결하거나,
+`lode-agent-core` Skill과 typed `lode` MCP 작업을 통해 시작합니다.
+설치만으로 `.lode/`나 `.head/`를 생성하거나, 프로젝트를 수정하거나, GraphDB에 연결하거나,
 공급자/모델을 선택하거나, Product Canon을 승인하거나, ReviewDecision을 생성하지
 않습니다.
 
@@ -78,13 +78,13 @@ Core가 계속 의미 검증, 계보 및 모든 중대한 게이트를 소유합
 ## 업그레이드 및 제거
 
 ```powershell
-claude plugin marketplace update head-agent-plugin
-claude plugin update head-agent-core@head-agent-plugin
+claude plugin marketplace update lode-agent-plugin
+claude plugin update lode-agent-core@lode-agent-plugin
 ```
 
 ```powershell
-claude plugin uninstall head-agent-core@head-agent-plugin
-claude plugin marketplace remove head-agent-plugin
+claude plugin uninstall lode-agent-core@lode-agent-plugin
+claude plugin marketplace remove lode-agent-plugin
 ```
 
 플러그인을 제거해도 프로젝트 소유 상태나 Lode가 관리하는 프로젝트 상태는 삭제되지
@@ -92,10 +92,12 @@ claude plugin marketplace remove head-agent-plugin
 
 ## 게시 소유권
 
-CI는 기존 `claude-marketplace` 브랜치를 교체하기 전에 검증합니다. 검증된 브랜치는
+CI는 `lode-claude-marketplace`와 기존 `claude-marketplace` 브랜치를 각각 정확한
+마켓플레이스 식별자로 검증한 뒤에만 교체합니다. 검증된 브랜치는
 정확한 이전 tip을 대상으로 force-with-lease를 사용하여 orphan commit에서
 게시됩니다. 소유권 증거가 없거나, 브랜치가 동시에 이동했거나, 이전 스냅샷이
-유효하지 않으면 게시가 중단됩니다.
+유효하지 않으면 게시가 중단됩니다. 과거 소유권 예외는 HEAD 호환 브랜치에만
+적용되며 새 Lode 주소에는 적용하지 않습니다.
 
 생성된 `.gitattributes`의 내용은 정확히 `* -text`이며, 체크아웃 시 개행을 다시
 써서 운영체제 간 바이트 정체성이 무효화되는 일을 방지합니다.
@@ -123,11 +125,29 @@ Claude Code 마켓플레이스이며 [MIT License](../../LICENSE)에 따라 배�
 
 정식 소스 배포판은 플러그인 `lode-agent-core`, 서버 `lode`, 도구 `lode_*`와
 Skill `lode-agent-core`, `lode-agent-onboarding`, `lode-conversation`을 노출합니다.
-위 기존 원격 주소 예시는 생성된 호환 배포판의 플러그인
+기존 `claude-marketplace` 브랜치는 호환 배포판의 플러그인
 `head-agent-core@head-agent-plugin`, 서버 `lode`, 도구 `head_*`, Skill
 `head-agent-core`, `head-agent-onboarding`, `head-conversation`을 설명합니다. 둘은 같은
 Lode 구현과 검증을 사용하며, 각 배포판은 자기 이름 한 벌만 노출합니다. 소스 패키징은
-실제 게시·설치나 실행 중 Host 동작의 검증이 아닙니다.
+실제 게시·설치나 실행 중 Host 동작의 검증이 아닙니다. 각 카탈로그는 플러그인 하나만
+포함하며, 기존 설치를 자동 전환하거나 이중 등록하지 않습니다.
+
+### 기존 HEAD 설치
+
+기존 `binary1215/lode@claude-marketplace` 주소와 업데이트 명령을 유지하세요.
+마켓플레이스를 다시 등록하거나 Lode를 재설치하거나 두 번째 플러그인을 추가할
+필요는 없습니다.
+
+```powershell
+claude plugin marketplace update head-agent-plugin
+claude plugin update head-agent-core@head-agent-plugin
+```
+
+제거 명령도 `claude plugin uninstall head-agent-core@head-agent-plugin`과
+`claude plugin marketplace remove head-agent-plugin`을 유지합니다. 호환 스냅샷은
+`.head-agent-claude-marketplace-generated.json`, `plugins/head-agent-core/`,
+`.head-source-distribution-manifest.json`을 사용하며, 과거 스냅샷과 롤백은 원래 식별자와
+바이트를 보존합니다.
 
 새 초기화는 `.lode/`를 사용합니다. 기존 `.head/` Project는 root·식별자·원문·선택
 Session과 운영 소유권을 유지하며, 수동 변환이나 두 번째 정본 저장소가 필요하지 않습니다.

@@ -13,14 +13,14 @@
 스냅샷을 조립합니다. 이는 단지 배포 카탈로그 레이아웃을 충족하기 위해 권위 있는
 소스 레이아웃을 이동하거나 복제하는 일을 방지합니다.
 
-생성된 `codex-marketplace` 브랜치의 기존 주소용 호환 배포판에는 정확히 다음 항목이
-포함됩니다.
+기본 Lode 배포판은 `lode-codex-marketplace` 브랜치에 게시되며 정확히 다음 항목을
+포함합니다.
 
 ```text
 .agents/plugins/marketplace.json
 .gitattributes
-.head-agent-marketplace-generated.json
-plugins/head-agent-core/<verified distribution files>
+.lode-agent-marketplace-generated.json
+plugins/lode-agent-core/<verified distribution files>
 ```
 
 플러그인 디렉터리는 불변 사용자 배포에 쓰이는 것과 동일한 허용 목록 파일 집합으로
@@ -46,12 +46,12 @@ macOS 또는 Linux 소스 체크아웃은 직접 설치와 마켓플레이스 �
 ## 설치
 
 ```powershell
-codex plugin marketplace add binary1215/lode --ref codex-marketplace
-codex plugin add head-agent-core@head-agent-plugin
+codex plugin marketplace add binary1215/lode --ref lode-codex-marketplace
+codex plugin add lode-agent-core@lode-agent-plugin
 ```
 
-설치 후 새 Codex 작업을 시작하세요. 일반 사용은 번들 `head-agent-core` Skill을
-통해 시작하며, 이 Skill은 typed `lode` MCP 작업을 호출합니다. 설치만으로 `.head`를 생성하거나,
+설치 후 새 Codex 작업을 시작하세요. 일반 사용은 번들 `lode-agent-core` Skill을
+통해 시작하며, 이 Skill은 typed `lode` MCP 작업을 호출합니다. 설치만으로 `.lode/`나 `.head/`를 생성하거나,
 Features를 추론·승인하거나, GraphDB에 연결하거나, 프로젝트 파일을 변경하지 않습니다.
 
 마켓플레이스 스냅샷에는 Windows x64, Linux x64/arm64 및 macOS x64/arm64 네이티브
@@ -65,15 +65,15 @@ Features를 추론·승인하거나, GraphDB에 연결하거나, 프로젝트 �
 생성된 Git 스냅샷을 새로 고친 다음 같은 마켓플레이스에서 플러그인을 다시 설치합니다.
 
 ```powershell
-codex plugin marketplace upgrade head-agent-plugin
-codex plugin add head-agent-core@head-agent-plugin
+codex plugin marketplace upgrade lode-agent-plugin
+codex plugin add lode-agent-core@lode-agent-plugin
 ```
 
 플러그인과, 선택적으로 해당 마켓플레이스 소스를 제거합니다.
 
 ```powershell
-codex plugin remove head-agent-core@head-agent-plugin
-codex plugin marketplace remove head-agent-plugin
+codex plugin remove lode-agent-core@lode-agent-plugin
+codex plugin marketplace remove lode-agent-plugin
 ```
 
 Codex 플러그인 제거는 Codex 플러그인 캐시/구성에 영향을 줍니다. 프로젝트 `.head`
@@ -82,11 +82,12 @@ Codex 플러그인 제거는 Codex 플러그인 캐시/구성에 영향을 줍�
 
 ## 생성 브랜치 소유권
 
-CI는 기존 `codex-marketplace` 브랜치의 현재 스냅샷 전체가 Lode 마켓플레이스 검증을
-통과하지 않으면 이를 교체하지 않습니다. 소유권이 확인되면 정확히 예상한 커밋에 대해
+CI는 `lode-codex-marketplace`와 기존 `codex-marketplace` 브랜치를 각각 정확한
+마켓플레이스 식별자로 검증한 뒤에만 교체합니다. 소유권이 확인되면 정확히 예상한 커밋에 대해
 `--force-with-lease`를 사용하여 교체합니다. 동시 변경 또는 소유되지 않은 브랜치 변경은
 덮어쓰지 않고 실패합니다. 생성된 브랜치는 플러그인 정체성, Product Canon,
 GraphSnapshot, Context Capsule 또는 Execution Lineage의 입력이 되지 않습니다.
+과거 소유권 예외는 HEAD 호환 브랜치에만 적용되며 새 Lode 주소에는 적용하지 않습니다.
 
 로컬 검증:
 
@@ -111,11 +112,28 @@ CI는 빌더에 `--native-root`를, 검증기에 `--require-native`를 제공합
 
 정식 소스 배포판은 플러그인 `lode-agent-core`, 서버 `lode`, 도구 `lode_*`와
 Skill `lode-agent-core`, `lode-agent-onboarding`, `lode-conversation`을 노출합니다.
-위 기존 원격 주소 예시는 생성된 호환 배포판의 플러그인
+기존 `codex-marketplace` 브랜치는 호환 배포판의 플러그인
 `head-agent-core@head-agent-plugin`, 서버 `lode`, 도구 `head_*`, Skill
 `head-agent-core`, `head-agent-onboarding`, `head-conversation`을 설명합니다. 둘은 같은
 Lode 구현과 검증을 사용하며, 각 배포판은 자기 이름 한 벌만 노출합니다. 소스 패키징은
-실제 게시·설치나 실행 중 Host 동작의 검증이 아닙니다.
+실제 게시·설치나 실행 중 Host 동작의 검증이 아닙니다. 각 카탈로그는 플러그인 하나만
+포함하며, 기존 설치를 자동 전환하거나 이중 등록하지 않습니다.
+
+### 기존 HEAD 설치
+
+기존 `binary1215/lode --ref codex-marketplace` 주소와 업데이트 명령을 유지하세요.
+마켓플레이스를 다시 등록하거나 Lode를 재설치하거나 두 번째 플러그인을 추가할
+필요는 없습니다.
+
+```powershell
+codex plugin marketplace upgrade head-agent-plugin
+codex plugin add head-agent-core@head-agent-plugin
+```
+
+제거 명령도 `codex plugin remove head-agent-core@head-agent-plugin`과
+`codex plugin marketplace remove head-agent-plugin`을 유지합니다. 호환 스냅샷은
+`.head-agent-marketplace-generated.json`과 `plugins/head-agent-core/`를 사용하며,
+과거 스냅샷과 롤백은 원래 식별자와 바이트를 보존합니다.
 
 새 초기화는 `.lode/`를 사용합니다. 기존 `.head/` Project는 root·식별자·원문·선택
 Session과 운영 소유권을 유지하며, 수동 변환이나 두 번째 정본 저장소가 필요하지 않습니다.

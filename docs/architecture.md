@@ -43,8 +43,11 @@ cuts preserve record identities and authority; other World/refresh/operating-loo
 dependencies remain and no runtime-speed improvement is claimed.
 
 The source tree remains the directly runnable Core. CI creates independent,
-content-verified `codex-marketplace` and `claude-marketplace` branches from the
-same allowlisted distribution and overlays one five-platform, version- and
+content-verified `lode-codex-marketplace` and `lode-claude-marketplace` branches
+for new Lode installations, while continuing to publish the existing HEAD
+identities on `codex-marketplace` and `claude-marketplace`. Each branch contains
+one plugin and its single vocabulary; no installation is migrated or registered
+twice. CI uses the same allowlisted distribution and overlays one five-platform, version- and
 commit-bound native bundle assembled from the verified build matrix. Runtime
 selection is exact-host and integrity-gated; the other targets remain inert
 distribution bytes. Claude's generated branch adds only the catalog, plugin

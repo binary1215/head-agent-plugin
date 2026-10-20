@@ -62,18 +62,16 @@ Use it with Codex, Claude Code or a configured OpenCode workspace by talking to 
 
 Choose the path for your tool. The Codex and Claude Code packages include the conversation Skill, MCP server and verified native bundle for supported hosts. Only the matching host binary runs. OpenCode uses the project setup below; the CLI is optional for ordinary conversation.
 
-The install address still contains `head-agent-core@head-agent-plugin` so existing installations stay discoverable. The MCP server itself is named `lode`. You do not choose a compatibility carrier or convert project records.
+New installations use `lode-agent-core@lode-agent-plugin`. Already using HEAD? Keep updating your existing installation; no second plugin or project-record conversion is needed. The MCP server is named `lode`.
 
 ### Codex Git marketplace
 
-The repository is `binary1215/lode`. Existing installations retain the
-`head-agent-plugin` marketplace and `head-agent-core` plugin identities.
-The former repository URL redirects to this one. The repository rename needs
-no reinstall, carrier selection or project-record migration.
+The repository is `binary1215/lode`. Its Lode marketplace is published on
+`lode-codex-marketplace`; the former repository URL still redirects here.
 
 ```powershell
-codex plugin marketplace add binary1215/lode --ref codex-marketplace
-codex plugin add head-agent-core@head-agent-plugin
+codex plugin marketplace add binary1215/lode --ref lode-codex-marketplace
+codex plugin add lode-agent-core@lode-agent-plugin
 ```
 
 Restart Codex after installation, start a new task so the installed Skill and
@@ -87,8 +85,8 @@ boundary and require explicit user review where consequential.
 ### Claude Code Git marketplace
 
 ```powershell
-claude plugin marketplace add binary1215/lode@claude-marketplace
-claude plugin install head-agent-core@head-agent-plugin
+claude plugin marketplace add binary1215/lode@lode-claude-marketplace
+claude plugin install lode-agent-core@lode-agent-plugin
 ```
 
 Restart Claude Code after installation so the installed Skill and `lode`
@@ -156,7 +154,19 @@ explicit `--project` initialization step.
 <details>
 <summary>Already using HEAD? Installation identity and MCP-name details</summary>
 
-The source package uses `lode-agent-core`, `lode_*` and Lode Skill names. Existing marketplace addresses keep `head-agent-core@head-agent-plugin`, `head_*` and their existing Skill names. Each package registers one `lode` server and lists one tool vocabulary; both run the same implementation.
+New Lode installations use `lode-agent-core@lode-agent-plugin`, `lode_*` and Lode Skill names. Existing `codex-marketplace` and `claude-marketplace` addresses keep `head-agent-core@head-agent-plugin`, `head_*` and their existing Skill names. Each package registers one `lode` server and lists one tool vocabulary; both run the same implementation. Keep the marketplace you already use rather than installing both.
+
+For an existing HEAD installation, continue with its usual update commands:
+
+```powershell
+codex plugin marketplace upgrade head-agent-plugin
+codex plugin add head-agent-core@head-agent-plugin
+```
+
+```powershell
+claude plugin marketplace update head-agent-plugin
+claude plugin update head-agent-core@head-agent-plugin
+```
 
 Existing `.head/` records, IDs and selected Session stay intact; new projects use `.lode/`. Known operation aliases are not redirects for the Host-owned `mcp__head_core__...` or `mcp__lode_core__...` names. A disk update does not reload a running Host. Existing user-owned configuration is preserved, and generated alternatives use the new server name. Historical packages retain their exact bytes and namespace for verified rollback.
 

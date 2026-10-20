@@ -44,7 +44,7 @@ Claude Code, Codex 및 OpenCode는 동일한 `.lode/` 권한의 프로젝션입�
 나머지 World·refresh·운영 루프 의존은 남아 있습니다. 실행 속도가 개선됐다는
 주장은 아닙니다.
 
-소스 트리는 직접 실행 가능한 Core로 유지됩니다. CI는 동일한 허용 목록 배포판에서 콘텐츠가 검증된 독립적인 `codex-marketplace` 및 `claude-marketplace` 브랜치를 만들고, 검증된 빌드 매트릭스에서 조립한 5개 플랫폼용 단일 네이티브 번들을 오버레이합니다. 이 번들은 버전과 커밋에 바인딩됩니다. 런타임 선택은 정확한 호스트 일치와 무결성 검증을 통과해야 하며, 다른 대상은 비활성 배포 바이트로 남습니다. Claude의 생성 브랜치는 Claude Code에 필요한 카탈로그, 플러그인 매니페스트 및 `${CLAUDE_PLUGIN_ROOT}` MCP 캐시 경로 프로젝션만 추가합니다. 배포 메타데이터, 네이티브 바이너리 및 캐시 경로는 Core ID, Product Canon, Session/Run 복구 또는 어떤 authority plane도 변경할 수 없습니다. [`codex-marketplace.md`](codex-marketplace.md)와 [`claude-marketplace.md`](claude-marketplace.md)를 참조하세요.
+소스 트리는 직접 실행 가능한 Core로 유지됩니다. CI는 신규 Lode 설치용 `lode-codex-marketplace` 및 `lode-claude-marketplace` 브랜치를 게시하면서 기존 `codex-marketplace`와 `claude-marketplace`에는 HEAD 설치 식별자를 계속 제공합니다. 각 브랜치는 플러그인 하나와 그 이름 한 벌만 포함하며, 기존 설치를 자동 전환하거나 이중 등록하지 않습니다. CI는 동일한 허용 목록 배포판에 검증된 빌드 매트릭스에서 조립한 5개 플랫폼용 단일 네이티브 번들을 오버레이합니다. 이 번들은 버전과 커밋에 바인딩됩니다. 런타임 선택은 정확한 호스트 일치와 무결성 검증을 통과해야 하며, 다른 대상은 비활성 배포 바이트로 남습니다. Claude의 생성 브랜치는 Claude Code에 필요한 카탈로그, 플러그인 매니페스트 및 `${CLAUDE_PLUGIN_ROOT}` MCP 캐시 경로 프로젝션만 추가합니다. 배포 메타데이터, 네이티브 바이너리 및 캐시 경로는 Core ID, Product Canon, Session/Run 복구 또는 어떤 authority plane도 변경할 수 없습니다. [`codex-marketplace.md`](codex-marketplace.md)와 [`claude-marketplace.md`](claude-marketplace.md)를 참조하세요.
 
 ## 헌법적 Core와 선택적 프로필
 

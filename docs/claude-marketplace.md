@@ -7,20 +7,20 @@ authority plane.
 
 ## Purpose
 
-CI creates a separate generated `claude-marketplace` branch after the integrated
+CI creates a generated `lode-claude-marketplace` branch after the integrated
 contract suite and native build matrix pass. The source repository remains the
 directly runnable Core; Claude-specific catalog and cache-path details do not
 enter `.head/`, Product Canon, Session/Run lineage, or runtime authorization.
 
-The generated existing-address compatibility carrier contains exactly:
+The default Lode snapshot contains exactly:
 
 ```text
 .claude-plugin/marketplace.json
 .gitattributes
-.head-agent-claude-marketplace-generated.json
-plugins/head-agent-core/.claude-plugin/plugin.json
-plugins/head-agent-core/.head-source-distribution-manifest.json
-plugins/head-agent-core/<allowlisted distribution files>
+.lode-agent-claude-marketplace-generated.json
+plugins/lode-agent-core/.claude-plugin/plugin.json
+plugins/lode-agent-core/.lode-source-distribution-manifest.json
+plugins/lode-agent-core/<allowlisted distribution files>
 ```
 
 The builder first stages and verifies the same immutable user-distribution
@@ -30,7 +30,7 @@ caches, and credentials. CI then overlays the exact five verified build-matrix
 targets. Each target must share the plugin version and source commit and pass
 the worker, supervisor, and read-only ArcadeDB bridge integrity contracts. The
 original verified manifest, including every native byte, is retained as
-`.head-source-distribution-manifest.json` to bind source release lineage.
+`.lode-source-distribution-manifest.json` to bind source release lineage.
 
 Claude Code copies installed plugins to a versioned cache, so relative process
 paths would resolve against the caller rather than the plugin. Only in the
@@ -59,13 +59,13 @@ escape, source-file drift, projection drift, and identity mismatch.
 Requirements: Claude Code and a current Node.js LTS release.
 
 ```powershell
-claude plugin marketplace add binary1215/lode@claude-marketplace
-claude plugin install head-agent-core@head-agent-plugin
+claude plugin marketplace add binary1215/lode@lode-claude-marketplace
+claude plugin install lode-agent-core@lode-agent-plugin
 ```
 
 Start a new Claude Code session after installation. Normal use begins through
-the bundled `head-agent-core` Skill and typed `lode` MCP operations.
-Installation alone does not create `.head/`, modify a project, contact GraphDB,
+the bundled `lode-agent-core` Skill and typed `lode` MCP operations.
+Installation alone does not create `.lode/` or `.head/`, modify a project, contact GraphDB,
 choose a provider/model, approve Product Canon, or create a ReviewDecision.
 
 The versioned Claude cache receives all five platform packages, but the runtime
@@ -77,13 +77,13 @@ lineage, and every consequential gate.
 ## Upgrade and removal
 
 ```powershell
-claude plugin marketplace update head-agent-plugin
-claude plugin update head-agent-core@head-agent-plugin
+claude plugin marketplace update lode-agent-plugin
+claude plugin update lode-agent-core@lode-agent-plugin
 ```
 
 ```powershell
-claude plugin uninstall head-agent-core@head-agent-plugin
-claude plugin marketplace remove head-agent-plugin
+claude plugin uninstall lode-agent-core@lode-agent-plugin
+claude plugin marketplace remove lode-agent-plugin
 ```
 
 Removing the plugin does not delete project-owned or Lode-managed project state.
@@ -91,10 +91,12 @@ Project `.head/` removal remains a separate explicit user action.
 
 ## Publication ownership
 
-CI verifies an existing `claude-marketplace` branch before replacing it. A
+CI verifies each existing `lode-claude-marketplace` or `claude-marketplace` branch
+against its own exact marketplace identity before replacing it. A
 verified branch is published from an orphan commit using force-with-lease against
 the exact prior tip. Missing ownership evidence, concurrent branch movement, or
-any invalid prior snapshot stops publication.
+any invalid prior snapshot stops publication. Historical ownership exceptions
+apply only to the HEAD compatibility branch, never to the new Lode address.
 
 The generated `.gitattributes` is exactly `* -text`, preventing checkout-time
 newline rewriting from invalidating byte identities across operating systems.
@@ -123,12 +125,30 @@ third-party Claude Code marketplace distributed under the [MIT License](../LICEN
 
 The canonical source artifact advertises plugin `lode-agent-core`, server `lode`,
 tools `lode_*`, and Skills `lode-agent-core`, `lode-agent-onboarding` and
-`lode-conversation`. The existing remote-address examples above describe the generated
-compatibility carrier: plugin `head-agent-core@head-agent-plugin`, server `lode`,
+`lode-conversation`. The existing `claude-marketplace` branch continues to publish
+the compatibility carrier: plugin `head-agent-core@head-agent-plugin`, server `lode`,
 tools `head_*`, and Skills `head-agent-core`, `head-agent-onboarding` and
 `head-conversation`. Both use the same Lode implementation and guards; an artifact
 advertises only its own single vocabulary. Source packaging does not prove publication,
-installation or loaded Host behavior.
+installation or loaded Host behavior. Each catalog contains one plugin; there is
+no automatic identity conversion or dual registration.
+
+### Existing HEAD installations
+
+Keep the original `binary1215/lode@claude-marketplace` marketplace address and
+update commands. No marketplace re-registration, Lode reinstall or second plugin
+is needed:
+
+```powershell
+claude plugin marketplace update head-agent-plugin
+claude plugin update head-agent-core@head-agent-plugin
+```
+
+Removal still uses `claude plugin uninstall head-agent-core@head-agent-plugin` and
+`claude plugin marketplace remove head-agent-plugin`. The compatibility snapshot
+keeps `.head-agent-claude-marketplace-generated.json`, `plugins/head-agent-core/`
+and `.head-source-distribution-manifest.json`; historical snapshots and rollback
+retain their original identities and bytes.
 
 Fresh initialization uses `.lode/`. Existing `.head/` Projects preserve their root,
 identity, records, selected Session and operational ownership; no manual conversion

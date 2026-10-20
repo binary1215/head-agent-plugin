@@ -62,18 +62,16 @@ Codex, Claude Code 또는 연동한 OpenCode에서 평소처럼 코딩 에이전
 
 사용하는 도구의 설치 경로 하나를 선택하세요. Codex와 Claude Code 패키지는 대화형 Skill, MCP 서버, 지원 호스트용 검증된 네이티브 번들을 포함합니다. 실행 시에는 현재 호스트와 일치하는 바이너리만 사용합니다. OpenCode는 아래 프로젝트 설정을 따르며, 일반 대화에 CLI 설치가 필요한 것은 아닙니다.
 
-기존 설치를 계속 찾을 수 있도록 설치 주소 `head-agent-core@head-agent-plugin`은 유지합니다. MCP 서버 자체의 이름은 `lode`입니다. 사용자가 호환 배포판을 고르거나 프로젝트 기록을 변환할 필요는 없습니다.
+신규 설치는 `lode-agent-core@lode-agent-plugin`을 사용합니다. 이미 HEAD를 쓰고 있다면 기존 설치를 계속 업데이트하면 됩니다. 두 번째 플러그인을 설치하거나 프로젝트 기록을 변환할 필요는 없습니다. MCP 서버의 이름은 `lode`입니다.
 
 ### Codex Git 마켓플레이스
 
-저장소는 `binary1215/lode`이며, 기존 설치는 `head-agent-plugin` 마켓플레이스와
-`head-agent-core` 플러그인 식별자를 유지합니다. 이전 저장소 주소도 이곳으로
-연결됩니다. 저장소 이름 변경 때문에 재설치하거나 호환 배포판을 고르거나
-프로젝트 기록을 옮길 필요는 없습니다.
+저장소는 `binary1215/lode`이며, Lode 마켓플레이스는 `lode-codex-marketplace`
+브랜치에 게시됩니다. 이전 저장소 주소도 이곳으로 연결됩니다.
 
 ```powershell
-codex plugin marketplace add binary1215/lode --ref codex-marketplace
-codex plugin add head-agent-core@head-agent-plugin
+codex plugin marketplace add binary1215/lode --ref lode-codex-marketplace
+codex plugin add lode-agent-core@lode-agent-plugin
 ```
 
 설치 후 Codex를 재시작하고, 설치된 Skill과 MCP 서버를 불러오도록 새 작업을
@@ -86,8 +84,8 @@ Canon 승인이 자동으로 이뤄지지는 않습니다. 해당 작업은 Core
 ### Claude Code Git 마켓플레이스
 
 ```powershell
-claude plugin marketplace add binary1215/lode@claude-marketplace
-claude plugin install head-agent-core@head-agent-plugin
+claude plugin marketplace add binary1215/lode@lode-claude-marketplace
+claude plugin install lode-agent-core@lode-agent-plugin
 ```
 
 설치 후 Claude Code를 재시작해 Skill과 `lode` MCP 서버를 불러온 뒤
@@ -151,7 +149,19 @@ lode-agent doctor /path/to/project
 <details>
 <summary>기존 HEAD 사용자: 설치 식별자와 MCP 이름 안내</summary>
 
-소스 패키지는 `lode-agent-core`, `lode_*`와 Lode Skill 이름을 사용합니다. 기존 마켓플레이스 주소는 `head-agent-core@head-agent-plugin`, `head_*`와 기존 Skill 이름을 유지합니다. 각 패키지는 `lode` 서버 하나와 도구 이름 한 벌만 노출하며, 같은 구현을 사용합니다.
+신규 Lode 설치는 `lode-agent-core@lode-agent-plugin`, `lode_*`와 Lode Skill 이름을 사용합니다. 기존 `codex-marketplace`와 `claude-marketplace` 주소는 `head-agent-core@head-agent-plugin`, `head_*`와 기존 Skill 이름을 유지합니다. 각 패키지는 `lode` 서버 하나와 도구 이름 한 벌만 노출하며, 같은 구현을 사용합니다. 두 패키지를 함께 설치하지 말고 현재 사용하는 마켓플레이스를 유지하세요.
+
+기존 HEAD 설치는 지금까지 쓰던 명령으로 업데이트합니다.
+
+```powershell
+codex plugin marketplace upgrade head-agent-plugin
+codex plugin add head-agent-core@head-agent-plugin
+```
+
+```powershell
+claude plugin marketplace update head-agent-plugin
+claude plugin update head-agent-core@head-agent-plugin
+```
 
 기존 `.head/` 기록·ID·선택 Session은 그대로 유지하고 새 프로젝트는 `.lode/`를 사용합니다. 작업 별칭은 Host가 소유하는 `mcp__head_core__...`나 `mcp__lode_core__...` 이름을 자동 연결하지 않습니다. 디스크 업데이트가 실행 중 Host의 reload를 뜻하지는 않습니다. 사용자 소유 설정은 보존하고 생성된 대안에 새 서버명을 사용합니다. 검증된 롤백을 위해 과거 패키지의 원본 바이트와 서버명도 유지합니다.
 

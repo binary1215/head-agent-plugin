@@ -108,6 +108,10 @@ function assertReadmeContract() {
     "evidenceGaps",
     "distribution.mjs uninstall",
     "head-agent-core@head-agent-plugin",
+    "lode-agent-core@lode-agent-plugin",
+    "codex plugin marketplace add binary1215/lode --ref lode-codex-marketplace",
+    "codex plugin add lode-agent-core@lode-agent-plugin",
+    "claude plugin install lode-agent-core@lode-agent-plugin",
     "verify:claude-marketplace",
     "status-beta-blue",
     "[MIT License](LICENSE)",
@@ -128,8 +132,8 @@ function assertReadmeContract() {
   for (const required of ["## 일반 사용자는 어떻게 사용하나요?", "Lode는 초기화, 상태 확인과 검증된 복구를 마친 뒤에도 이 원래 작업을 유지"]) {
     assert(koreanReadme.includes(required), `Korean README task-first conversation contract is missing: ${required}`);
   }
-  assert(readme.includes("binary1215/lode@claude-marketplace"), "README Claude marketplace install contract is missing.");
-  assert(koreanReadme.includes("binary1215/lode@claude-marketplace"), "Korean README Claude marketplace install contract is missing.");
+  assert(readme.includes("binary1215/lode@lode-claude-marketplace"), "README Claude marketplace install contract is missing.");
+  assert(koreanReadme.includes("binary1215/lode@lode-claude-marketplace"), "Korean README Claude marketplace install contract is missing.");
 }
 
 try {

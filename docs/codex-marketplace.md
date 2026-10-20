@@ -11,14 +11,13 @@ separate Git marketplace snapshot only after the integrated contract suite and
 all five native build targets pass. This avoids moving or duplicating the
 authoritative source layout merely to satisfy a distribution catalog layout.
 
-The existing-address compatibility carrier on the generated `codex-marketplace`
-branch contains exactly:
+The default Lode snapshot on `lode-codex-marketplace` contains exactly:
 
 ```text
 .agents/plugins/marketplace.json
 .gitattributes
-.head-agent-marketplace-generated.json
-plugins/head-agent-core/<verified distribution files>
+.lode-agent-marketplace-generated.json
+plugins/lode-agent-core/<verified distribution files>
 ```
 
 The plugin directory is built from the same allowlisted file set used by the
@@ -45,13 +44,13 @@ already normalized bytes with `* -text`.
 ## Installation
 
 ```powershell
-codex plugin marketplace add binary1215/lode --ref codex-marketplace
-codex plugin add head-agent-core@head-agent-plugin
+codex plugin marketplace add binary1215/lode --ref lode-codex-marketplace
+codex plugin add lode-agent-core@lode-agent-plugin
 ```
 
 Start a new Codex task after installation. Normal use begins through the
-bundled `head-agent-core` Skill, which calls the typed `lode` MCP
-operations. Installation alone does not create `.head`, infer or approve
+bundled `lode-agent-core` Skill, which calls the typed `lode` MCP
+operations. Installation alone does not create `.lode/` or `.head/`, infer or approve
 Features, contact GraphDB, or alter project files.
 
 The marketplace snapshot already carries Windows x64, Linux x64/arm64, and
@@ -67,15 +66,15 @@ Refresh the generated Git snapshot, then reinstall the plugin from the same
 marketplace:
 
 ```powershell
-codex plugin marketplace upgrade head-agent-plugin
-codex plugin add head-agent-core@head-agent-plugin
+codex plugin marketplace upgrade lode-agent-plugin
+codex plugin add lode-agent-core@lode-agent-plugin
 ```
 
 Remove the plugin and optionally its marketplace source:
 
 ```powershell
-codex plugin remove head-agent-core@head-agent-plugin
-codex plugin marketplace remove head-agent-plugin
+codex plugin remove lode-agent-core@lode-agent-plugin
+codex plugin marketplace remove lode-agent-plugin
 ```
 
 Codex plugin removal affects the Codex plugin cache/configuration. It does not
@@ -84,12 +83,13 @@ Git history, Markdown projections, or GraphDB data.
 
 ## Generated-branch ownership
 
-CI refuses to replace an existing `codex-marketplace` branch unless its entire
-current snapshot passes the Lode marketplace verifier. When owned, replacement
+CI verifies each existing `lode-codex-marketplace` or `codex-marketplace` branch
+against its own exact marketplace identity before replacing it. When owned, replacement
 uses an exact expected-commit `--force-with-lease`; concurrent or unowned branch
 changes fail rather than being overwritten. The generated branch never feeds
 plugin identity, Product Canon, GraphSnapshot, Context Capsule, or Execution
-Lineage.
+Lineage. Historical ownership exceptions apply only to the HEAD compatibility
+branch, never to the new Lode address.
 
 Local verification:
 
@@ -116,12 +116,29 @@ publisher action remains user-owned and is not performed by CI.
 
 The canonical source artifact advertises plugin `lode-agent-core`, server `lode`,
 tools `lode_*`, and Skills `lode-agent-core`, `lode-agent-onboarding` and
-`lode-conversation`. The existing remote-address examples above describe the generated
-compatibility carrier: plugin `head-agent-core@head-agent-plugin`, server `lode`,
+`lode-conversation`. The existing `codex-marketplace` branch continues to publish
+the compatibility carrier: plugin `head-agent-core@head-agent-plugin`, server `lode`,
 tools `head_*`, and Skills `head-agent-core`, `head-agent-onboarding` and
 `head-conversation`. Both use the same Lode implementation and guards; an artifact
 advertises only its own single vocabulary. Source packaging does not prove publication,
-installation or loaded Host behavior.
+installation or loaded Host behavior. Each catalog contains one plugin; there is
+no automatic identity conversion or dual registration.
+
+### Existing HEAD installations
+
+Keep the original `binary1215/lode --ref codex-marketplace` marketplace address
+and update commands. No marketplace re-registration, Lode reinstall or second
+plugin is needed:
+
+```powershell
+codex plugin marketplace upgrade head-agent-plugin
+codex plugin add head-agent-core@head-agent-plugin
+```
+
+Removal still uses `codex plugin remove head-agent-core@head-agent-plugin` and
+`codex plugin marketplace remove head-agent-plugin`. The compatibility snapshot
+keeps `.head-agent-marketplace-generated.json` and `plugins/head-agent-core/`;
+historical snapshots and rollback retain their original identities and bytes.
 
 Fresh initialization uses `.lode/`. Existing `.head/` Projects preserve their root,
 identity, records, selected Session and operational ownership; no manual conversion
