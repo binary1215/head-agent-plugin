@@ -16,7 +16,7 @@ const request = name => dispatch({ jsonrpc: "2.0", id: "lode-composition-contrac
 
 test("one fixed source composition exposes one finite tool vocabulary and exact compatibility aliases", () => {
   assert.deepEqual(ARTIFACT_COMPOSITION, {
-    identity: "lode", toolPrefix: "lode_", serverName: "lode_core", packageName: "@local/lode-agent-core-plugin",
+    identity: "lode", toolPrefix: "lode_", serverName: "lode", packageName: "@local/lode-agent-core-plugin",
     pluginName: "lode-agent-core", marketplaceName: "lode-agent-plugin", cliEntry: "scripts/lode.mjs",
     skills: { core: "lode-agent-core", onboarding: "lode-agent-onboarding", conversation: "lode-conversation" },
   });
@@ -65,7 +65,7 @@ test("strict listed client uses canonical discovery while legacy dispatch remain
 
 test("legacy carrier metadata is a separate fixed vocabulary, not a runtime Project selector", () => {
   const legacy = artifactCompositionForIdentity("head");
-  assert.equal(legacy.serverName, "head_core"); assert.equal(legacy.toolPrefix, "head_");
+  assert.equal(legacy.serverName, "lode"); assert.equal(legacy.toolPrefix, "head_");
   assert.deepEqual(legacy.skills, { core: "head-agent-core", onboarding: "head-agent-onboarding", conversation: "head-conversation" });
   assert.equal(ARTIFACT_COMPOSITION.identity, "lode", "Looking up carrier metadata must not switch active composition");
   assert.throws(() => artifactCompositionForIdentity("typo"), /Unknown package artifact composition/);

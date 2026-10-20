@@ -4,6 +4,7 @@ import path from "node:path";
 import { stageDistributionRelease } from "./distribution-lifecycle.mjs";
 import { verifyNativeBundleOverlay } from "./native-artifact-delivery.mjs";
 import { ARTIFACT_COMPOSITION, artifactCompositionForIdentity } from "./lode-artifact-composition.mjs";
+import { historicalArtifactServerName } from "../../compat/head/artifact-composition.mjs";
 
 const CLAUDE_MARKETPLACE_PROTOCOL = "0.1.0";
 const DEFAULT_MARKETPLACE_NAME = ARTIFACT_COMPOSITION.marketplaceName;
@@ -348,9 +349,6 @@ export function verifyClaudeMarketplaceSnapshot({
   }
 
   const projectedMcp = readJson(path.join(pluginRoot, ".mcp.json"), "HEAD_CLAUDE_MARKETPLACE_MCP_INVALID");
-  if (canonical(projectedMcp) !== canonical(claudeMcpDocument(composition))) {
-    fail("HEAD_CLAUDE_MARKETPLACE_MCP_INVALID", "Claude MCP projection must use the exact plugin cache root.");
-  }
   const sourceDistribution = readJson(path.join(pluginRoot, sourceManifestFile), "HEAD_CLAUDE_MARKETPLACE_SOURCE_DISTRIBUTION_INVALID");
   sourceDistributionIdentity(sourceDistribution);
   if (sourceDistribution.name !== plugin.name || sourceDistribution.version !== plugin.version || sourceDistribution.packageName !== pkg.name) {
@@ -386,6 +384,13 @@ export function verifyClaudeMarketplaceSnapshot({
     }
   } else if (composition.identity !== "head") {
     fail("HEAD_CLAUDE_MARKETPLACE_SOURCE_DISTRIBUTION_MISMATCH", "Canonical Claude carrier is missing its verified composition descriptor.");
+  }
+
+  // Resolve only from the descriptor whose bytes the source manifest verified.
+  // Current producers still emit one current server; old snapshots are not rewritten.
+  const verifiedServerName = historicalArtifactServerName(composition.identity, descriptorEntry?.sha256) || composition.serverName;
+  if (canonical(projectedMcp) !== canonical(claudeMcpDocument({ ...composition, serverName: verifiedServerName }))) {
+    fail("HEAD_CLAUDE_MARKETPLACE_MCP_INVALID", "Claude MCP projection must use its verified artifact server and exact plugin cache root.");
   }
 
   const marker = readJson(path.join(marketplaceRoot, markerFile), "HEAD_CLAUDE_MARKETPLACE_MARKER_INVALID");

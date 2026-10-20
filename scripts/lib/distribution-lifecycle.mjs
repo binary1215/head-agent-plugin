@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { verifyNativeBundleOverlay, verifyNativeOverlay } from "./native-artifact-delivery.mjs";
 import { ARTIFACT_COMPOSITION, artifactCompositionForIdentity } from "./lode-artifact-composition.mjs";
 import { resolveOperation } from "./lode-operation-contract.mjs";
+import { historicalArtifactServerName } from "../../compat/head/artifact-composition.mjs";
 
 const DISTRIBUTION_PROTOCOL = "0.1.0";
 const INCLUDE_ENTRIES = [
@@ -211,6 +212,11 @@ function stageArtifactComposition(stageRoot, identity) {
   if (compositionText.split(literal).length !== 2) {
     fail("HEAD_DISTRIBUTION_SOURCE_INVALID", "Artifact composition must contain its one fixed build-owned identity literal.");
   }
+  const mcpFile = path.join(stageRoot, ".mcp.json");
+  const mcp = readJson(mcpFile, "HEAD_DISTRIBUTION_MANIFEST_INVALID");
+  if (Object.keys(mcp.mcpServers || {}).length !== 1 || !mcp.mcpServers[source.serverName]) {
+    fail("HEAD_DISTRIBUTION_SOURCE_INVALID", "New source MCP metadata must advertise exactly its current artifact server.");
+  }
   if (source.identity === target.identity) return;
   if (source.identity !== "lode" || target.identity !== "head") {
     fail("HEAD_DISTRIBUTION_SOURCE_INVALID", "Only canonical source can generate the legacy identity carrier.");
@@ -223,11 +229,6 @@ function stageArtifactComposition(stageRoot, identity) {
   }
   atomicWriteJson(pluginFile, plugin);
   atomicWriteJson(packageFile, pkg);
-  const mcpFile = path.join(stageRoot, ".mcp.json");
-  const mcp = readJson(mcpFile, "HEAD_DISTRIBUTION_MANIFEST_INVALID");
-  if (Object.keys(mcp.mcpServers || {}).length !== 1 || !mcp.mcpServers[source.serverName]) {
-    fail("HEAD_DISTRIBUTION_SOURCE_INVALID", "Source MCP metadata must advertise exactly its fixed artifact server.");
-  }
   mcp.mcpServers = { [target.serverName]: mcp.mcpServers[source.serverName] };
   atomicWriteJson(mcpFile, mcp);
   const replaceVocabulary = (text) => text
@@ -372,7 +373,8 @@ function verifyRelease(releaseRoot, expectedReleaseId = null) {
     }
     const mcp = readJson(path.join(releaseRoot, ".mcp.json"), "HEAD_DISTRIBUTION_RELEASE_INVALID");
     const skills = fs.readdirSync(path.join(releaseRoot, "skills")).sort();
-    if (Object.keys(mcp.mcpServers || {}).length !== 1 || !mcp.mcpServers[composition.serverName]
+    const verifiedServerName = historicalArtifactServerName(composition.identity, descriptorEntry.sha256) || composition.serverName;
+    if (Object.keys(mcp.mcpServers || {}).length !== 1 || !mcp.mcpServers[verifiedServerName]
       || canonical(skills) !== canonical(Object.values(composition.skills).sort())) {
       fail("HEAD_DISTRIBUTION_RELEASE_INVALID", "Verified artifact must advertise one matching MCP server and Skill vocabulary.");
     }
@@ -547,7 +549,7 @@ function launcherSource(installRoot) {
     compositionForMetadata.toString(),
     ownershipFile.toString(), verifyInstallRootOwnership.toString(),
     pointerFile.toString(), readPointer.toString(), releaseRoot.toString(),
-    verifiedCliEntry.toString(), verifyRelease.toString(),
+    historicalArtifactServerName.toString(), verifiedCliEntry.toString(), verifyRelease.toString(),
     'verifyInstallRootOwnership(root);',
     'const pointer = readPointer(root);',
     'const target = releaseRoot(root, pointer.activeReleaseId);',

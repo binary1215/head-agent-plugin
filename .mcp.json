@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "lode_core": {
+    "lode": {
       "command": "node",
       "args": [
         "scripts/mcp-server.mjs"

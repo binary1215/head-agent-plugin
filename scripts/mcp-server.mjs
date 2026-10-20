@@ -2362,7 +2362,7 @@ async function dispatchRouted(request, { surface = "ordinary", graphDbTransport 
   requireSurface(surface);
   const id = request.id ?? null;
     if (request.method === "initialize") {
-      return success(id, { protocolVersion, capabilities: { tools: {} }, serverInfo: { name: ARTIFACT_COMPOSITION.pluginName, version: packageVersion } });
+      return success(id, { protocolVersion, capabilities: { tools: {} }, serverInfo: { name: ARTIFACT_COMPOSITION.serverName, version: packageVersion } });
   }
   if (request.method === "notifications/initialized") return null;
   if (request.method === "tools/list") return success(id, { tools: toolsForSurface(surface) });

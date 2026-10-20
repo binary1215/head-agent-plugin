@@ -50,7 +50,7 @@ codex plugin add head-agent-core@head-agent-plugin
 ```
 
 Start a new Codex task after installation. Normal use begins through the
-bundled `head-agent-core` Skill, which calls the typed `head_core` MCP
+bundled `head-agent-core` Skill, which calls the typed `lode` MCP
 operations. Installation alone does not create `.head`, infer or approve
 Features, contact GraphDB, or alter project files.
 
@@ -114,10 +114,10 @@ publisher action remains user-owned and is not performed by CI.
 
 ## Canonical and compatibility compositions
 
-The canonical source artifact advertises plugin `lode-agent-core`, server `lode_core`,
+The canonical source artifact advertises plugin `lode-agent-core`, server `lode`,
 tools `lode_*`, and Skills `lode-agent-core`, `lode-agent-onboarding` and
 `lode-conversation`. The existing remote-address examples above describe the generated
-compatibility carrier: plugin `head-agent-core@head-agent-plugin`, server `head_core`,
+compatibility carrier: plugin `head-agent-core@head-agent-plugin`, server `lode`,
 tools `head_*`, and Skills `head-agent-core`, `head-agent-onboarding` and
 `head-conversation`. Both use the same Lode implementation and guards; an artifact
 advertises only its own single vocabulary. Source packaging does not prove publication,
@@ -126,4 +126,14 @@ installation or loaded Host behavior.
 Fresh initialization uses `.lode/`. Existing `.head/` Projects preserve their root,
 identity, records, selected Session and operational ownership; no manual conversion
 or second canonical store is required.
+
+Both artifacts register and initialize the MCP server as `lode`. Core recognizes
+finite `head_*` and `lode_*` operation aliases, while each artifact lists only its
+own tools. Those aliases do not redirect the Host-owned `mcp__head_core__...` or
+`mcp__lode_core__...` namespace. An older running Host keeps its loaded connection;
+an update on disk is not a reload or proof of the new Host tool inventory.
+Existing user-owned `.mcp.json` and `opencode.json` are preserved; generated
+alternatives use the new server name. Historical release verification and rollback
+retain the original manifest, exact namespace, records and checksums rather than
+rewriting an old package.
 

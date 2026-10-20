@@ -10,11 +10,9 @@
 
 [Recovery, Session selection and World freshness](docs/recovery-state-separation.md)
 
-**Keep long-running AI development on one reviewed product direction<br>
-even when the tool, agent, or conversation changes.**
+Keep AI development on the reviewed product direction across tools, agents and conversations.
 
-Recover safely after compaction. Give each task only the context it needs.
-Keep the reason behind every accepted change.
+Recover saved work after compaction. Prepare task-specific context and keep the reasons for accepted changes.
 
 [Install for Codex](#codex-git-marketplace) ·
 [Install for Claude Code](#claude-code-git-marketplace) ·
@@ -41,18 +39,14 @@ Keep the reason behind every accepted change.
 
 ## Your first request
 
-After installing and loading the plugin in your tool, open your project and ask
-for the actual work. No separate setup conversation is needed:
+After [installing and loading the plugin](#install), open your project and include the real task in your first request. There is no separate setup conversation.
 
 ```text
 Use Lode Agent Core for this project. Resume its existing state if one exists;
 otherwise initialize the Core. Then find the cause of this login failure and fix it.
 ```
 
-Already using HEAD? Keep your existing `.head/` records, calls and selected
-Session; no manual conversion is needed. The new name does not automatically
-update your installation or reload a running Host. Follow the
-[installation instructions](#install) for your tool.
+Lode keeps that original task and continues it after initialization and any verified recovery. Replace the login failure with your own task. After that, keep asking for work as you normally would.
 
 ## What Lode Agent Core does
 
@@ -60,268 +54,22 @@ update your installation or reload a running Host. Follow the
   <img src="docs/assets/branding/lode-readme-wordmark.png" alt="Lode Agent Core" width="720">
 </p>
 
-Lode Agent Core keeps the direction and evidence of AI-assisted development with
-the project instead of trapping them inside one model conversation. Across
-Claude Code, Codex, and OpenCode, it connects:
+Lode keeps the project's agreed direction, the evidence behind changes and the next useful step in project records. You can use those records across conversations and tools.
 
-- what the user has approved about the product;
-- what the repository and tests currently show;
-- what one task actually needs to know;
-- what an agent changed, how it was checked, and what happens next.
-
-It does not primarily make a model write better code. It helps many AI-assisted
-changes accumulate into the same reviewed product direction without making a
-model session, Git host, generated document, or GraphDB the hidden source of
-truth.
-
-## Why use it
-
-The benefits become more valuable as a project outlives one conversation.
-
-### Continue after compaction or session loss
-
-Conversation compaction is lossy, and provider summaries can omit a constraint
-or quietly change the next step. For recovery-sensitive work, Lode checkpoints
-the exact purpose, approved decisions, current position, and next expected
-result. After compaction it verifies that the project direction did not drift
-before continuing. On conversation entry, provider replacement, or a Host-
-reported compaction boundary, this restore is automatic: the user keeps talking
-about the task and does not supply checkpoint IDs, turn counters, tokens, or
-recovery JSON. A newer real user request always wins over an older prepared
-continuation.
-
-When durable direction really changes, Lode handles checkpoint publication too:
-it reads an exact current basis, derives direction in the conversation, and asks
-Core to create or reuse the checkpoint under one lock. Identical retries write
-nothing; stale direction cannot overwrite newer work. This runs only at useful
-boundaries such as a changed objective, verified stage, failure/wait, completion,
-handoff, or likely context loss—not on every turn and not for a short read-only
-task. The user does not operate this protocol.
-
-This restores the work direction, not a transcript or a model persona. When a
-Host has no native compaction hook, first-turn artifact restore still happens
-automatically while the provider's compaction action remains Host-owned. See
-[Compaction recovery](docs/compaction-recovery.md) and
-[Session recovery](docs/session-recovery.md).
-
-Run-free investigations can also retain selected reasons, alternatives and
-uncertainty without creating a checkpoint. The same logical Session's entry
-reads that evidence; ordinary short work needs no save call or approval.
-Bundled startup Hooks remain read-only. Supported Codex MCP transport retains
-the Session selected by normal initialization/resume without another bind call.
-Claude Code's bundled tool Hook correlates each native root/child request with
-that same server; subsequent calls and resume reuse its selected logical Session.
-Hosts without verified native metadata use an explicit route or trusted adapter;
-actual GUI/model continuity is separately verified.
-No transcript copying or provider-memory disabling is required. See
-[Session work context and Host support](docs/session-work-context.md) for exact
-supported paths, omissions and installation/model verification limits.
-
-### Give each task bounded, reviewable context
-
-More context is not always better. The user can state the task in ordinary
-language; the provider-neutral Lode performs semantic task analysis and authors
-task-local EvidenceNeeds in the conversation. It can name exact repository
-paths, Product entities, and current graph node anchors without asking the user
-to write JSON, choose a graph ID, or manage a token tier. Status, preparation,
-repository inspection, and preview are internal Lode steps rather than a setup
-wizard the user must operate. The Context Compiler provides selected sources, exclusions and uncertainty
-under the requested budget. It does not certify inclusion or semantic sufficiency. Lexical overlap remains fallback
-discovery/ranking only; Core no longer chooses a semantic graph anchor from the
-first matching word, makes a current file ineligible, or declares sufficiency.
-
-The resulting Context Capsule is content-derived and reproducible. The same
-verified inputs, compiler version, task, and budget produce the same identity;
-Canon or digest drift stops reuse. This reduces noise, makes delegation easier to
-review, and avoids treating the whole repository as prompt context. See
-[Context Compiler](docs/context-compiler.md).
-
-### Review why a change happened
-
-Git can show which bytes changed. Lode also preserves the reviewed reasoning
-around the change:
-
-```text
-whole plan
-  -> execution scope + task context
-  -> agent result + verification evidence
-  -> Fresh Lode review + explicit decision
-  -> ChangeSet + next checkpoint
-```
-
-A result cannot approve itself, and the next non-trivial Run waits for review.
-Later, a maintainer can inspect the intended outcome, allowed scope, evidence,
-decision, affected revisions, and next direction without reconstructing them
-from a transcript or commit message. See
-[Execution Lineage](docs/execution-lineage.md) and
-[ChangeSets](docs/change-sets.md).
-
-### Connect product intent to code and tests
-
-Lode can propose evidence-linked relationships from reviewed Features and
-Capabilities to Files, Symbols, and Tests. It can then derive reviewable change-
-impact candidates from exact before/after revisions. Inference remains a
-candidate until explicit review, so a heuristic match never silently becomes a
-product decision. See [Feature mapping](docs/feature-mapping.md).
-
-### Additional benefits
-
-| Common AI-development problem | What Lode provides |
-| --- | --- |
-| Agents and runtimes build different interpretations | Claude Code, Codex, OpenCode, Lode, and bounded workers use the same project-scoped `.lode/` identities. |
-| Model inference quietly becomes a decision | Inferred concepts and impacts remain reviewable candidates until an explicit user decision accepts them. |
-| A handoff loses the current position | Provider-independent checkpoints preserve the exact work direction for another session, tool, or teammate. |
-| A graph or generated document becomes hidden authority | GraphSnapshot, GraphDB, Markdown, and continuity remain rebuildable views over verified records. |
-| A large repository overwhelms the prompt | Source Scope and bounded compilation keep unrelated generated, vendored, or copied material out of normal task context. |
-| Several agents blur responsibility | Bounded execution, result evidence, and independent review stay distinct while Lode integrates them into one outcome. |
-| Existing managed parallel work is hard to inspect | Retained wave diagnostics show requested, started, returned, waiting, succeeded, and failed workers without merging their authorizations or treating wave completion as approval. Ordinary Host delegation does not create a wave. |
-| Git and deployment history must be typed by hand | Provider-neutral observations turn current product refs and host-reported deployment results into immutable P3 evidence, while only an approved successful exact-commit/ref match becomes a non-authoritative ReleaseObservation. |
-| Every product exposes different operational data | A Project-bound Host registry lets Lode collect a configured source by opaque ID, while product-specific adapters normalize it into one evidence-only contract and Core proves coverage and replay. |
-| Code and reviewed policy drift apart between releases | Provider Lode proposes evidence-linked Conformance Findings into a non-blocking queue; Core verifies exact anchors and replay while only the user can disposition or accept a fresh resolution. Missing Graph or connector data remains a disclosure, not a gate on ordinary work. |
-| A product rule silently spreads through a hierarchy | Policy applies only to the exact Feature or FeatureGroup named in an immutable proposal and may cite exact Requirement, Constraint, or Decision keys. The user reviews one compact decision; group membership never creates hidden inheritance. Later evidence drift is shown without silently invalidating the decision. |
-| Before/after metrics look comparable when collection changed | Lode keeps the numeric comparison available but shows adapter revision, source scope, form, duration, sample size, and coverage as same, different, or unknown. It never silently normalizes or claims causality. |
-
-> A conventional coding agent optimizes the current task. Lode Agent Core
-> optimizes for many tasks to accumulate into the same reviewed product
-> direction.
-
-These benefits reinforce one another:
-
-```text
-reviewed direction + current repository evidence
-  -> bounded Context Capsule + Lode sufficiency judgment
-  -> bounded execution and explicit review
-  -> decision and change history
-  -> exact checkpoint for handoff, session loss, or compaction
-```
-
-## Who it is for
-
-Lode Agent Core is for people who must keep an AI-assisted product coherent
-across more than one prompt, task, agent, or runtime.
-
-| You are... | Lode helps you... |
-| --- | --- |
-| A solo developer building a product over many AI sessions | Continue from the approved direction without re-explaining the project from scratch. |
-| A technical lead coordinating several agents or bounded workers | Separate planning, implementation, and review while integrating results into one whole outcome. |
-| A maintainer working in a large or long-lived repository | Give each task only the current repository evidence and history it actually needs. |
-| A team using Claude Code, Codex, OpenCode, or changing providers | Keep one provider-independent project state instead of separate truth in every conversation. |
-| A team that needs auditability or reliable handoff | Retain the purpose, evidence, explicit decision, impact, and recovery state behind an accepted change. |
-| A product team connecting intent to implementation | Follow reviewed Features through code, tests, revisions, ChangeSets, and review evidence. |
-
-It may be unnecessary for a one-off script, a short experiment with no recovery
-needs, or work where conversation history is sufficient. It is also a poor fit
-when inferred model output should be accepted without review, or when GraphDB is
-expected to become the unquestioned source of project meaning.
-
-## How to use it
-
-### Separate conversations, shared direction
-
-Tell Lode what to do. It can route independent work to separate logical Sessions
-while preserving the common Project goal and constraints. Each Session keeps its
-own progress and recovery; a new conversation does not replace another's work.
-A common deployment cancellation stays current even when an earlier Session is
-restored. Lode handles the routing and current-direction updates from your request;
-you do not maintain IDs or fill a direction form. See
-[Graph discovery and independent Sessions](docs/graph-discovery.md).
-
-
-Install Lode Agent Core once, open your project in Codex, Claude Code, or a
-configured OpenCode workspace, and describe your work in ordinary language.
-You do not have to operate Lode as a separate application.
-
-Start with [the first-request example](#first-request), replacing the login
-failure with your own task. You do not need a separate setup turn.
-
-Lode keeps that original task and continues it after initialization, status, and
-any verified recovery step. After that, keep asking for work as you normally
-would:
-
-After compaction or provider replacement, the Lode Skill runs the read-only
-conversation-entry recovery automatically. You do not need to announce that
-compaction happened, request recovery, or provide a checkpoint ID. When the
-Host exposes no trustworthy lifecycle hook, the next conversation entry still
-restores P2 artifacts; it does not pretend that provider compaction itself was
-observed.
-
-```text
-Prepare only the code and decision evidence needed for this change, then proceed.
-```
-
-```text
-Keep one overall plan and use parallel workers only for the independent parts.
-```
-
-Lode normally works directly. When delegation helps, it uses the current Host's
-available fork/spawn and wait/cancel tools, gives each worker a short brief and
-ownership boundary, then checks and combines the results. If the Host cannot
-delegate, Lode continues directly or sequentially. Forked context must fit your
-input scope; otherwise Lode uses supported fresh context. You do not configure
-a worker registry or supply IDs.
-
-Delegation can also help Lode keep the context needed to judge your goal,
-constraints and acceptance criteria. Before deep execution or detailed review,
-Lode considers whether that detail may crowd out the overall task and separates
-the work when useful—even for a sequential task with no parallel speedup. It asks
-for goal-related findings, important new facts, uncertainty and checkable evidence,
-then checks the needed evidence and judges whether the result meets your goal.
-Simple work stays direct. This adds no score, token threshold, required fork or
-approval step, and no particular conversation becomes the sole recovery source.
-
-If a delegate fails, Lode keeps completed work and continues only the unfinished
-part after checking whether anything is still running or already applied. It
-preserves your edits and checks uncertain overlapping effects before replacement;
-independent work can continue. No extra worker setup or approval ceremony is added.
-
-Managed jobs keep their history, status and exact cancellation tools.
-Choose [explicit managed execution](skills/lode-agent-core/references/runtime-composition.md#explicit-managed-execution)
-for new or retained work when interruption recovery, durable ownership or unknown
-and duplicate effects need tracking. Original authorization/effect checks apply;
-file edits, worker count and ordinary failure alone do not require it. A Run describes risk and recovery needs, not a
-requirement that every helper use a managed launcher.
-
-Lode checks or resumes the project, chooses the lightest safe operating lane,
-and prepares durable context or recovery artifacts only when the task needs
-them. It first queries nearby graph relations or reuses sufficient same-basis
-results, then reads original sources when needed. Product governance, full World
-construction, databases and durable Runs remain optional rather than setup requirements.
-
-You do **not** need to write structured JSON, choose a token budget, find graph
-or session IDs, operate GraphDB, select an Observe/Session/Run lane, or decide
-which CLI or MCP operation to call. Those are internal or advanced interfaces.
-Lode asks for a decision only when the authority really belongs to you—for
-example, approving Product meaning, resolving an ambiguous scope, or allowing
-an external, consequential, or destructive change.
-
-The P1-P5 model is therefore an internal safety system, not a workflow the user
-must perform. The CLI sections below expose the same Core for automation,
-diagnosis, CI, and recovery; they are not prerequisites for normal conversation.
+Use it with Codex, Claude Code or a configured OpenCode workspace by talking to your coding agent normally. You do not need to operate a separate application.
 
 ## Install
 
-The canonical source package uses `lode-agent-core`, `lode_core`, `lode_*` and
-the Lode Skill names. The existing marketplace addresses below use the generated
-compatibility carrier: `head-agent-core@head-agent-plugin`, `head_core`, `head_*`
-and matching legacy Skill names, backed by the same Lode implementation. Each
-artifact advertises one server/tool/Skill vocabulary. A new Project uses `.lode/`;
-an existing `.head/` Project keeps its exact records, IDs and selected Session.
-These source and packaging contracts do not establish a published or loaded Host
-update, and do not require manual record conversion or rebinding.
+Choose the path for your tool. The Codex and Claude Code packages include the conversation Skill, MCP server and verified native bundle for supported hosts. Only the matching host binary runs. OpenCode uses the project setup below; the CLI is optional for ordinary conversation.
 
-Choose one installation path. The Codex and Claude Code marketplace paths
-install the conversation Skill, typed MCP server, and verified native bundle for
-all supported hosts. Only the exact current-host binary can be selected at
-runtime. The user-scoped path also provides the global `lode-agent` command for
-automation and recovery and obtains its native package from the matching GitHub
-Release.
+The install address still contains `head-agent-core@head-agent-plugin` so existing installations stay discoverable. The MCP server itself is named `lode`. You do not choose a compatibility carrier or convert project records.
 
 ### Codex Git marketplace
 
-The repository is now `binary1215/lode`. Existing installations keep the
-`head-agent-plugin` marketplace and `head-agent-core` plugin identities, with
-Lode branding and the same implementation. The former repository URL redirects;
-no reinstall, carrier selection, or project-record migration is required.
+The repository is `binary1215/lode`. Existing installations retain the
+`head-agent-plugin` marketplace and `head-agent-core` plugin identities.
+The former repository URL redirects to this one. The repository rename needs
+no reinstall, carrier selection or project-record migration.
 
 ```powershell
 codex plugin marketplace add binary1215/lode --ref codex-marketplace
@@ -332,9 +80,9 @@ Restart Codex after installation, start a new task so the installed Skill and
 MCP server are loaded, then use [the first-request example](#first-request)
 with your own task.
 
-The marketplace install does not initialize a project, contact GraphDB, choose
-a model, or approve Product Canon. Those transitions still require the typed
-Core boundary and, where consequential, explicit user review.
+Installing the plugin does not initialize a project, contact GraphDB, choose
+a model or approve Product Canon. Those operations still use the typed Core
+boundary and require explicit user review where consequential.
 
 ### Claude Code Git marketplace
 
@@ -343,15 +91,14 @@ claude plugin marketplace add binary1215/lode@claude-marketplace
 claude plugin install head-agent-core@head-agent-plugin
 ```
 
-Restart Claude Code after installation so the installed Skill and `head_core`
+Restart Claude Code after installation so the installed Skill and `lode`
 MCP server are loaded, then use [the first-request example](#first-request)
 with your own task.
 
-Claude Code copies the plugin into its versioned cache. The generated Claude
-distribution therefore projects its MCP entry through `${CLAUDE_PLUGIN_ROOT}`;
-the source Core and existing Project identities remain unchanged. Installation does not
-authorize project mutation, Product Canon review, GraphDB access, or a model
-choice.
+Claude Code copies the plugin into its versioned cache and locates the MCP
+entry through `${CLAUDE_PLUGIN_ROOT}`. The source Core and existing Project
+identities stay unchanged. Installation alone does not authorize project
+changes, Product Canon review, GraphDB access or a model choice.
 
 ### Claude Code and OpenCode project projections
 
@@ -364,11 +111,14 @@ files are preserved and generated manual-integration projections remain under
 `.lode/generated/`.
 
 After initialization, start `claude` or `opencode` in the project. Claude Code
-asks for project MCP approval before using the shared `lode_core` server. The
+asks for project MCP approval before using the shared `lode` server. The
 runtime-native instruction/config files are projections; the selected `.lode/`
 or existing `.head/` remains the single canonical Project root.
 
 ### User-scoped CLI
+
+<details>
+<summary>Show the optional user-scoped CLI installation</summary>
 
 Requirements: a current Node.js LTS release and either Git or a downloaded
 source archive. Git inside the target project, Go, GraphDB, and a provider
@@ -401,7 +151,165 @@ directory and writes launchers to `~/.local/bin`. It does not edit a shell
 profile, a Codex cache, remote GraphDB, or an existing project before the
 explicit `--project` initialization step.
 
+</details>
+
+<details>
+<summary>Already using HEAD? Installation identity and MCP-name details</summary>
+
+The source package uses `lode-agent-core`, `lode_*` and Lode Skill names. Existing marketplace addresses keep `head-agent-core@head-agent-plugin`, `head_*` and their existing Skill names. Each package registers one `lode` server and lists one tool vocabulary; both run the same implementation.
+
+Existing `.head/` records, IDs and selected Session stay intact; new projects use `.lode/`. Known operation aliases are not redirects for the Host-owned `mcp__head_core__...` or `mcp__lode_core__...` names. A disk update does not reload a running Host. Existing user-owned configuration is preserved, and generated alternatives use the new server name. Historical packages retain their exact bytes and namespace for verified rollback.
+
+</details>
+
+## How to use it
+
+Start with [the first-request example](#first-request). Describe the outcome you want, then work in ordinary language.
+
+```text
+Prepare only the code and decision evidence needed for this change, then proceed.
+```
+
+```text
+Keep one overall plan and use parallel workers only for the independent parts.
+```
+
+Lode normally works directly. When delegation helps, it gives the current tool's workers a clear scope, checks their results and combines them. If the tool cannot delegate, Lode continues directly or sequentially. Ordinary delegation does not require a managed Run, worker registry or extra approval.
+
+### Separate conversations, shared direction
+
+Independent tasks can keep separate work Sessions while sharing the project goal and current constraints. Starting a new conversation preserves other tasks' progress. You do not maintain Session IDs or routing forms. See [Graph discovery and independent Sessions](docs/graph-discovery.md).
+
+After compaction or provider replacement, conversation entry automatically checks and restores the available saved work direction. You do not request recovery or provide a checkpoint ID. Recovery covers saved records rather than the full transcript. Native provider compaction hooks are not generally shipped. See [the support limits](#capability-status).
+
+You do not write JSON, operate GraphDB, choose a token tier or decide which MCP call to make. Lode asks when a decision belongs to you: for example, approving product meaning, resolving an ambiguous scope, or allowing a consequential external change. Ordinary investigation and small authorized fixes stay ordinary work.
+
+## Why use it
+
+It is most useful when the project lasts longer than one conversation.
+
+### Continue after compaction or session loss
+
+Continue from the saved purpose, decisions, progress and next step. Recovery checks current constraints, and a newer user request wins over an older continuation. Lode saves useful checkpoints at meaningful changes or handoffs, not on every turn. Short investigations can retain selected reasons and uncertainty without a Run or checkpoint.
+
+This is work-direction recovery, not lossless conversation memory. Host support differs; see [Compaction recovery](docs/compaction-recovery.md), [Session recovery](docs/session-recovery.md) and [Session work context and Host support](docs/session-work-context.md).
+
+### Give each task bounded, reviewable context
+
+Ask for the change, and Lode selects relevant repository and decision evidence. The Context Compiler packs the selected material with exclusions and uncertainty. Lode judges relevance without treating keyword overlap as proof. You do not author evidence forms or manage budgets. The compiler does not certify inclusion or semantic sufficiency. See [Context Compiler](docs/context-compiler.md).
+
+### Review why a change happened
+
+Git shows changed bytes. Lode also keeps the intended outcome, permitted scope, checks, review and next step. In managed work, a worker result cannot approve itself: independent review and the explicit decision stay separate. See [Execution Lineage](docs/execution-lineage.md) and [ChangeSets](docs/change-sets.md).
+
+### Connect product intent to code and tests
+
+Trace reviewed product concepts to files, symbols and tests, then inspect suggested change impacts. Inferred meaning stays a candidate until the user accepts it. See [Feature mapping](docs/feature-mapping.md).
+
+### Additional benefits
+
+Optional workflows record Git and deployment evidence, product-specific observations, policy drift and measurements. Collected data does not become a product decision on its own, and a missing connector does not block ordinary coding. Built-in analytics and production-database connectors are not all provided. See [the capability list](#capability-status) and [documentation](#documentation).
+
+## Who it is for
+
+| If you… | Lode helps you… |
+| --- | --- |
+| Build a product over many AI conversations | Continue without re-explaining its direction each time. |
+| Maintain a large or long-lived repository | Find the evidence needed for a change, including earlier decisions. |
+| Coordinate teammates or several workers | Keep ownership, results and review distinct while integrating one outcome. |
+| Switch between Codex, Claude Code and OpenCode | Keep project records independent of a provider conversation. |
+
+For a one-off script or a short experiment where chat history is enough, you may not need it. Lode does not make model output automatically trustworthy, and a graph or database is not the authority for what the product should mean.
+
+## Capability status
+
+The labels distinguish current source behavior from work that is limited or unshipped:
+
+- **Available**: implemented in the current source distribution;
+- **Experimental**: implemented behind an explicit or limited activation path;
+- **Planned**: accepted direction but not shipped;
+- **Deferred**: intentionally outside the current milestone.
+
+| Area | Capability | Status |
+| --- | --- | --- |
+| Project | initialization, Source Scope, review-gated Product Canon | **Available** |
+| Knowledge | graph-first bounded discovery with source fallback, World Model, incremental refresh, optional Context Capsules | **Available** |
+| Sessions | request-local logical Sessions and current common direction with exact-basis updates | **Available** |
+| Lineage | Runs, ResultPackets, Fresh Lode review, P2 Session and conversation-entry recovery | **Available** |
+| Host lifecycle | provider-neutral injected compaction contract | **Experimental** |
+| Host lifecycle | packaged Claude Code, Codex, and OpenCode compaction event bindings | **Deferred** |
+| Runtime | Claude Code, Codex, and OpenCode one-shot Session/Run execution | **Available** |
+| Runtime evidence | deterministic three-runtime fixtures and local CLI capability probes | **Available** |
+| Runtime evidence | Claude Code live model-call conformance | **Experimental** |
+| Release evidence | provider-neutral Git ref, deployment-result, and release observations | **Available** |
+| Delivery evidence | provider-neutral per-environment/target applied, failed, and rollback history with exact optional source-revision links | **Available** |
+| Common observations | reuse-first exact evidence preparation plus paged Host source discovery and opaque-ID collection | **Available** |
+| Product policy | schema-v2 Policy proposal, exact application and semantic references, user review, evidence-currentness diagnostics, revision and retirement lineage | **Available** |
+| Measurement | versioned metric definitions, exact observations, condition-aware comparison, non-causal assessment and bounded lineage | **Available** |
+| Workers | bounded dispatch, wait, result, review, integration | **Available** |
+| Coordination | durable role messaging and exact-endpoint host delivery | **Available** |
+| Projection | local graph and Markdown | **Available** |
+| Projection | ArcadeDB | **Experimental** |
+| Distribution | user-scoped install, native delivery, rollback, safe removal | **Available** |
+| Distribution | verified Git-backed Codex marketplace | **Available** |
+| Distribution | verified Git-backed Claude Code marketplace | **Available** |
+| Distribution | OpenAI universal plugin directory | **Planned** |
+| Runtime | general provider-session resume and streaming | **Deferred** |
+| Documents | Obsidian and Notion adapters | **Deferred** |
+
+For exact claims and acceptance evidence, use the subsystem documents and source
+verification rather than inferring capability from this summary.
+
+## Documentation
+
+Browse the [complete English documentation index](docs/README.md) or the
+[complete Korean documentation index](docs/ko/README.md). Every public English
+subsystem document has a Korean counterpart; code, command names, protocol
+identifiers, and artifact field names remain unchanged across languages.
+
+Start with these documents:
+
+- [Architecture](docs/architecture.md): the provider-neutral composition;
+- [Authority planes](docs/authority-plane-contract.md): the executable
+  Graph/record and non-amplification contract;
+- [Onboarding](docs/onboarding.md): Lode semantic proposals, Core verification, and explicit review;
+- [Context Compiler](docs/context-compiler.md): reproducible task context;
+- [Work artifact storage](docs/artifact-storage.md): where to save evidence without extra ceremony.
+- [Execution Lineage](docs/execution-lineage.md): plans, contracts, results,
+  review, and recovery;
+- [World Model](docs/world-model.md): source evidence and graph construction;
+- [Runtime adapters](docs/runtime-adapters.md): capability, invocation, and
+  process ownership;
+- [Performance fast path](docs/performance-fast-path-design.md): optimization
+  without semantic or authority shortcuts.
+
+Additional references:
+
+- [Product Model](docs/product-model.md)
+- [Product Operating Loop](docs/product-operating-loop.md)
+- [Release observation](docs/release-observation.md)
+- [Common Observation contract](docs/observation-adapters.md)
+- [Delivery state observation](docs/delivery-observation.md)
+- [Non-blocking Conformance reconciliation](docs/conformance-reconciliation.md)
+- [Incremental refresh](docs/incremental-refresh.md)
+- [Compaction recovery](docs/compaction-recovery.md)
+- [Session recovery](docs/session-recovery.md)
+- [Ordinary Host delegation and optional attachment](docs/role-coordination.md)
+- [Graph projection adapter](docs/graph-projection-adapter.md)
+- [Document projection adapter](docs/document-projection-adapter.md)
+- [Codex marketplace distribution](docs/codex-marketplace.md)
+- [Claude Code marketplace distribution](docs/claude-marketplace.md)
+
+Installed behavior is governed by these runtime contracts, the target project's
+user-owned Canon, current Session/Run recovery state, and explicit
+ReviewDecisions. Repository-development history, benchmark fixtures, and
+maintainer milestones are evidence about the plugin; they are not instructions
+for a project using it.
+
 ## CLI, automation, and advanced setup
+
+<details>
+<summary>CLI commands and context preparation</summary>
 
 The normal path is the conversation-first flow above. Use the following CLI
 surface when a script, CI job, offline recovery procedure, or host integration
@@ -437,7 +345,7 @@ projection: reading it never activates Product, creates a Run, grants authority,
 or repairs drift. `profile` remains a choice for one initialize/resume operation,
 not a hidden project mode.
 
-Top-level status is deliberately actionable: `core_ready`,
+Top-level status is one of `core_ready`,
 `product_evidence_required`, `product_review_required`, `product_ready`,
 `product_refresh_required`, or `core_drifted`. The exact lower-level onboarding
 state remains visible under `readiness.product.onboardingStatus`.
@@ -583,7 +491,12 @@ Pass it with `lode-agent init ... --profile product --input .\onboarding.json`. 
 controls observation only; it cannot define Product Canon, approve a candidate,
 or grant execution authority.
 
+</details>
+
 ## Core model
+
+<details>
+<summary>Authority, context and recovery contracts</summary>
 
 Lode separates meaning, recovery, evidence, views, and effects so that one
 representation cannot inherit another's authority.
@@ -644,7 +557,7 @@ fails closed; simple read/reason work does not create a Capsule by default.
 
 ### Execution and recovery
 
-Non-trivial execution follows a durable, reviewable sequence:
+Managed execution follows this durable, reviewable sequence:
 
 ```text
 WholePlanSnapshot
@@ -723,7 +636,12 @@ Git ref and deployment plumbing is documented in
 Per-environment and per-target application, failure, and rollback history is
 documented in [Delivery state observation](docs/delivery-observation.md).
 
+</details>
+
 ## Graph and records
+
+<details>
+<summary>Snapshots, history and graph queries</summary>
 
 For new project information, Lode uses bounded `lode_project_graph` discovery
 first, or reuses sufficient results from the same basis. Work and Product views
@@ -790,7 +708,7 @@ source never silently overwrites the other, and neither can approve a decision.
 
 ### Graph versus record
 
-The direction is deliberate:
+Records feed the graph and its projections in this direction:
 
 ```text
 P1 Product Canon + observed source + verified P2/P3 records
@@ -827,7 +745,12 @@ not create another history stream. Their Hot/Warm/Cold status, trace, execution
 overlay, and diff are non-persisted P4 views. An exact-content file move is only
 reported as a possible move; semantic identity is never asserted automatically.
 
+</details>
+
 ## Runtime and coordination
+
+<details>
+<summary>Workers, adapters and attachment</summary>
 
 Claude Code, Codex, and OpenCode are projections over one `.lode/` authority. Runtime adapters
 observe capability, consume one exact authorization at most once, supervise the
@@ -846,9 +769,14 @@ current snapshot, not a durable delivery mail service. Host-specific pane/socket
 behavior stays outside Core. See [Runtime adapters](docs/runtime-adapters.md)
 and [Host delegation and attachment](docs/role-coordination.md).
 
+</details>
+
 ## Optional GraphDB
 
-Local storage is the safe default. GraphDB is not required for onboarding,
+<details>
+<summary>ArcadeDB configuration and native query paths</summary>
+
+Local storage is the default. GraphDB is not required for onboarding,
 context compilation, execution lineage, or recovery.
 
 ArcadeDB can be explicitly activated as a derived graph projection. Credentials
@@ -861,10 +789,10 @@ is present, read-only prepared queries may use a content-addressed Go query-batc
 bridge; JavaScript still verifies the pointer, topology, traversal, request
 binding, and receipt. Set `LODE_AGENT_ARCADEDB_NATIVE_MODE` to:
 
-- `auto` — use the verified native bridge when available, otherwise disclose and
+- `auto`: use the verified native bridge when available, otherwise disclose and
   use the JavaScript reference path;
-- `off` — always use the JavaScript path;
-- `required` — fail when the verified native path is unavailable.
+- `off`: always use the JavaScript path;
+- `required`: fail when the verified native path is unavailable.
 
 Manifest, binary, and post-selection digest mismatches always fail closed.
 Exact children receive only configured credential-reference variables and a
@@ -872,7 +800,12 @@ bounded OS, TLS, locale, and proxy allowlist. The compute worker itself remains
 network-free and authority-free. See
 [Graph projection adapter](docs/graph-projection-adapter.md).
 
+</details>
+
 ## Installation lifecycle
+
+<details>
+<summary>Native delivery, upgrade and removal</summary>
 
 ### Native packages
 
@@ -913,46 +846,12 @@ or OpenCode. Lode passes only the exact authorized `provider/model` plus an
 ephemeral permission/privacy overlay; it does not install provider presets,
 copy credentials, or rewrite endpoints.
 
-## Capability status
-
-Status labels are evidence claims, not roadmap promises:
-
-- **Available** — implemented in the current source distribution;
-- **Experimental** — implemented behind an explicit or limited activation path;
-- **Planned** — accepted direction but not shipped;
-- **Deferred** — intentionally outside the current milestone.
-
-| Area | Capability | Status |
-| --- | --- | --- |
-| Project | initialization, Source Scope, review-gated Product Canon | **Available** |
-| Knowledge | graph-first bounded discovery with source fallback, World Model, incremental refresh, optional Context Capsules | **Available** |
-| Sessions | request-local logical Sessions and current common direction with exact-basis updates | **Available** |
-| Lineage | Runs, ResultPackets, Fresh Lode review, P2 Session and conversation-entry recovery | **Available** |
-| Host lifecycle | provider-neutral injected compaction contract | **Experimental** |
-| Host lifecycle | packaged Claude Code, Codex, and OpenCode compaction event bindings | **Deferred** |
-| Runtime | Claude Code, Codex, and OpenCode one-shot Session/Run execution | **Available** |
-| Runtime evidence | deterministic three-runtime fixtures and local CLI capability probes | **Available** |
-| Runtime evidence | Claude Code live model-call conformance | **Experimental** |
-| Release evidence | provider-neutral Git ref, deployment-result, and release observations | **Available** |
-| Delivery evidence | provider-neutral per-environment/target applied, failed, and rollback history with exact optional source-revision links | **Available** |
-| Common observations | reuse-first exact evidence preparation plus paged Host source discovery and opaque-ID collection | **Available** |
-| Product policy | schema-v2 Policy proposal, exact application and semantic references, user review, evidence-currentness diagnostics, revision and retirement lineage | **Available** |
-| Measurement | versioned metric definitions, exact observations, condition-aware comparison, non-causal assessment and bounded lineage | **Available** |
-| Workers | bounded dispatch, wait, result, review, integration | **Available** |
-| Coordination | durable role messaging and exact-endpoint host delivery | **Available** |
-| Projection | local graph and Markdown | **Available** |
-| Projection | ArcadeDB | **Experimental** |
-| Distribution | user-scoped install, native delivery, rollback, safe removal | **Available** |
-| Distribution | verified Git-backed Codex marketplace | **Available** |
-| Distribution | verified Git-backed Claude Code marketplace | **Available** |
-| Distribution | OpenAI universal plugin directory | **Planned** |
-| Runtime | general provider-session resume and streaming | **Deferred** |
-| Documents | Obsidian and Notion adapters | **Deferred** |
-
-For exact claims and acceptance evidence, use the subsystem documents and source
-verification rather than inferring capability from this summary.
+</details>
 
 ## Design principles
+
+<details>
+<summary>Design background and principles</summary>
 
 Lode Agent Core Plugin is inspired by
 [Won6314/head-agent-core](https://github.com/Won6314/head-agent-core) and
@@ -960,8 +859,7 @@ independently reworked as a provider-neutral plugin. It is not an official
 upstream release or a drop-in replacement. See the
 [source-grounded comparison](docs/original-head-core-comparison.md).
 
-This implementation retains the foundational Lode principles while expressing
-them through provider-neutral contracts:
+The implementation uses these principles across providers:
 
 - Lode owns the connected whole outcome;
 - the user retains consequential authority;
@@ -978,53 +876,12 @@ and
 [Technical Architecture](https://github.com/Won6314/head-agent-core/blob/main/packages/core/docs/TECHNICAL_ARCHITECTURE.md)
 for the original design context.
 
-## Documentation
-
-Browse the [complete English documentation index](docs/README.md) or the
-[complete Korean documentation index](docs/ko/README.md). Every public English
-subsystem document has a Korean counterpart; code, command names, protocol
-identifiers, and artifact field names remain unchanged across languages.
-
-Start with these documents:
-
-- [Architecture](docs/architecture.md) — the provider-neutral composition;
-- [Authority planes](docs/authority-plane-contract.md) — the executable
-  Graph/record and non-amplification contract;
-- [Onboarding](docs/onboarding.md) — Lode semantic proposals, Core verification, and explicit review;
-- [Context Compiler](docs/context-compiler.md) — reproducible task context;
-- [Work artifact storage](docs/artifact-storage.md) — where to save evidence without extra ceremony.
-- [Execution Lineage](docs/execution-lineage.md) — plans, contracts, results,
-  review, and recovery;
-- [World Model](docs/world-model.md) — source evidence and graph construction;
-- [Runtime adapters](docs/runtime-adapters.md) — capability, invocation, and
-  process ownership;
-- [Performance fast path](docs/performance-fast-path-design.md) — optimization
-  without semantic or authority shortcuts.
-
-Additional references:
-
-- [Product Model](docs/product-model.md)
-- [Product Operating Loop](docs/product-operating-loop.md)
-- [Release observation](docs/release-observation.md)
-- [Common Observation contract](docs/observation-adapters.md)
-- [Delivery state observation](docs/delivery-observation.md)
-- [Non-blocking Conformance reconciliation](docs/conformance-reconciliation.md)
-- [Incremental refresh](docs/incremental-refresh.md)
-- [Compaction recovery](docs/compaction-recovery.md)
-- [Session recovery](docs/session-recovery.md)
-- [Ordinary Host delegation and optional attachment](docs/role-coordination.md)
-- [Graph projection adapter](docs/graph-projection-adapter.md)
-- [Document projection adapter](docs/document-projection-adapter.md)
-- [Codex marketplace distribution](docs/codex-marketplace.md)
-- [Claude Code marketplace distribution](docs/claude-marketplace.md)
-
-Installed behavior is governed by these runtime contracts, the target project's
-user-owned Canon, current Session/Run recovery state, and explicit
-ReviewDecisions. Repository-development history, benchmark fixtures, and
-maintainer milestones are evidence about the plugin; they are not instructions
-for a project using it.
+</details>
 
 ## Verify from source
+
+<details>
+<summary>Test commands and verification limits</summary>
 
 Core verifies the exact target and permitted transition of a decision supplied
 by a trusted local caller. The Host and Lode must convey the user's actual
@@ -1046,6 +903,8 @@ Native sources additionally support `go test ./...` and `go vet ./...` from the
 corresponding module directories. JavaScript remains the semantic reference;
 native backends are advertised only after fixture-driven conformance and
 integrity verification.
+
+</details>
 
 ## Status and licensing
 

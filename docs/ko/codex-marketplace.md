@@ -51,7 +51,7 @@ codex plugin add head-agent-core@head-agent-plugin
 ```
 
 설치 후 새 Codex 작업을 시작하세요. 일반 사용은 번들 `head-agent-core` Skill을
-통해 시작하며, 이 Skill은 typed `head_core` MCP 작업을 호출합니다. 설치만으로 `.head`를 생성하거나,
+통해 시작하며, 이 Skill은 typed `lode` MCP 작업을 호출합니다. 설치만으로 `.head`를 생성하거나,
 Features를 추론·승인하거나, GraphDB에 연결하거나, 프로젝트 파일을 변경하지 않습니다.
 
 마켓플레이스 스냅샷에는 Windows x64, Linux x64/arm64 및 macOS x64/arm64 네이티브
@@ -109,14 +109,23 @@ CI는 빌더에 `--native-root`를, 검증기에 `--require-native`를 제공합
 
 ## 정식 배포와 기존 설치 호환 구성
 
-정식 소스 배포판은 플러그인 `lode-agent-core`, 서버 `lode_core`, 도구 `lode_*`와
+정식 소스 배포판은 플러그인 `lode-agent-core`, 서버 `lode`, 도구 `lode_*`와
 Skill `lode-agent-core`, `lode-agent-onboarding`, `lode-conversation`을 노출합니다.
 위 기존 원격 주소 예시는 생성된 호환 배포판의 플러그인
-`head-agent-core@head-agent-plugin`, 서버 `head_core`, 도구 `head_*`, Skill
+`head-agent-core@head-agent-plugin`, 서버 `lode`, 도구 `head_*`, Skill
 `head-agent-core`, `head-agent-onboarding`, `head-conversation`을 설명합니다. 둘은 같은
 Lode 구현과 검증을 사용하며, 각 배포판은 자기 이름 한 벌만 노출합니다. 소스 패키징은
 실제 게시·설치나 실행 중 Host 동작의 검증이 아닙니다.
 
 새 초기화는 `.lode/`를 사용합니다. 기존 `.head/` Project는 root·식별자·원문·선택
 Session과 운영 소유권을 유지하며, 수동 변환이나 두 번째 정본 저장소가 필요하지 않습니다.
+
+두 배포판 모두 MCP 서버를 `lode`로 등록하고 초기화합니다. Core는 정해진
+`head_*`와 `lode_*` 작업 별칭을 인식하지만, 각 배포판은 자기 도구만 나열합니다.
+이 별칭은 Host가 소유한 `mcp__head_core__...` 또는 `mcp__lode_core__...`
+이름 공간을 자동 연결하지 않습니다. 이전 Host가 실행 중이면 기존 연결을 유지하며,
+디스크 업데이트가 reload나 새 Host 도구 목록의 검증을 뜻하지는 않습니다.
+사용자 소유 `.mcp.json`과 `opencode.json`은 보존하고, 생성된 대안에 새 서버명을
+사용합니다. 과거 릴리스 검증과 롤백은 기존 패키지를 다시 쓰지 않고 원본 manifest,
+당시의 정확한 서버명, 기록과 checksum을 유지합니다.
 
