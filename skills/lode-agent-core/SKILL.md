@@ -34,6 +34,24 @@ recovery, read [the constitution](../../docs/lode-constitution.md) and
 
 ## Enter and keep working
 
+For an explicit installation/update request, use the selected client's existing
+official path in [Install](../../README.md#install). With current Host permission,
+perform the available procedure and check its result through the existing
+installation inventory or returned status; do not merely hand back commands you
+can run. Reuse a valid installation and the user's runtime/link/preserve choice.
+For an initialized Project, reuse its recorded runtime set instead of overriding
+it with the current client; select a client subset for a new Project only.
+Only unavailable actions, Host approval, login or a user-controlled restart need
+human instructions. Do not restart the app, rewrite cache/config, weaken trust,
+install other clients or treat installation as permission for a model call.
+The README also provides an entry for users without this Skill installed.
+
+Distinguish installed files, project initialize/resume, optional instruction
+linking, and actually observed Host tools/use. A CLI/library version or generated
+file does not prove Host loading. Check an already available tool when useful;
+if loading cannot be observed, say so and continue independent authorized work.
+These are observations, not another setup/doctor/approval checklist.
+
 An existing `.head/` Project keeps its exact root, records and selected Session;
 fresh initialization uses `.lode/`. Let the existing validated Project/owner route
 select the format. Do not convert saved paths or create another canonical store.
@@ -277,7 +295,7 @@ authority/lease/effect checks. Read/status/wait and exact owned cancellation rem
 ordinary diagnostics.
 
 ```text
-node <plugin-root>/scripts/lode.mjs init <project> --runtime claude,codex,opencode
+node <plugin-root>/scripts/lode.mjs init <project> --runtime codex
 node <plugin-root>/scripts/lode.mjs resume <project> --session <logical-session>
 node <plugin-root>/scripts/lode.mjs graph-query <project> --query "<task>"
 node <plugin-root>/scripts/lode.mjs session-list <project>
@@ -294,3 +312,5 @@ for an ordinary task. Linking appends one bounded block using the verified
 actual `.head/` or `.lode/` sources. Claude uses native `@` imports; Codex receives
 an explicit instruction to read those files, not an assumed `@` import. Synthetic
 link verification does not establish that an actual Host consumed the files.
+Use `claude` or `opencode` instead of the example's `codex` for that selected
+client; combine runtimes only when the user wants those integrations.

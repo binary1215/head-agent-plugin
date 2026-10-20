@@ -202,6 +202,8 @@ function runtimeProjection(projectInspection = null) {
   return {
     activePackageVersion: packageVersion,
     loadedPackageVersion: packageVersion,
+    loadedPackageScope: "executing-cli-or-library-not-host-tool-inventory",
+    hostLoadObservation: "not-observed-by-project-package-inspection",
     configuredPackageVersion,
     configuredRootMatchesLoaded,
     state,

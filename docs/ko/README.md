@@ -21,6 +21,8 @@
 ## 컨텍스트, 월드 모델, 검색
 
 - [그래프 우선 탐색과 독립 Session](graph-discovery.md)
+- [로컬 읽기 전용 Graph Explorer](graph-explorer.md)
+- [기록된 코드 맥락과 전후 비교](context-lineage.md)
 - [Lode Context Compiler 설계](context-compiler.md)
 - [저장소 World Model 의미론](world-model.md)
 - [시간 출처 GraphSnapshot](temporal-provenance.md)

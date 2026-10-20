@@ -23,7 +23,9 @@ func TestTrackedCorpusMatchesReviewedIdentity(t *testing.T) {
 		t.Fatal(operationFailure)
 	}
 	document := result.(map[string]any)
-	if document["scanId"] != "repository-scan-fffbf73bcd59b0d3a21045cb" {
+	// Source analysis 0.3.1 deliberately changes aggregate identity even when
+	// ASCII file facts are unchanged. Independently matched to the JS producer.
+	if document["scanId"] != "repository-scan-6feed2133bb5f04eb779efee" {
 		t.Fatalf("unexpected scan identity: %v", document["scanId"])
 	}
 	summary := document["summary"].(map[string]any)

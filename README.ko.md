@@ -37,6 +37,19 @@
 
 ## 첫 요청은 이렇게 해보세요
 
+아직 설치하지 않았다면 코딩 에이전트에게 이 README와 함께 요청하세요.
+
+```text
+Codex에 Lode를 기존 공식 설치 경로로 설치해줘. 유효한 설치가 있으면 재사용하고,
+프로젝트 지침과 현재 연결은 보존해줘. 직접 할 수 있는 절차는 수행하고,
+내가 해야 할 부분만 알려줘. 그다음 이 프로젝트의 로그인 오류를 조사해줘.
+```
+
+Codex와 작업 내용을 사용하는 클라이언트와 목표로 바꾸면 됩니다. 이미 설치된
+Skill 없이도 이 README에서 시작할 수 있습니다. 에이전트는 현재 권한으로 가능한
+절차를 수행하고 결과를 확인한 뒤 원래 작업을 이어갑니다. Host 승인·로그인·수동
+재시작은 사용자가 해야 할 수 있으며 앱을 임의로 재시작하지 않습니다.
+
 [플러그인을 설치하고 불러온 뒤](#설치) 프로젝트를 열고, 첫 요청에 실제 작업까지 함께 말하세요. 설정만 위한 별도 대화는 필요하지 않습니다.
 
 ```text
@@ -59,6 +72,11 @@ Codex, Claude Code 또는 연동한 OpenCode에서 평소처럼 코딩 에이전
 ## 설치
 
 사용하는 도구의 설치 경로 하나를 선택하세요. Codex와 Claude Code 패키지는 대화형 Skill, MCP 서버, 지원 호스트용 검증된 네이티브 번들을 포함합니다. 실행 시에는 현재 호스트와 일치하는 바이너리만 사용합니다. OpenCode는 아래 프로젝트 설정을 따르며, 일반 대화에 CLI 설치가 필요한 것은 아닙니다.
+
+파일 설치, 선택한 프로젝트의 초기화·재개, 선택적인 지침 연결, 실제 Host 도구
+로딩은 서로 다른 결과입니다. 에이전트는 확인한 범위를 구분해 설명합니다.
+CLI 버전이나 생성 파일만으로 Host가 이를 읽었다고 보고하지 않습니다.
+별도의 doctor·설정 확인 절차를 사용자가 반복할 필요는 없습니다.
 
 신규 설치는 `lode-agent-core@lode-agent-plugin`을 사용합니다. 이미 HEAD를 쓰고 있다면 기존 설치를 계속 업데이트하면 됩니다. 두 번째 플러그인을 설치하거나 프로젝트 기록을 변환할 필요는 없습니다. MCP 서버의 이름은 `lode`입니다.
 
@@ -104,8 +122,9 @@ Claude Code는 플러그인을 버전별 캐시에 복사하고 `${CLAUDE_PLUGIN
 
 ### Claude Code 및 OpenCode 프로젝트 프로젝션
 
-아래 사용자 범위 설치를 쓰는 경우 `--runtime claude,codex,opencode`로 프로젝트를
-초기화합니다. 마켓플레이스로 설치한 Claude Code 사용자는 번들 Skill에 같은
+아래 사용자 범위 설치를 쓰는 경우 OpenCode는 `--runtime opencode`, Claude Code는
+`--runtime claude`, Codex는 `--runtime codex`로 선택한 클라이언트만 초기화합니다.
+여러 통합을 원할 때만 쉼표로 조합합니다. 마켓플레이스로 설치한 Claude Code 사용자는 번들 Skill에 같은
 초기화를 요청할 수 있습니다. 프로젝트에 해당 파일이 없을 때만 Claude Code용
 `CLAUDE.md`와 `.mcp.json`, Codex용 `AGENTS.md`, OpenCode용 `opencode.json`을
 만듭니다. 기존 파일은 보존하고 직접 통합할 때 쓸 생성 파일은 선택된 정본 루트의
@@ -135,10 +154,9 @@ Windows PowerShell:
 ```powershell
 git clone https://github.com/binary1215/lode.git lode
 Set-Location .\lode
-.\scripts\install.ps1 --native auto --project C:\path\to\project --runtime claude,codex,opencode
+.\scripts\install.ps1 --native auto --project C:\path\to\project --runtime codex
 
 lode-agent --version
-lode-agent doctor C:\path\to\project
 ```
 
 macOS 또는 Linux:
@@ -146,16 +164,18 @@ macOS 또는 Linux:
 ```bash
 git clone https://github.com/binary1215/lode.git lode
 cd lode
-./scripts/install.sh --native auto --project /path/to/project --runtime claude,codex,opencode
+./scripts/install.sh --native auto --project /path/to/project --runtime codex
 
 lode-agent --version
-lode-agent doctor /path/to/project
 ```
 
 설치 프로그램은 내용이 검증된 릴리스를 현재 사용자의 데이터 디렉터리에
 준비하고 `~/.local/bin`에 실행 파일을 만듭니다. 명시적인 `--project` 초기화
 단계 전에는 셸 프로필, Codex 캐시, 원격 GraphDB 또는 기존 프로젝트를
 수정하지 않습니다.
+위 예시는 Codex만 선택합니다. 해당 클라이언트에 맞게 `codex`를 `claude` 또는
+`opencode`로 바꾸세요. `--version`은 실행 중인 CLI 버전이지 Host에 로딩된 도구의
+증거가 아닙니다. status·doctor 진단은 필요한 경우에만 사용하면 됩니다.
 
 </details>
 

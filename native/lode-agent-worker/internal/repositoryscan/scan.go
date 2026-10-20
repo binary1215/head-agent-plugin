@@ -27,7 +27,7 @@ const (
 	ProducerName          = "head-agent-core-repository-scan"
 	LodeProducerName      = "lode-agent-core-repository-scan"
 	ProducerVersion       = "0.5.1"
-	SourceAnalysisVersion = "0.3.0"
+	SourceAnalysisVersion = "0.3.1"
 	maximumSymbolsPerFile = 200
 )
 

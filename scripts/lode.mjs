@@ -790,8 +790,9 @@ function runRoutedCommand(argv, { observationRegistry = null, compactionLifecycl
 
 export function runCliMain(directArgs = process.argv.slice(2)) {
   const jsonOutput = directArgs.includes("--json");
-  const normalizedArgs = directArgs.filter((item) => item !== "--json");
-  const directCommand = commandEntry(normalizedArgs).argv[0] || "help";
+  const withoutJson = directArgs.filter((item) => item !== "--json");
+  const directCommand = commandEntry(withoutJson).argv[0] || "help";
+  const normalizedArgs = withoutJson.filter(item => directCommand !== "graph-query" || item !== "--diagnostics");
   const sourceController = new AbortController();
   const abortSource = () => sourceController.abort();
   if (["source-context", "worker-execute", "runtime-invocation-execute"].includes(directCommand)) {
@@ -799,7 +800,7 @@ export function runCliMain(directArgs = process.argv.slice(2)) {
   }
   return Promise.resolve().then(() => runCommand(normalizedArgs, { signal: sourceController.signal,
     onProcess: (event) => process.stderr.write(`${JSON.stringify({ sourceProcess: event })}\n`) })).then((result) => {
-    process.stdout.write(jsonOutput ? `${JSON.stringify(result, null, 2)}\n` : formatCliResult(directCommand, result));
+    process.stdout.write(jsonOutput ? `${JSON.stringify(result, null, 2)}\n` : formatCliResult(directCommand, result, { diagnostics: directArgs.includes("--diagnostics") }));
   }).catch((error) => {
     const failure = { status: "failed", code: error.code || "HEAD_CLI_ERROR", error: error.message };
     process.stdout.write(jsonOutput ? `${JSON.stringify(failure, null, 2)}\n` : formatCliError(error));

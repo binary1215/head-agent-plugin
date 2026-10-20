@@ -1,13 +1,28 @@
-export const SOURCE_ANALYSIS_VERSION = "0.3.0";
+export const SOURCE_ANALYSIS_VERSION = "0.3.1";
 
 function compareText(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
-function lineAt(text, index) {
-  let line = 1;
-  for (let position = 0; position < index; position += 1) if (text.charCodeAt(position) === 10) line += 1;
-  return line;
+function analysisContext(text, language) {
+  const indexes = new Map();
+  return { text, language, masked: null, declarations: null,
+    lineAt(value, index) {
+      let offsets = indexes.get(value);
+      if (!offsets) {
+        offsets = [];
+        for (let position = value.indexOf("\n"); position >= 0; position = value.indexOf("\n", position + 1)) offsets.push(position);
+        indexes.set(value, offsets);
+      }
+      let low = 0, high = offsets.length;
+      while (low < high) {
+        const middle = (low + high) >>> 1;
+        if (offsets[middle] < index) low = middle + 1;
+        else high = middle;
+      }
+      return low + 1;
+    },
+  };
 }
 
 export function languageForSource(extension, base) {
@@ -38,7 +53,8 @@ function normalizedSignature(value) {
 
 function maskNonCode(text, language) {
   if (!["javascript", "typescript", "python"].includes(language)) return text;
-  const output = [...text];
+  // Regex offsets and text[index] use UTF-16 code units, including lone surrogates.
+  const output = text.split("");
   let mode = "code";
   let quote = "";
   let escaped = false;
@@ -125,6 +141,19 @@ function finalizeDeclarations(declarations, maxSymbols) {
     }));
 }
 
+function attachFirstRanges(finalized, declarations) {
+  const ranges = new Map();
+  const keyFor = item => `${item.line}\0${item.kind}\0${item.qualifiedName}`;
+  // finalizeDeclarations sorts in place. Preserve the original first-match
+  // policy even for duplicate names on the same line, rather than repairing it
+  // silently while removing repeated linear find operations.
+  for (const item of declarations) if (!ranges.has(keyFor(item))) ranges.set(keyFor(item), item);
+  return finalized.map(item => {
+    const source = ranges.get(keyFor(item));
+    return { ...item, startIndex: source.startIndex, endIndex: source.endIndex };
+  });
+}
+
 function pythonHeaderEnd(masked, startIndex) {
   let depth = 0;
   for (let index = startIndex; index < masked.length; index += 1) {
@@ -136,7 +165,7 @@ function pythonHeaderEnd(masked, startIndex) {
   return -1;
 }
 
-function pythonDeclarations(text, masked, maxSymbols, includeRanges = false) {
+function pythonDeclarations(text, masked, maxSymbols, includeRanges = false, context) {
   const maskedLines = lineRecords(masked);
   const declarations = [];
   const scope = [];
@@ -155,7 +184,7 @@ function pythonDeclarations(text, masked, maxSymbols, includeRanges = false) {
     const startIndex = maskedLines[index].start + (match[1]?.length || 0);
     const headerEndIndex = pythonHeaderEnd(masked, startIndex);
     if (headerEndIndex < 0) continue;
-    const headerEndLine = lineAt(masked, headerEndIndex - 1);
+    const headerEndLine = context.lineAt(masked, headerEndIndex - 1);
     let endLine = maskedLines.length;
     let endIndex = masked.length;
     for (let after = headerEndLine; after < maskedLines.length; after += 1) {
@@ -184,10 +213,7 @@ function pythonDeclarations(text, masked, maxSymbols, includeRanges = false) {
     index = headerEndLine - 1;
   }
   const finalized = finalizeDeclarations(declarations, maxSymbols);
-  if (includeRanges) return finalized.map((item) => {
-    const source = declarations.find((candidate) => candidate.line === item.line && candidate.kind === item.kind && candidate.qualifiedName === item.qualifiedName);
-    return { ...item, startIndex: source.startIndex, endIndex: source.endIndex };
-  });
+  if (includeRanges) return attachFirstRanges(finalized, declarations);
   return finalized;
 }
 
@@ -201,7 +227,7 @@ function matchingBrace(masked, openIndex) {
   return -1;
 }
 
-function javascriptDeclarations(text, masked, maxSymbols, includeRanges = false) {
+function javascriptDeclarations(text, masked, maxSymbols, includeRanges = false, context) {
   const patterns = [
     ["function", /\b(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)/g],
     ["class", /\b(?:export\s+)?class\s+([A-Za-z_$][\w$]*)/g],
@@ -227,28 +253,30 @@ function javascriptDeclarations(text, masked, maxSymbols, includeRanges = false)
       return semicolon >= 0 && semicolon <= lineEnd ? semicolon + 1 : lineEnd;
     })();
     declarations.push({
-      name: match[1], kind, line: lineAt(masked, startIndex), endLine: closeIndex >= 0 ? lineAt(masked, closeIndex) : lineAt(masked, statementEnd),
+      name: match[1], kind, line: context.lineAt(masked, startIndex), endLine: closeIndex >= 0 ? context.lineAt(masked, closeIndex) : context.lineAt(masked, statementEnd),
       scopePath: "", qualifiedName: match[1],
       signature: normalizedSignature(text.slice(startIndex, boundedOpen >= 0 ? boundedOpen : statementEnd)),
       startIndex, endIndex: closeIndex >= 0 ? closeIndex + 1 : statementEnd,
     });
   }
   declarations.sort((left, right) => left.startIndex - right.startIndex);
+  let active = [], sameStart = [], start = -1;
   for (const declaration of declarations) {
-    const containers = declarations.filter((candidate) => candidate !== declaration && candidate.startIndex < declaration.startIndex
-      && candidate.endIndex >= declaration.endIndex).sort((left, right) => left.startIndex - right.startIndex);
+    if (declaration.startIndex !== start) {
+      active = active.concat(sameStart).filter(candidate => candidate.endIndex >= declaration.startIndex);
+      sameStart = []; start = declaration.startIndex;
+    }
+    const containers = active.filter(candidate => candidate.endIndex >= declaration.endIndex);
     declaration.scopePath = containers.map((item) => item.name).join(".");
     declaration.qualifiedName = declaration.scopePath ? `${declaration.scopePath}.${declaration.name}` : declaration.name;
+    sameStart.push(declaration);
   }
   const finalized = finalizeDeclarations(declarations, maxSymbols);
-  if (includeRanges) return finalized.map((item) => {
-    const source = declarations.find((candidate) => candidate.line === item.line && candidate.kind === item.kind && candidate.qualifiedName === item.qualifiedName);
-    return { ...item, startIndex: source.startIndex, endIndex: source.endIndex };
-  });
+  if (includeRanges) return attachFirstRanges(finalized, declarations);
   return finalized;
 }
 
-function markdownDeclarations(text, maxSymbols) {
+function markdownDeclarations(text, maxSymbols, context) {
   const declarations = [];
   const scope = [];
   for (const match of text.matchAll(/^(#{1,6})\s+(.+?)\s*$/gm)) {
@@ -256,7 +284,7 @@ function markdownDeclarations(text, maxSymbols) {
     while (scope.length >= level) scope.pop();
     const name = match[2];
     const scopePath = scope.filter(Boolean).join(" / ");
-    declarations.push({ name, kind: "heading", line: lineAt(text, match.index || 0), endLine: lineAt(text, match.index || 0),
+    declarations.push({ name, kind: "heading", line: context.lineAt(text, match.index || 0), endLine: context.lineAt(text, match.index || 0),
       scopePath, qualifiedName: scopePath ? `${scopePath} / ${name}` : name, signature: `${match[1]} ${name}`,
       startIndex: match.index || 0, endIndex: (match.index || 0) + match[0].length });
     scope[level - 1] = name;
@@ -264,11 +292,11 @@ function markdownDeclarations(text, maxSymbols) {
   return finalizeDeclarations(declarations, maxSymbols);
 }
 
-function analyzeDeclarations(text, language, maxSymbols, includeRanges = false) {
-  const masked = maskNonCode(text, language);
-  if (["javascript", "typescript"].includes(language)) return javascriptDeclarations(text, masked, maxSymbols, includeRanges);
-  if (language === "python") return pythonDeclarations(text, masked, maxSymbols, includeRanges);
-  if (language === "markdown") return markdownDeclarations(text, maxSymbols);
+function analyzeDeclarations(text, language, maxSymbols, includeRanges = false, context = analysisContext(text, language)) {
+  const masked = context.masked ??= maskNonCode(text, language);
+  if (["javascript", "typescript"].includes(language)) return javascriptDeclarations(text, masked, maxSymbols, includeRanges, context);
+  if (language === "python") return pythonDeclarations(text, masked, maxSymbols, includeRanges, context);
+  if (language === "markdown") return markdownDeclarations(text, maxSymbols, context);
   return [];
 }
 
@@ -278,6 +306,10 @@ export function extractSourceSymbols(text, language, { maxSymbols = 200 } = {}) 
 }
 
 export function extractSourceDependencies(text, language, base) {
+  return sourceDependencies(text, language, base, analysisContext(text, language));
+}
+
+function sourceDependencies(text, language, base, context) {
   const dependencies = [];
   const seen = new Set();
   const add = (specifier, kind, line = 1) => {
@@ -286,9 +318,9 @@ export function extractSourceDependencies(text, language, base) {
     dependencies.push({ specifier, kind, line });
   };
   if (["javascript", "typescript"].includes(language)) {
-    for (const match of text.matchAll(/\b(?:from\s+|import\s*\(|require\s*\()\s*["']([^"']+)["']/g)) add(match[1], "module", lineAt(text, match.index || 0));
+    for (const match of text.matchAll(/\b(?:from\s+|import\s*\(|require\s*\()\s*["']([^"']+)["']/g)) add(match[1], "module", context.lineAt(text, match.index || 0));
   } else if (language === "python") {
-    for (const match of text.matchAll(/^\s*(?:from|import)\s+([A-Za-z_][\w.]*)/gm)) add(match[1], "module", lineAt(text, match.index || 0));
+    for (const match of text.matchAll(/^\s*(?:from|import)\s+([A-Za-z_][\w.]*)/gm)) add(match[1], "module", context.lineAt(text, match.index || 0));
   }
   if (base === "package.json") {
     try {
@@ -339,10 +371,46 @@ function extractImportBindings(text, language) {
   return bindings.sort((left, right) => compareText(left.local, right.local) || compareText(left.specifier, right.specifier) || compareText(left.imported, right.imported));
 }
 
-function extractCalls(text, language) {
+function callerLookup(declarations) {
+  const pending = declarations.map((declaration, rank) => ({ ...declaration, rank }))
+    .filter(item => ["function", "binding"].includes(item.kind))
+    .sort((a, b) => a.startIndex - b.startIndex || a.rank - b.rank);
+  const heap = [];
+  const compare = (a, b) => (a.endIndex - a.startIndex) - (b.endIndex - b.startIndex) || a.rank - b.rank;
+  const push = value => {
+    let index = heap.length; heap.push(value);
+    while (index > 0) {
+      const parent = (index - 1) >>> 1;
+      if (compare(heap[parent], value) <= 0) break;
+      heap[index] = heap[parent]; index = parent;
+    }
+    heap[index] = value;
+  };
+  const pop = () => {
+    const value = heap.pop();
+    if (!heap.length) return;
+    let index = 0;
+    while (index * 2 + 1 < heap.length) {
+      let next = index * 2 + 1;
+      if (next + 1 < heap.length && compare(heap[next + 1], heap[next]) < 0) next += 1;
+      if (compare(value, heap[next]) <= 0) break;
+      heap[index] = heap[next]; index = next;
+    }
+    heap[index] = value;
+  };
+  let cursor = 0;
+  return index => {
+    while (cursor < pending.length && pending[cursor].startIndex < index) push(pending[cursor++]);
+    while (heap.length && heap[0].endIndex <= index) pop();
+    return heap[0] || null;
+  };
+}
+
+function extractCalls(text, language, context = analysisContext(text, language)) {
   if (!["javascript", "typescript", "python"].includes(language)) return [];
-  const masked = maskNonCode(text, language);
-  const declarations = analyzeDeclarations(text, language, 10_000, true);
+  const masked = context.masked ??= maskNonCode(text, language);
+  const declarations = context.declarations ??= analyzeDeclarations(text, language, 10_000, true, context);
+  const callerAt = callerLookup(declarations);
   const excluded = new Set(["if", "for", "while", "switch", "catch", "function", "return", "typeof", "new", "class", "def", "with", "assert", "lambda"]);
   const calls = [];
   for (const match of masked.matchAll(/\b([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?)\s*\(/g)) {
@@ -350,10 +418,8 @@ function extractCalls(text, language) {
     const prefix = masked.slice(Math.max(0, (match.index || 0) - 24), match.index || 0);
     if (excluded.has(callee) || /\b(?:function|class|def|new)\s*$/.test(prefix)) continue;
     const callIndex = match.index || 0;
-    const caller = declarations.filter((item) => ["function", "binding"].includes(item.kind)
-      && item.startIndex < callIndex && callIndex < item.endIndex)
-      .sort((left, right) => (left.endIndex - left.startIndex) - (right.endIndex - right.startIndex))[0] || null;
-    calls.push({ callee, line: lineAt(masked, callIndex), callerQualifiedName: caller?.qualifiedName || null,
+    const caller = callerAt(callIndex);
+    calls.push({ callee, line: context.lineAt(masked, callIndex), callerQualifiedName: caller?.qualifiedName || null,
       callerIdentityAmbiguous: caller?.identityAmbiguous || false });
   }
   return calls.sort((left, right) => left.line - right.line || compareText(left.callee, right.callee));
@@ -363,5 +429,17 @@ export function extractSemanticSourceFacts(text, language) {
   return {
     bindings: extractImportBindings(text, language),
     calls: extractCalls(text, language),
+  };
+}
+
+// Internal repository-analysis boundary. No context/cache escapes the exact file.
+export function analyzeSourceFile(text, language, base, { maxSymbols = 200 } = {}) {
+  if (!Number.isInteger(maxSymbols) || maxSymbols < 1 || maxSymbols > 10_000) throw Object.assign(new Error("maxSymbols is invalid."), { code: "INVALID_SOURCE_SYMBOL_LIMIT" });
+  const context = analysisContext(text, language);
+  context.declarations = analyzeDeclarations(text, language, 10_000, true, context);
+  return {
+    symbols: context.declarations.slice(0, maxSymbols).map(({ startIndex, endIndex, ...symbol }) => symbol),
+    dependencies: sourceDependencies(text, language, base, context),
+    semanticFacts: { bindings: extractImportBindings(text, language), calls: extractCalls(text, language, context) },
   };
 }

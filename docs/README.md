@@ -21,6 +21,8 @@ work logs are intentionally excluded from the distribution and are not runtime a
 ## Context, world, and retrieval
 
 - [Graph-first discovery and independent Sessions](graph-discovery.md)
+- [Local read-only Graph Explorer](graph-explorer.md)
+- [Recorded code context and before/after comparison](context-lineage.md)
 - [Lode Context Compiler design](context-compiler.md)
 - [Repository World Model semantic alpha](world-model.md)
 - [Temporal provenance GraphSnapshot alpha](temporal-provenance.md)

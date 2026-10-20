@@ -13,9 +13,7 @@ import {
 } from "./compute-adapter.mjs";
 import {
   classifySourcePath,
-  extractSemanticSourceFacts,
-  extractSourceDependencies,
-  extractSourceSymbols,
+  analyzeSourceFile,
   languageForSource,
   SOURCE_ANALYSIS_VERSION,
 } from "./source-analysis.mjs";
@@ -163,12 +161,36 @@ function excludesManagedRootDirectory(relative, input) {
     && candidate.ino === selected.ino && candidate.dev === selected.dev;
 }
 
+function sameObservedFile(previous, metadata) {
+  return previous && ["digest", "bytes", "classification", "language"].every(field => previous[field] === metadata[field]);
+}
+
+function sourceFileRecord(metadata, raw, base, previous = null) {
+  return { ...metadata, freshness: "active",
+    ...(previous ? { symbols: previous.symbols, dependencies: previous.dependencies, semanticFacts: previous.semanticFacts }
+      : analyzeSourceFile(raw.toString("utf8"), metadata.language, base, { maxSymbols: REPOSITORY_SCAN_DEFAULTS.maxSymbolsPerFile })),
+  };
+}
+
+function scanResultPayload(input, files, skipped, totalBytes) {
+  return {
+    schemaVersion: 1, kind: "RepositoryScanResult", protocol: semanticProducerFor(scanFormat(input)),
+    sourceAnalysisVersion: SOURCE_ANALYSIS_VERSION, authority: "derived-evidence-only", instructionAuthority: false,
+    promotionAuthority: false, sourceScope: input.sourceScope, files, skipped,
+    summary: { fileCount: files.length, totalBytes,
+      symbolCount: files.reduce((n, file) => n + file.symbols.length, 0),
+      dependencyCount: files.reduce((n, file) => n + file.dependencies.length, 0),
+      bindingCount: files.reduce((n, file) => n + file.semanticFacts.bindings.length, 0),
+      callCount: files.reduce((n, file) => n + file.semanticFacts.calls.length, 0) },
+  };
+}
+
 function scanPayload(input, limits, { previousResult = null, reuseDiagnostics = null } = {}) {
   validateRepositoryScanInput(input);
   const normalizedLimits = normalizeComputeLimits(limits);
   const root = input.projectRoot;
   if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) fail("Repository scan root is not a directory.", "REPOSITORY_SCAN_ROOT_INVALID");
-  if (previousResult) validateRepositoryScanResult(previousResult);
+  // The only reuse caller validates its persisted snapshot before entering here.
   const previousFiles = new Map((previousResult?.files || []).map((file) => [file.path, file]));
   const previousAnalysisReusable = previousResult?.protocol?.version === REPOSITORY_SCAN_VERSION
     && previousResult?.sourceAnalysisVersion === SOURCE_ANALYSIS_VERSION;
@@ -202,37 +224,13 @@ function scanPayload(input, limits, { previousResult = null, reuseDiagnostics = 
       if (raw.length > normalizedLimits.maxFileBytes) { skipped.tooLarge += 1; continue; }
       if (files.length >= normalizedLimits.maxFiles) fail(`Repository scan exceeds ${normalizedLimits.maxFiles} files.`, "REPOSITORY_SCAN_FILE_LIMIT");
       if (totalBytes + raw.length > normalizedLimits.maxTotalBytes) fail(`Repository scan exceeds ${normalizedLimits.maxTotalBytes} total bytes.`, "REPOSITORY_SCAN_TOTAL_BYTES_LIMIT");
-      const content = raw.toString("utf8");
       const language = languageForSource(extension, base);
       const classification = classifySourcePath(relative, extension);
       const contentDigest = digest(raw);
       const previous = previousFiles.get(relative);
-      const reusable = previousAnalysisReusable && previous
-        && previous.digest === contentDigest
-        && previous.bytes === raw.length
-        && previous.classification === classification
-        && previous.language === language;
-      files.push(reusable ? {
-        path: relative,
-        digest: contentDigest,
-        freshness: "active",
-        bytes: raw.length,
-        classification,
-        language,
-        symbols: previous.symbols,
-        dependencies: previous.dependencies,
-        semanticFacts: previous.semanticFacts,
-      } : {
-        path: relative,
-        digest: contentDigest,
-        freshness: "active",
-        bytes: raw.length,
-        classification,
-        language,
-        symbols: extractSourceSymbols(content, language, { maxSymbols: REPOSITORY_SCAN_DEFAULTS.maxSymbolsPerFile }),
-        dependencies: extractSourceDependencies(content, language, base),
-        semanticFacts: extractSemanticSourceFacts(content, language),
-      });
+      const metadata = { path: relative, digest: contentDigest, bytes: raw.length, classification, language };
+      const reusable = previousAnalysisReusable && sameObservedFile(previous, metadata);
+      files.push(sourceFileRecord(metadata, raw, base, reusable ? previous : null));
       if (reuseDiagnostics) (reusable ? reuseDiagnostics.reusedPaths : reuseDiagnostics.analyzedPaths).push(relative);
       totalBytes += raw.length;
     }
@@ -244,26 +242,7 @@ function scanPayload(input, limits, { previousResult = null, reuseDiagnostics = 
     reuseDiagnostics.analyzedPaths.sort(compareText);
     reuseDiagnostics.removedPaths.push(...[...previousFiles.keys()].filter((file) => !currentPaths.has(file)).sort(compareText));
   }
-  return {
-    schemaVersion: 1,
-    kind: "RepositoryScanResult",
-    protocol: semanticProducerFor(scanFormat(input)),
-    sourceAnalysisVersion: SOURCE_ANALYSIS_VERSION,
-    authority: "derived-evidence-only",
-    instructionAuthority: false,
-    promotionAuthority: false,
-    sourceScope: input.sourceScope,
-    files,
-    skipped,
-    summary: {
-      fileCount: files.length,
-      totalBytes,
-      symbolCount: files.reduce((sum, file) => sum + file.symbols.length, 0),
-      dependencyCount: files.reduce((sum, file) => sum + file.dependencies.length, 0),
-      bindingCount: files.reduce((sum, file) => sum + file.semanticFacts.bindings.length, 0),
-      callCount: files.reduce((sum, file) => sum + file.semanticFacts.calls.length, 0),
-    },
-  };
+  return scanResultPayload(input, files, skipped, totalBytes);
 }
 
 function withIdentity(payload) {
@@ -276,12 +255,13 @@ export function scanRepositoryReference(input, { limits = DEFAULT_COMPUTE_LIMITS
   return validateRepositoryScanResult(result);
 }
 
-export function inspectRepositoryScanFreshness({ projectRoot, managedRootFiles = [], storage, sourceScope = buildRepositorySourceScope({ storage }), storedFiles = [], limits = {} } = {}) {
+function inspectFreshness({ projectRoot, managedRootFiles = [], storage, sourceScope = buildRepositorySourceScope({ storage }), storedFiles = [], limits = {} } = {}, consume = null) {
   const input = buildRepositoryScanInput({ projectRoot, managedRootFiles, sourceScope, storage });
   const normalizedLimits = normalizeComputeLimits(limits);
   if (!Array.isArray(storedFiles)) fail("storedFiles must be an array.", "INVALID_REPOSITORY_SCAN_INPUT");
   const managed = new Set(input.managedRootFiles);
   const files = [];
+  const skipped = Object.fromEntries(SKIPPED_FIELDS.map(field => [field, 0]));
   let totalBytes = 0;
   const stack = [input.projectRoot];
   while (stack.length) {
@@ -290,19 +270,22 @@ export function inspectRepositoryScanFreshness({ projectRoot, managedRootFiles =
     for (const entry of entries) {
       const absolute = path.join(directory, entry.name);
       const relative = normalizePath(input.projectRoot, absolute);
-      if (entry.isSymbolicLink()) continue;
+      if (entry.isSymbolicLink()) { skipped.symlink += 1; continue; }
       if (entry.isDirectory()) {
-        if (!EXCLUDED_DIRECTORIES.has(entry.name.toLowerCase()) && !excludesManagedRootDirectory(relative, input)
-          && pathWithinRepositorySourceScope(relative, input.sourceScope, { directory: true })) stack.push(absolute);
+        if (EXCLUDED_DIRECTORIES.has(entry.name.toLowerCase()) || excludesManagedRootDirectory(relative, input)) skipped.excludedDirectory += 1;
+        else if (!pathWithinRepositorySourceScope(relative, input.sourceScope, { directory: true })) skipped.outsideSourceScope += 1;
+        else stack.push(absolute);
         continue;
       }
-      if (!entry.isFile() || !pathWithinRepositorySourceScope(relative, input.sourceScope) || managed.has(relative)) continue;
+      if (!entry.isFile()) { skipped.unsupportedType += 1; continue; }
+      if (!pathWithinRepositorySourceScope(relative, input.sourceScope)) { skipped.outsideSourceScope += 1; continue; }
+      if (managed.has(relative)) { skipped.managedProjection += 1; continue; }
       const extension = path.extname(entry.name).toLowerCase();
-      if (!TEXT_EXTENSIONS.has(extension) && entry.name !== "Dockerfile") continue;
+      if (!TEXT_EXTENSIONS.has(extension) && entry.name !== "Dockerfile") { skipped.unsupportedType += 1; continue; }
       const stat = fs.statSync(absolute);
-      if (stat.size > normalizedLimits.maxFileBytes) continue;
+      if (stat.size > normalizedLimits.maxFileBytes) { skipped.tooLarge += 1; continue; }
       const raw = fs.readFileSync(absolute);
-      if (raw.length > normalizedLimits.maxFileBytes) continue;
+      if (raw.length > normalizedLimits.maxFileBytes) { skipped.tooLarge += 1; continue; }
       if (files.length >= normalizedLimits.maxFiles) fail(`Repository scan exceeds ${normalizedLimits.maxFiles} files.`, "REPOSITORY_SCAN_FILE_LIMIT");
       if (totalBytes + raw.length > normalizedLimits.maxTotalBytes) fail(`Repository scan exceeds ${normalizedLimits.maxTotalBytes} total bytes.`, "REPOSITORY_SCAN_TOTAL_BYTES_LIMIT");
       files.push({
@@ -312,6 +295,7 @@ export function inspectRepositoryScanFreshness({ projectRoot, managedRootFiles =
         classification: classifySourcePath(relative, extension),
         language: languageForSource(extension, entry.name),
       });
+      consume?.file(files.at(-1), raw, entry.name);
       totalBytes += raw.length;
     }
   }
@@ -325,12 +309,56 @@ export function inspectRepositoryScanFreshness({ projectRoot, managedRootFiles =
     const current = after.get(file);
     return previous && ["digest", "bytes", "classification", "language"].some((field) => previous[field] !== current[field]);
   }).sort(compareText);
-  return {
+  const freshness = {
     status: added.length || changed.length || removed.length ? "changed" : "unchanged",
     sourceScope: input.sourceScope,
     files,
     changes: { added, changed, removed },
   };
+  return consume ? consume.finish(freshness, { input, limits: normalizedLimits, skipped, totalBytes }) : freshness;
+}
+
+export function inspectRepositoryScanFreshness(options = {}) {
+  return inspectFreshness(options);
+}
+
+// Private World consumer: the observation and its exact bytes never escape a
+// synchronous call. Public freshness remains metadata-only and does no analysis.
+export function inspectRepositoryScanForWorld(options, previousResult, { sourceScopeChanged = false } = {}) {
+  const reusableProducer = previousResult.protocol.version === REPOSITORY_SCAN_VERSION
+    && previousResult.sourceAnalysisVersion === SOURCE_ANALYSIS_VERSION;
+  if (!reusableProducer) {
+    // A producer transition cannot reuse old analysis. Keep ordinary freshness
+    // cheap rather than retaining all source buffers for a possible rebuild.
+    const freshness = inspectFreshness({ ...options, storedFiles: previousResult.files });
+    const scan = freshness.status === "unchanged" && !sourceScopeChanged ? { files: previousResult.files }
+      : scanRepositoryReference(buildRepositoryScanInput(options), { limits: options.limits });
+    return { freshness, scan };
+  }
+  const previousFiles = new Map(previousResult.files.map(file => [file.path, file]));
+  const observed = [];
+  return inspectFreshness({ ...options, storedFiles: previousResult.files }, {
+    file(metadata, raw, base) {
+      const previous = previousFiles.get(metadata.path);
+      const reusable = reusableProducer && sameObservedFile(previous, metadata);
+      observed.push(reusable ? { metadata, reusable: true } : { metadata, raw, base });
+    },
+    finish(freshness, { input, skipped, totalBytes }) {
+      if (freshness.status === "unchanged" && !sourceScopeChanged) return { freshness, scan: { files: previousResult.files } };
+      // This is a persisted/untrusted reuse boundary, not an identity flag.
+      const ownedPrevious = validateRepositoryScanResult(canonical(previousResult));
+      const ownedFiles = new Map(ownedPrevious.files.map(file => [file.path, file]));
+      if (observed.some(({ metadata, reusable }) => reusable && !sameObservedFile(ownedFiles.get(metadata.path), metadata))) {
+        // Mutable input changed its exact basis during observation. It cannot
+        // donate analysis; recompute through the existing safe reference path.
+        return { freshness, scan: scanRepositoryReference(input, { limits: options.limits }) };
+      }
+      const files = observed.map(({ metadata, reusable, raw, base }) => sourceFileRecord(metadata, raw, base, reusable ? ownedFiles.get(metadata.path) : null))
+        .sort((a, b) => compareText(a.path, b.path));
+      const scan = validateRepositoryScanResult(withIdentity(scanResultPayload(input, files, skipped, totalBytes)));
+      return { freshness, scan };
+    },
+  });
 }
 
 function resultFromWorldModelSnapshot(snapshot) {
@@ -357,7 +385,9 @@ export function repositoryScanResultFromWorldModel(snapshot) {
   if (!snapshot?.repositoryScan || !Array.isArray(snapshot.files) || !snapshot.skipped) {
     fail("World Model snapshot does not contain a repository scan.", "REPOSITORY_SCAN_SNAPSHOT_MISSING");
   }
-  return validateRepositoryScanResult(resultFromWorldModelSnapshot(snapshot));
+  // Normalize once at the untrusted mutable input boundary. Internal scanning
+  // owns this copy rather than relying on validation of a caller's live object.
+  return validateRepositoryScanResult(canonical(resultFromWorldModelSnapshot(snapshot)));
 }
 
 export function validateRepositoryScanExecution(execution, { projectRoot, managedRootFiles = [], storage, sourceScope = buildRepositorySourceScope({ storage }) } = {}) {
@@ -387,17 +417,19 @@ export async function executeIncrementalRepositoryScan({ projectRoot, managedRoo
     limits,
   });
   const reuse = { reusedPaths: [], analyzedPaths: [], removedPaths: [] };
-  const result = validateRepositoryScanResult(withIdentity(scanPayload(input, request.limits, {
+  const result = withIdentity(scanPayload(input, request.limits, {
     previousResult,
     reuseDiagnostics: reuse,
-  })));
+  }));
   const response = buildComputeSuccessResponse(request, result);
-  validateComputeResponse(request, response);
+  // A local constructor supplies this exact frozen result; external execution
+  // validation remains mandatory at validateRepositoryScanExecution's boundary.
+  validateRepositoryScanResult(response.result);
   const changes = changesBetweenScans(previousResult, result);
-  return validateRepositoryScanExecution({
+  return {
     request,
     response,
-    result,
+    result: response.result,
     diagnostics: {
       backend: "javascript-reference",
       adapterName: "repository-scan-incremental-reference",
@@ -414,7 +446,7 @@ export async function executeIncrementalRepositoryScan({ projectRoot, managedRoo
       removedPaths: reuse.removedPaths,
       changes,
     },
-  }, { projectRoot, managedRootFiles, sourceScope, storage });
+  };
 }
 
 function assertOrderedUnique(values, identity, label) {
@@ -442,7 +474,7 @@ export function validateRepositoryScanResult(result) {
   assertFields(result, ["schemaVersion", "kind", "protocol", "sourceAnalysisVersion", "authority", "instructionAuthority", "promotionAuthority", ...(scopedProtocol ? ["sourceScope"] : []), "files", "skipped", "summary", "scanId", "scanHash"], "Repository scan result");
   if (result.schemaVersion !== 1 || result.kind !== "RepositoryScanResult"
     || !format || (!currentProtocol && !legacyProtocol)
-    || (currentProtocol ? result.sourceAnalysisVersion !== SOURCE_ANALYSIS_VERSION : !["0.1.0", "0.2.0"].includes(result.sourceAnalysisVersion))
+    || (currentProtocol ? !["0.3.0", SOURCE_ANALYSIS_VERSION].includes(result.sourceAnalysisVersion) : !["0.1.0", "0.2.0"].includes(result.sourceAnalysisVersion))
     || result.authority !== "derived-evidence-only"
     || result.instructionAuthority !== false || result.promotionAuthority !== false || !Array.isArray(result.files)) {
     fail("Repository scan result contract is invalid.", "INVALID_REPOSITORY_SCAN_RESULT");

@@ -33,6 +33,7 @@ import {
   createRepositoryScanComputeAdapter,
   executeRepositoryScan,
   inspectRepositoryScanFreshness,
+  inspectRepositoryScanForWorld,
   managedRootFilesForProject,
   REPOSITORY_SCAN_DEFAULTS,
   REPOSITORY_SCAN_EXCLUDED_DIRECTORIES,
@@ -899,22 +900,14 @@ export function inspectWorldModel({ root = ".", storeAdapter = null, runtimeStat
   const storage = inspected.storage;
   const sourceScopeState = readRepositorySourceScope({ storage, projectRoot: inspected.project.projectRoot });
   const sourceScope = sourceScopeState.sourceScope;
-  const scanInput = buildRepositoryScanInput({ storage,
-    projectRoot: inspected.project.projectRoot,
-    managedRootFiles: managedRootFilesForProject(inspected.project, storage),
-    sourceScope,
-  });
   const storedSourceScope = stored.snapshot.repositoryScan?.sourceScope || buildRepositorySourceScope({ storage });
-  const freshness = inspectRepositoryScanFreshness({ storage,
+  const sourceScopeChanged = sourceScope.sourceScopeId !== storedSourceScope.sourceScopeId;
+  const { freshness, scan } = inspectRepositoryScanForWorld({ storage,
     projectRoot: inspected.project.projectRoot,
     managedRootFiles: managedRootFilesForProject(inspected.project, storage),
     sourceScope,
-    storedFiles: stored.snapshot.files,
-  });
-  const sourceScopeChanged = sourceScope.sourceScopeId !== storedSourceScope.sourceScopeId;
-  const scan = freshness.status === "unchanged" && !sourceScopeChanged
-    ? { files: stored.snapshot.files }
-    : scanRepositoryReference(scanInput, { storage });
+  }, { schemaVersion: 1, kind: "RepositoryScanResult", ...stored.snapshot.repositoryScan,
+    files: stored.snapshot.files, skipped: stored.snapshot.skipped }, { sourceScopeChanged });
   const productCanon = readProductModelCanon({ storage, projectRoot: inspected.project.projectRoot });
   const onboardingProjection = loadOnboardingGraphProjection({ storage,
     projectRoot: inspected.project.projectRoot,

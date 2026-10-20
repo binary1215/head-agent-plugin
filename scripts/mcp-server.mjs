@@ -1888,7 +1888,7 @@ allTools.push(
       anchor_ids: { type: "array", items: { type: "string" }, maxItems: 32 },
       paths: { type: "array", items: { type: "string" } }, depth: { type: "integer", minimum: 0, maximum: 8, default: 1 },
       max_nodes: { type: "integer", minimum: 1, maximum: 500 }, max_edges: { type: "integer", minimum: 0, maximum: 1000 },
-      details: { type: "boolean", default: false, description: "Default returns short core evidence (8 nodes/12 edges). Request details with exact returned anchors to inspect original bounded payloads and relations (60/120 defaults)." },
+      details: { type: "boolean", default: false, description: "Default returns short core evidence (8 nodes/12 edges). Request details with fitting source paths or record anchors for original bounded payloads and relations (60/120 defaults), including recorded context and exact source comparisons when available. Recorded reasons, citations, byte changes and current state remain distinct; missing history does not require a Run, commit or new save." },
       world_model_id: { type: "string" }, include_candidates: { type: "boolean", default: true },
       previous_result: { type: "object", description: "Optional prior verified result for identical-basis reuse, supplied by HEAD." },
     }, required: ["project_root"], additionalProperties: false },

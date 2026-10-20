@@ -133,7 +133,9 @@ test("graph common membership names only supported work nodes at original indice
   // Grouped bodies retain exact source indices, not flat navigation ordering.
   for (let i = 0; i < 4; i++) assert.equal(text.split(`\nNode[${i}]:\n`).length - 1, 1);
   assert.ok(text.includes("workContentCoverage.partial: true")); assert.ok(text.includes("workContentExcerpts[0].text (original text):"));
-  assert.ok(text.includes('"hint": "not proof"')); assert.equal(text, formatCliResult("graph-query", graph)); assert.equal(JSON.stringify(graph), before);
+  assert.ok(text.includes('"hint": "not proof"'));
+  const terminal = formatCliResult("graph-query", graph, { diagnostics: true });
+  assert.ok(terminal.includes("Selected connections")); assert.ok(terminal.includes('"hint": "not proof"')); assert.equal(JSON.stringify(graph), before);
   for (const change of [node => { delete node.projectId; }, node => { node.sessionId = null; }, node => { node.kind = "Other"; }, node => { node.workContent = null; }]) {
     const ambiguous = structuredClone(graph); change(ambiguous.nodes[3]); const output = formatMcpToolContent("head_project_graph", ambiguous);
     assert.ok(!output.includes("Common stored fields for")); assert.ok(output.includes('sessionId: "session-owner"')); assert.ok(output.includes('nodes[0].sessionId: "nav-owner"'));
@@ -791,7 +793,8 @@ test("graph work text retains unlabeled originals for single and grouped bodies 
         recoveryAuthority: false, executionAuthority: false, ordinaryWorkBlocked: false, workContent })),
       edges: [], coverage: { state: "partial", omitted: 7 }, future: { unknown: true } };
     const before = structuredClone(graph), text = formatMcpToolContent("head_project_graph", graph);
-    assert.equal(text, formatCliResult("graph-query", graph));
+    const terminal = formatCliResult("graph-query", graph, { diagnostics: true });
+    assert.ok(terminal.includes("Selected connections")); assert.ok(terminal.includes('"unknown": true'));
     for (const label of workRoleLabels) assert.ok(!text.includes(`${label}:\n`), "Session labels must not leak into graph presentation");
     for (const body of content) assert.ok(text.includes(expectedExplainedBody(body, "workContent", false)));
     assert.ok(text.includes('"omitted": 7')); assert.ok(text.includes('"unknown": true'));

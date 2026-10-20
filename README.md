@@ -37,6 +37,20 @@ Recover saved work after compaction. Prepare task-specific context and keep the 
 
 ## Your first request
 
+Not installed yet? Give your coding agent this README and ask:
+
+```text
+Install Lode for Codex using its existing official installation path. Reuse a
+valid installation and preserve my project instructions and current connections.
+Do the steps you are allowed to perform; tell me only what needs my action.
+Then use it in this project to investigate the login failure.
+```
+
+Replace Codex and the task with your client and goal. This starts from the
+README, not an already-installed Skill. The agent performs available authorized
+steps, checks their results, and carries the task forward. Host approval, login
+or a manual restart may still need you; it does not restart the app itself.
+
 After [installing and loading the plugin](#install), open your project and include the real task in your first request. There is no separate setup conversation.
 
 ```text
@@ -59,6 +73,12 @@ Use it with Codex, Claude Code or a configured OpenCode workspace by talking to 
 ## Install
 
 Choose the path for your tool. The Codex and Claude Code packages include the conversation Skill, MCP server and verified native bundle for supported hosts. Only the matching host binary runs. OpenCode uses the project setup below; the CLI is optional for ordinary conversation.
+
+Installation puts files in place. Project initialization/resume connects the
+chosen repository; optional instruction linking preserves your existing text.
+Actual Host tool loading is a separate observation. The agent reports what it
+could verify, rather than calling a package version or generated file proof that
+your Host used it. You do not need to run a separate doctor/setup ritual.
 
 New installations use `lode-agent-core@lode-agent-plugin`. Already using HEAD? Keep updating your existing installation; no second plugin or project-record conversion is needed. The MCP server is named `lode`.
 
@@ -107,7 +127,9 @@ changes, Product Canon review, GraphDB access or a model choice.
 ### Claude Code and OpenCode project projections
 
 When using the user-scoped installation below, initialize the project with
-`--runtime claude,codex,opencode`. Marketplace-installed Claude Code users can
+`--runtime opencode` for OpenCode or `--runtime claude` for Claude Code. Use
+`--runtime codex` for Codex; combine these only if you want multiple integrations.
+Marketplace-installed Claude Code users can
 request the same initialization through the bundled Skill. Lode creates
 `CLAUDE.md` plus `.mcp.json` for Claude Code, `AGENTS.md` for Codex, and
 `opencode.json` for OpenCode only when those project files are absent. Existing
@@ -140,10 +162,9 @@ Windows PowerShell:
 ```powershell
 git clone https://github.com/binary1215/lode.git lode
 Set-Location .\lode
-.\scripts\install.ps1 --native auto --project C:\path\to\project --runtime claude,codex,opencode
+.\scripts\install.ps1 --native auto --project C:\path\to\project --runtime codex
 
 lode-agent --version
-lode-agent doctor C:\path\to\project
 ```
 
 macOS or Linux:
@@ -151,16 +172,18 @@ macOS or Linux:
 ```bash
 git clone https://github.com/binary1215/lode.git lode
 cd lode
-./scripts/install.sh --native auto --project /path/to/project --runtime claude,codex,opencode
+./scripts/install.sh --native auto --project /path/to/project --runtime codex
 
 lode-agent --version
-lode-agent doctor /path/to/project
 ```
 
 The installer stages a content-verified release in the current user's data
 directory and writes launchers to `~/.local/bin`. It does not edit a shell
 profile, a Codex cache, remote GraphDB, or an existing project before the
 explicit `--project` initialization step.
+The example selects Codex only; replace `codex` with `claude` or `opencode` for
+that client. `--version` identifies the executing CLI, not the running Host's
+loaded tools. Use existing status/doctor diagnostics only when needed.
 
 </details>
 

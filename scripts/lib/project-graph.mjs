@@ -4,7 +4,7 @@ import { publicToolName } from "./lode-artifact-composition.mjs";
 import { artifactAuthorityBoundary } from "./authority-plane-contract.mjs";
 import {
   canonicalGraphJson, collectProjectGraphInventory, projectGraphDigest,
-  readGraphRecord, refreshProjectGraphIndex, safeGraphFile,
+  readGraphRecord, readGraphProject, refreshProjectGraphIndex, safeGraphFile,
 } from "./discovery-index.mjs";
 import { beginScopedDiscovery, rememberScopedDiscovery, reuseScopedDiscovery } from "./project-graph-scoped-reuse.mjs";
 import { sessionWorkPath } from "./session-work-evidence-original.mjs";
@@ -232,7 +232,16 @@ async function verifiedLayer(inventory, layer, entries, model) {
     for (const documents of Object.values(projected)) if (Array.isArray(documents)) for (const document of documents) {
       const record = records.find((item) => recordIdentity(item.document) === recordIdentity(document));
       if (!record || !document.kind) continue;
-      const node = add(document, record.path, ["work", "product"], { reviewState: document.candidates ? "candidate" : "observed-evidence" });
+      const node = add(document, record.path, ["work", "product"], { reviewState: document.candidates ? "candidate" : "observed-evidence",
+        ...(document.kind === "ChangeSet" ? { changeEvidence: { before: document.before, after: document.after, changes: document.changes,
+          resultPacketId: document.resultPacketId, reviewDecisionId: document.reviewDecisionId,
+          interpretation: "revision-reference changes, not proven declaration-body changes or Run causality" } } : {}) });
+      if (document.kind === "ChangeSet") {
+        for (const change of document.changes) for (const [field, type] of [["beforeRevisionId", "OBSERVES_BEFORE_REVISION"], ["afterRevisionId", "OBSERVES_AFTER_REVISION"]]) {
+          if (change[field]) edges.push(relation(type, node.nodeId, change[field], node.origin, { interpretation: "stored-revision-reference-not-body-change" }));
+        }
+        for (const [field, type] of [["resultPacketId", "RECORDED_RESULT"], ["reviewDecisionId", "RECORDED_REVIEW"]]) if (document[field]) edges.push(relation(type, node.nodeId, document[field], node.origin));
+      }
       for (const [field, type] of [["branchStateObservationId", "AT_BRANCH_STATE"], ["deploymentResultObservationId", "OBSERVES_DEPLOYMENT"], ["changeSetId", "RELATES_TO_CHANGE"], ["candidateSetId", "REVIEWS"]]) {
         if (document[field] && document[field] !== node.nodeId) edges.push(relation(type, node.nodeId, document[field], node.origin));
       }
@@ -355,6 +364,7 @@ const foldSearch = value => value.normalize("NFKC").toLowerCase();
 const nodePaths = node => [node.path, node.sourceCurrentness?.path, node.sourceReference?.path].filter(value => typeof value === "string");
 function matchesExplicitPaths(node, paths) {
   if (nodePaths(node).some(relative => paths.includes(relative.replaceAll("\\", "/")))) return true;
+  if (node.kind === "ChangeSet" && node.changeEvidence?.changes.some(change => paths.includes(change.path))) return true;
   // Canonical work-layer facts authenticate a historical logical name, not
   // today's target safety, current bytes or effect authority. Keep this name
   // association out of provenance, search text and the exact-path bonus.
@@ -523,7 +533,19 @@ function compactTraversal(traversed) {
 export async function queryProjectGraph(options = {}) {
   const normalized = limits(options);
   const scoped = reuseScopedDiscovery(options, normalized);
-  if (scoped) return scoped;
+  if (scoped && !scoped.contextLineage) return scoped;
+  if (scoped) {
+    // Reuse the verified selected graph, not its old source-byte explanation.
+    // This avoids turning a focused historical read into a whole-inventory scan.
+    const owner = readGraphProject(options.root || "."), { explainContextLineage } = await import("./context-lineage.mjs");
+    let contextLineage;
+    try { contextLineage = await explainContextLineage({ root: owner.projectRoot, project: owner.project, storage: owner.storage, selection: scoped }); }
+    catch (error) { contextLineage = { status: "unavailable", reasonCode: reason(error), ordinaryWorkBlocked: false }; }
+    const payload = { ...scoped, contextLineage, basis: { ...scoped.basis, contextLineageDigest: projectGraphDigest(contextLineage) } };
+    delete payload.resultId; delete payload.resultHash;
+    const resultHash = projectGraphDigest(payload);
+    return { ...payload, resultId: `project-graph-result-${resultHash.slice(0, 24)}`, resultHash };
+  }
   const initialMembership = beginScopedDiscovery(options, normalized);
   let inventory;
   try { inventory = collectProjectGraphInventory(options.root || "."); }
@@ -615,6 +637,11 @@ export async function queryProjectGraph(options = {}) {
     else existing.projectedReferences = [...(existing.projectedReferences || []), node.sourceReference];
   }
   const allNodes = [...unique.values()];
+  for (const node of allNodes) if (node.kind === "ReviewDecision") {
+    for (const [field, type] of [["previousProductModelId", "REFERS_TO_PREVIOUS_CANON"], ["baseProductModelId", "REFERS_TO_BASE_CANON"], ["resultingProductModelId", "REFERS_TO_RESULT_CANON"]]) {
+      if (node[field]) edges.push(relation(type, node.nodeId, node[field], node.origin));
+    }
+  }
   const reviewedEvidenceStates = new Map();
   for (const edge of edges) {
     const candidateId = edge.type === "REJECTED_BY" || edge.type === "ACCEPTED_BY" ? edge.from
@@ -646,6 +673,18 @@ export async function queryProjectGraph(options = {}) {
   const basis = { projectId, rootDigest: projectGraphDigest(root), recordsDigest: inventory.recordsDigest,
     worldModelId: world?.snapshot.worldModelId || null, graphSnapshotId: world?.snapshot.temporalProvenanceGraph?.graphSnapshotId || null,
     sourceCurrentnessDigest: projectGraphDigest(sourceCurrentness), layerDigest: projectGraphDigest(layers.map(({ reused, ...layer }) => layer)), readConsistency: "observed-sequence-not-atomic-filesystem-snapshot" };
+  const traversed = viewTraversal(allNodes, graphEdges, normalized);
+  const withWorkContent = { ...traversed, nodes: presentSessionWorkContent(traversed.nodes, normalized) };
+  let contextLineage = null;
+  if (normalized.details) {
+    const { explainContextLineage } = await import("./context-lineage.mjs");
+    try { contextLineage = await explainContextLineage({ root, project: inventory.project, storage,
+      selection: { ...withWorkContent, query: normalized, basis } }); }
+    catch (error) { contextLineage = { status: "unavailable", reasonCode: reason(error), ordinaryWorkBlocked: false }; }
+    // Exact source availability is re-observed before result reuse. A cached
+    // graph identity is not proof that old/current byte pairs still exist.
+    if (contextLineage) basis.contextLineageDigest = projectGraphDigest(contextLineage);
+  }
   const selectedAdapterId = options.graphProjectionAdapter ? adapterIds.get(options.graphProjectionAdapter) || (() => { const key = ++adapterSequence; adapterIds.set(options.graphProjectionAdapter, key); return key; })() : "configured";
   const queryKey = projectGraphDigest({ basis, query: normalized, selectedAdapterId });
   const previous = options.previousResult;
@@ -654,15 +693,14 @@ export async function queryProjectGraph(options = {}) {
     return { ...clone(resultCache.get(queryKey)), reuse: { status: "same-basis-result-reused", semanticSufficiency: "HEAD-owned" } };
   }
   if (queryAdapter) adapter = await queryAdapter();
-  const traversed = viewTraversal(allNodes, graphEdges, normalized);
   const partialDirection = traversed.nodes.some(node => node.directionContentCoverage?.partial);
   const count = (field) => Object.fromEntries([...new Set(traversed.nodes.map((node) => node[field] || "unknown"))].sort().map((key) => [key, traversed.nodes.filter((node) => (node[field] || "unknown") === key).length]));
-  const withWorkContent = { ...traversed, nodes: presentSessionWorkContent(traversed.nodes, normalized) };
   const presentation = normalized.details ? withWorkContent : compactTraversal(withWorkContent);
   const partialContent = presentation.nodes.some(node => node.contentPartial);
   const payload = { kind: "ProjectGraphDiscoveryProjection", protocol: { name: formatForVerifiedOwner(storage).protocol("head-agent-core-project-graph"), version: PROJECT_GRAPH_PROTOCOL_VERSION },
     authorityBoundary: artifactAuthorityBoundary("ProjectGraphDiscoveryProjection"),
     status: traversed.nodes.length ? "available" : "source-fallback", basis, query: normalized, ...presentation,
+    ...(contextLineage ? { contextLineage } : {}),
     detailExpansion: { supported: true, tool: publicToolName("head_project_graph"), arguments: { details: true },
       instruction: "Use selected node IDs as anchor_ids; increase depth for relationships. Full records remain at sourceReference.path." },
     summary: { nodeCount: traversed.nodes.length, edgeCount: traversed.edges.length, reviewStates: count("reviewState"), freshnessStates: count("freshness"),

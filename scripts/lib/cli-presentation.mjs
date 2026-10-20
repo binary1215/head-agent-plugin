@@ -1,6 +1,7 @@
 import { resolveOperation } from "./lode-operation-contract.mjs";
 import { organizeSelectedWorkBodies, workBodyTuples } from "./session-work-body-organization.mjs";
 import { isDeepStrictEqual } from "node:util";
+import { formatTerminalGraph, terminalBlock } from "./terminal-graph.mjs";
 
 const PRODUCT_LABELS = {
   unavailable: "unavailable until Core initialization",
@@ -129,9 +130,10 @@ export function formatProjectStatus(value, { doctor = false } = {}) {
       : "Recovery notice: inspect the checkpoint before relying on recovery; ordinary work remains available when it does not depend on that checkpoint.");
   }
   if (doctor || (value.drift?.length || 0) > 0) {
-    lines.push(`Loaded package: ${value.runtime?.loadedPackageVersion || value.runtime?.activePackageVersion || "unknown"}`);
+    lines.push(`Executing CLI/library package: ${value.runtime?.loadedPackageVersion || value.runtime?.activePackageVersion || "unknown"}`);
     lines.push(`Configured package: ${value.runtime?.configuredPackageVersion || "not recorded"}`);
-    lines.push(`Host restart: ${value.runtime?.restartRequired ? "required after project integration convergence" : "not required by the current version evidence"}`);
+    lines.push("Host tools/loading: not observed by this package inspection.");
+    lines.push(`Host restart: ${value.runtime?.restartRequired ? "follow the Host update procedure after project integration convergence" : "not determined from project/package version equality"}`);
     lines.push(`Managed projection drift: ${value.drift?.length || 0}`);
     for (const item of value.drift || []) lines.push(`  - ${item.path || item.kind || "managed artifact"}`);
     if (recovery?.reasonCode) lines.push(`Recovery diagnostic: ${recovery.reasonCode}`);
@@ -527,12 +529,69 @@ export function formatSessionWorkContext(value) {
   return text + originalRemainder(value, handled, "workContext");
 }
 
+function visibleContextText(text) {
+  return text.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g,
+    character => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`);
+}
+
+function readableContextLineage(context) {
+  let output = "Recorded code context (P4): observed text changes and recorded reasons do not prove causality.\n";
+  if (context.status === "unavailable") return output + `Context unavailable: ${context.reasonCode || "unknown"}. Ordinary work can continue.\n`;
+  for (const event of context.events || []) {
+    output += `Record: ${event.title}\n  Source: ${event.sourceRole}; ${event.reviewState}; ${event.freshness}.\n`;
+    if (event.cancelledActions.length) output += `  Cancelled actions: ${event.cancelledActions.join("; ")}\n`;
+    if (event.pending.length) output += `  Recorded pending: ${event.pending.join("; ")}\n`;
+    if (event.unknowns.length) output += `  Recorded unknowns: ${event.unknowns.join("; ")}\n`;
+    if (event.missingLink) output += `  ${event.missingLink}\n`;
+    if (event.contentPartial || event.titlePartial) output += "  Partial excerpt; the original may contain more.\n";
+    if (event.reference?.path) output += `  Original: ${event.reference.path}\n`;
+  }
+  for (const file of context.files || []) {
+    output += `Source: ${file.path}\n`;
+    for (const pair of file.comparisons) {
+      output += `  ${pair.scope}: ${pair.status}; file bytes ${pair.fileBytes || "unknown"}.\n`;
+      if (pair.currentMatchesRecordedAfter === false) output += "  Recorded after is not current. Later changes are separate.\n";
+      for (const symbol of pair.symbols) output += `  ${symbol.after?.qualifiedName || symbol.before?.qualifiedName}: ${symbol.observation}${symbol.locationChanged ? "; line location moved" : ""}. Behavior equivalence is not determined.\n`;
+      if (pair.diff?.changed) for (const [side, title] of [["before", "Recorded/cited source"], ["after", pair.scope === "recorded-changeset-snapshot-pair" ? "Recorded after (not necessarily current)" : "Observed current source"]]) {
+        const excerpt = pair.diff[side]; output += `${pair.labels?.[side] || title}, from line ${excerpt.startLine}:\n${excerpt.text}\n`;
+        if (excerpt.omittedLines || excerpt.textTruncated) output += "  Comparison excerpt is partial; inspect the exact source reference for more.\n";
+      }
+      if (pair.reasonCode || pair.gap) output += `  Gap: ${pair.reasonCode || pair.gap.reasonCode}\n`;
+    }
+    output += `  ${file.unrecordedIntervals}\n`;
+  }
+  for (const reason of context.recordedReasons || []) output += `Recorded reason, not proven change cause: ${reason.reason || reason.rationale || reason.assessment}\n  Original: ${reason.reference?.path || "unavailable"}\n`;
+  for (const delta of context.canonChanges || []) {
+    output += `Recorded Canon comparison: ${delta.status}\n`;
+    if (delta.rationale) output += `Recorded review reason: ${delta.rationale}\n`;
+    for (const change of delta.changes) {
+      output += `${change.field} / ${change.key}\n`;
+      const describe = value => value === undefined || value === null ? "Not present" : Array.isArray(value)
+        ? value.map(item => typeof item === "string" ? item : `${item.kind}: ${item.key}`).join("; ") || "(none)" : value === "" ? "(empty)" : String(value);
+      // Normalized Canon fields only. Unchanged representative statements
+      // must not hide changed conditions/status; raw unknown fields remain diagnostic.
+      for (const field of ["name", "statement", "description", "status", "parentFeatureGroupKeys", "featureGroupKeys", "capabilityKeys", "governedBy", "appliesTo"])
+        if (JSON.stringify(change.before?.[field]) !== JSON.stringify(change.after?.[field]))
+          output += `  ${field}\n    Before: ${describe(change.before?.[field])}\n    After: ${describe(change.after?.[field])}\n`;
+    }
+    if (delta.omittedChangeCount) output += `  ${delta.omittedChangeCount} additional changes omitted from this view.\n`;
+  }
+  for (const gap of context.gaps || []) output += `Evidence gap: ${gap.reasonCode}\n`;
+  output += "Historical references, associations and source differences grant no current approval. Exact IDs/basis remain in JSON/structured diagnostics.\n";
+  return output;
+}
+
 function formatProjectGraph(value) {
   if (!originalObject(value) || value.kind !== "ProjectGraphDiscoveryProjection" || !Array.isArray(value.nodes) || !Array.isArray(value.edges)) return null;
   const handled = new Set(["nodes", "edges"]);
   let text = "Project graph evidence (P4 navigation, not current direction or effect permission):\n"
     + "Returned nodes/edges only; empty or partial results do not prove absence.\n"
     + originalFacts(value, ["status", "query"], "graph", handled);
+  if (originalObject(value.contextLineage)) {
+    try { text += visibleContextText(readableContextLineage(value.contextLineage)); }
+    catch { text += "Recorded context has an unfamiliar shape; exact diagnostic fields follow.\n" + originalField("graph.contextLineage", value.contextLineage); }
+    handled.add("contextLineage");
+  }
   const compact = value.query?.details !== true;
   if (!compact && originalObject(value.coverage) && Object.hasOwn(value.coverage, "state")) text += `graph.coverage.state: ${JSON.stringify(value.coverage.state)}\n`;
   if (!value.nodes.length) text += originalField("graph.nodes", value.nodes);
@@ -962,23 +1021,19 @@ export function formatMcpToolContent(name, value) {
 }
 
 export function formatCliError(error) {
-  return [
-    "Lode could not complete that step.",
-    `Reason: ${compactText(error?.message || "Unknown error", 500)}`,
-    `Code: ${error?.code || "HEAD_CLI_ERROR"}`,
-    "No failed operation should be interpreted as a state change or approval.",
-    "Technical details: rerun with --json",
-    "",
-  ].join("\n");
+  return "Lode could not complete that step.\n"
+    + terminalBlock("Reason", error?.message || "Unknown error")
+    + terminalBlock("Code", error?.code || "HEAD_CLI_ERROR")
+    + "Failure is not proof of state change or approval. Details: --json\n";
 }
 
-export function formatCliResult(command, value) {
+export function formatCliResult(command, value, presentation = {}) {
   if (command === "session-list") return formatSessionList(value);
   if (value?.status === "session_selection_unresolved") return formatUnavailableSession(value, { doctor: command === "doctor" });
   if (command === "worker-prepare") return formatWorkerPreparation(value);
   if (["worker-integration-status", "worker-integrate", "worker-wave-status", "worker-wave-wait"].includes(command)) return formatWorkerGuidance(value);
   if (command === "source-context") return formatSourceContext(value);
-  if (command === "graph-query") return formatProjectGraph(value) ?? `${JSON.stringify(value, null, 2)}\n`;
+  if (command === "graph-query") return formatTerminalGraph(value, presentation) ?? terminalBlock("Unrecognized graph result", JSON.stringify(value, null, 2));
   if (["help", "--help", "-h", "help-all"].includes(command)) return formatHelp(value);
   if (command === "status" || command === "doctor") return formatProjectStatus(value, { doctor: command === "doctor" });
   if (command === "init" || command === "resume") return formatProjectBootstrap(value);

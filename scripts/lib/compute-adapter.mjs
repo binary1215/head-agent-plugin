@@ -257,16 +257,19 @@ export function buildComputeSuccessResponse(request, result, { warnings = [] } =
   assertJsonValue(result, "Compute result");
   assertNoAuthorityEscalation(result);
   const normalizedResult = canonical(result);
-  if (byteLength(normalizedResult) > request.limits.maxOutputBytes) fail("Compute result exceeds maxOutputBytes.", "COMPUTE_OUTPUT_LIMIT");
+  const resultJson = JSON.stringify(normalizedResult);
+  if (Buffer.byteLength(resultJson, "utf8") > request.limits.maxOutputBytes) fail("Compute result exceeds maxOutputBytes.", "COMPUTE_OUTPUT_LIMIT");
   const response = {
     ...responseEnvelope(request),
     status: "ok",
     result: normalizedResult,
-    resultDigest: digest(canonicalJson(normalizedResult)),
+    resultDigest: digest(resultJson),
     warnings: normalizeMessages(warnings, "Compute warnings"),
     errors: [],
   };
-  if (byteLength(response) > request.limits.maxOutputBytes) fail("Compute response exceeds maxOutputBytes.", "COMPUTE_OUTPUT_LIMIT");
+  // Ordering cannot affect JSON byte length. The normalized private result does
+  // not need another recursive canonical copy merely to measure this envelope.
+  if (Buffer.byteLength(JSON.stringify(response), "utf8") > request.limits.maxOutputBytes) fail("Compute response exceeds maxOutputBytes.", "COMPUTE_OUTPUT_LIMIT");
   return deepFreeze(response);
 }
 
