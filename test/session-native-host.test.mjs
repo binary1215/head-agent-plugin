@@ -440,9 +440,17 @@ test("Claude matcher uses the same Session contract, matches own local/plugin se
   const hooks=JSON.parse(fs.readFileSync(path.join(pluginRoot,"hooks/claude.json"),"utf8"));
   for(const tool of catalogTools){
     const expected=sessionCallRequiresBinding(tool.name)||["lode_tools_call","lode_tools_read"].includes(tool.name);
-    assert.equal(new RegExp(hooks.hooks.PreToolUse[0].matcher).test("mcp__lode_core__"+tool.name),expected,tool.name);
-    assert.equal(new RegExp(hooks.hooks.PreToolUse[1].matcher).test("mcp__plugin_lode-agent-core_lode_core__"+tool.name),expected,tool.name);
+    assert.equal(new RegExp(hooks.hooks.PreToolUse[0].matcher).test("mcp__lode__"+tool.name),expected,tool.name);
+    assert.equal(new RegExp(hooks.hooks.PreToolUse[1].matcher).test("mcp__plugin_lode-agent-core_lode__"+tool.name),expected,tool.name);
+    for(const prefix of ["mcp__head_core__","mcp__lode_core__","mcp__plugin_lode-agent-core_lode_core__","mcp__plugin_head-agent-core_head_core__"]){
+      assert.equal(hooks.hooks.PreToolUse.some(h=>new RegExp(h.matcher).test(prefix+tool.name)),false);
+    }
     assert.equal(hooks.hooks.PreToolUse.some(h=>new RegExp(h.matcher).test("mcp__other__"+tool.name)),false);
+  }
+  for(const prefix of ["mcp__lode__","mcp__plugin_lode-agent-core_lode__"]){
+    for(const helper of [SESSION_HOST_REQUEST_HELPER,"lode_session_host_request_prepare"]){
+      assert.equal(hooks.hooks.PreToolUse.some(h=>new RegExp(h.matcher).test(prefix+helper)),false);
+    }
   }
   assert.equal(/permissionDecision|updatedInput/.test(JSON.stringify(hooks)),false);
 });

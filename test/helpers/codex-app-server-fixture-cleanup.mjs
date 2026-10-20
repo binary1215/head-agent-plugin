@@ -1,11 +1,34 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
+const realDelay = delay;
 
 const absent = pid => {
   try { process.kill(pid, 0); return false; }
   catch (cause) { if (cause.code === "ESRCH") return true; throw cause; }
 };
+
+// Test-only observation seam. finish always uses the real read-only defaults;
+// deterministic unit tests do not replace global process.kill or timers.
+export async function waitForFixturePidsAbsent(pids, { probe = absent, now = () => performance.now(), pause = realDelay } = {}) {
+  const deadline = now() + 1000;
+  while (true) {
+    const observations = pids.map(pid => probe(pid));
+    if (observations.every(Boolean)) return true;
+    const remaining = deadline - now();
+    if (remaining <= 0) return false;
+    await pause(Math.min(10, remaining));
+  }
+}
+
+function pidObservation(pid) {
+  if (process.platform !== "linux") return { state: "present" };
+  try {
+    const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
+    const fields = stat.slice(stat.lastIndexOf(")") + 2).trim().split(/\s+/);
+    return { state: fields[0], parentPid: fields[1], processGroup: fields[2], startTicks: fields[19] };
+  } catch (cause) { return { state: "unavailable-after-presence-probe", code: cause.code }; }
+}
 
 async function observeExit(transport, milliseconds) {
   const deadline = Date.now() + milliseconds;
@@ -45,9 +68,16 @@ export async function finishCodexAppServerFixture({ transport, owner, journal, d
     const closed = journal.find(event => event.event === "process-closed");
     const pids = [...new Set([owner?.child?.pid, owner?.pid, owner?.state?.providerPid, closed?.providerPid].filter(Boolean))];
     let allAbsent = true;
-    for (const pid of pids) {
-      try { assert.equal(absent(pid), true, `owned fixture PID ${pid} must be absent`); }
-      catch (cause) { allAbsent = false; errors.push(cause); }
+    let probeFailed = false;
+    // A supervisor close can precede the kernel's final descendant reaping.
+    // One shared grace observes ESRCH; a zombie is still present, not success.
+    try { await waitForFixturePidsAbsent(pids); }
+    catch (cause) { allAbsent = false; probeFailed = true; errors.push(cause); }
+    if (!probeFailed) for (const pid of pids) {
+      try {
+        const gone = absent(pid);
+        assert.equal(gone, true, `owned fixture PID ${pid} must be absent${gone ? "" : `; observation=${JSON.stringify(pidObservation(pid))}`}`);
+      } catch (cause) { allAbsent = false; errors.push(cause); }
     }
     if (dir && allAbsent) {
       try { fs.rmSync(dir, { recursive: true, force: true }); }
