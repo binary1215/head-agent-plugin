@@ -62,15 +62,15 @@ test("actual Hook identity: exact Codex leaf, shared-root membership, no fake mi
   assert.equal(normalizeNativeHook({ runtime: "codex", event: event("synthetic", "SessionStart", { agent_id: "unsupported" }) }), null);
 });
 
-test("packaged event -> P5 -> actual native direct/router status; no canonical/binding/read writes", async t => {
+test("packaged event -> P5 -> actual native direct/router status and successful entry; no canonical/binding/read writes", async t => {
   const f = fixture(t), before = tree(f.root), native = createNativeSessionHostBridge({ runtime: "codex", environment: f.environment });
-  const baseline = await dispatch(request(f.root));
   await runSessionHostHook({ runtime: "codex", event: event(f.root, "UserPromptSubmit", { turn_id: "P1", prompt: "secret text" }), environment: f.environment, observeOnly: true });
   await runSessionHostHook({ runtime: "codex", event: event(f.root, "UserPromptSubmit", { turn_id: "P2" }), environment: f.environment, observeOnly: true });
   await runSessionHostHook({ runtime: "codex", event: event(f.root, "Stop", { turn_id: "P1", last_assistant_message: "SECRET" }), environment: f.environment, observeOnly: true });
   const persisted = tree(f.operational);
-  for (const router of [null, "head_tools_read", "head_tools_call"]) {
-    const res = await invoke(native, request(f.root, "head_project_status", {}, caller.nativeSessionId, router));
+  for (const name of ["head_project_status", "head_conversation_enter"]) for (const router of [null, "head_tools_read", "head_tools_call"]) {
+    const baseline = await dispatch(request(f.root, name));
+    const res = await invoke(native, request(f.root, name, {}, caller.nativeSessionId, router));
     assert.deepEqual(res.result.content.slice(0, baseline.result.content.length), baseline.result.content);
     const { nativeContext, ...canonical } = res.result.structuredContent;
     assert.deepEqual(canonical, baseline.result.structuredContent);
@@ -82,6 +82,34 @@ test("packaged event -> P5 -> actual native direct/router status; no canonical/b
   assert.deepEqual(tree(f.root), before); assert.deepEqual(tree(f.operational), persisted);
   assert.equal(fs.existsSync(path.join(f.operational, "session-bindings")), false);
   assert.equal(JSON.stringify(persisted).includes("SECRET"), false);
+});
+
+test("optional native entry appendix cannot replace primary recovery failure, selection conflict or no-replay", async t => {
+  const f = fixture(t), native = createNativeSessionHostBridge({ runtime: "codex", environment: f.environment });
+  await f.store.observe({ root: f.root, caller, observation: observed(f.root, "seed") });
+  const before = tree(f.root).concat(tree(f.operational));
+  for (const status of ["session_selection_unresolved", "recovery_attention_required", "conversation_recovery_unavailable"]) {
+    const response = { jsonrpc: "2.0", id: 1, result: { content: [{ type: "text", text: "Keep primary cancellation/unknown" }],
+      structuredContent: { status, reasonCode: "SYNTHETIC_CONFLICT", executionReplayAllowed: false, cancelledActions: ["deploy"] } } };
+    const actual = await native.dispatch(request(f.root, "head_conversation_enter"), () => response);
+    assert.strictEqual(actual, response);
+    assert.equal(actual.result.structuredContent.executionReplayAllowed, false);
+    assert.deepEqual(actual.result.structuredContent.cancelledActions, ["deploy"]);
+  }
+  const primary = { jsonrpc: "2.0", id: 1, result: { isError: true, content: [{ type: "text", text: "primary error" }],
+    structuredContent: { status: "conversation_ready" } } };
+  assert.strictEqual(await native.dispatch(request(f.root, "head_conversation_enter"), () => primary), primary);
+  assert.deepEqual(tree(f.root).concat(tree(f.operational)), before);
+});
+
+test("entry with no caller observations stays byte-identical; other callers cannot fill the gap", async t => {
+  const f = fixture(t), native = createNativeSessionHostBridge({ runtime: "codex", environment: f.environment });
+  const baseline = await dispatch(request(f.root, "head_conversation_enter"));
+  await f.store.observe({ root: f.root, caller: { ...caller, nativeSessionId: "other-caller" }, observation: observed(f.root, "unrelated") });
+  const before = tree(f.root).concat(tree(f.operational));
+  for (const router of [null, "head_tools_read", "head_tools_call"])
+    assert.deepEqual(await invoke(native, request(f.root, "head_conversation_enter", {}, caller.nativeSessionId, router)), baseline);
+  assert.deepEqual(tree(f.root).concat(tree(f.operational)), before);
 });
 
 test("continuation, caller end, missing key and bounded eviction never become task completion", async t => {
@@ -114,6 +142,8 @@ test("missing/unsafe/corrupt/locked optional storage preserves ordinary Core and
   fs.writeFileSync(path.join(dir, "snapshot.json"), "{broken");
   const before = tree(f.operational), res = await invoke(native, request(f.root));
   assert.equal(res.result.isError, undefined); assert.deepEqual(tree(f.operational), before);
+  const baselineEntry = await dispatch(request(f.root, "head_conversation_enter"));
+  assert.deepEqual(await invoke(native, request(f.root, "head_conversation_enter")), baselineEntry);
   const error = await native.dispatch(request(f.root), () => { throw Object.assign(new Error("Primary"), { code: "PRIMARY_PERMISSION" }); }).catch(e => e);
   assert.equal(error.code, "PRIMARY_PERMISSION");
 });
@@ -121,11 +151,14 @@ test("missing/unsafe/corrupt/locked optional storage preserves ordinary Core and
 test("explicit logical A / caller B remain separate and missing Host ID is never invented", async t => {
   const f = fixture(t), native = createNativeSessionHostBridge({ runtime: "codex", environment: f.environment });
   const a = createHeadSession({ root: f.root, purpose: "Logical A" }).sessionId;
-  const response = await invoke(native, request(f.root, "head_project_status", { session_id: a }, "native-B"));
-  assert.equal(response.result.structuredContent.nativeContext.caller.nativeSessionId, "native-B");
-  assert.deepEqual(response.result.structuredContent.nativeContext.hostTarget, { threadId: "native-B" });
-  assert.equal(response.result.structuredContent.nativeContext.scope, "native-caller-not-logical-session-execution");
-  assert.equal(JSON.stringify(response.result.structuredContent.nativeContext).includes(a), false);
+  await f.store.observe({ root: f.root, caller: { ...caller, nativeSessionId: "native-B" }, observation: observed(f.root, "native-B-observed") });
+  for (const name of ["head_project_status", "head_conversation_enter"]) {
+    const response = await invoke(native, request(f.root, name, { session_id: a }, "native-B"));
+    assert.equal(response.result.structuredContent.nativeContext.caller.nativeSessionId, "native-B");
+    assert.deepEqual(response.result.structuredContent.nativeContext.hostTarget, { threadId: "native-B" });
+    assert.equal(response.result.structuredContent.nativeContext.scope, "native-caller-not-logical-session-execution");
+    assert.equal(JSON.stringify(response.result.structuredContent.nativeContext).includes(a), false);
+  }
 });
 
 test("own fork/header -> observed parent S1 -> actual useful P3 entry text; later S2 cannot replace it", async t => {
@@ -192,15 +225,17 @@ test("Claude actual private Hook correlation reads its own observations without 
   const before = tree(f.root);
   await runSessionHostHook({ runtime: "claude", event: event(f.root, "UserPromptSubmit", { session_id: "claude-caller", prompt_id: "actual-prompt", prompt: "SECRET" }), environment: f.environment, observeOnly: true });
   const operational = tree(f.operational), native = createNativeSessionHostBridge({ runtime: "claude", environment: f.environment });
-  const wire = request(f.root); wire.params._meta = { "claudecode/toolUseId": "exact-tool" };
-  const prepared = await invoke(native, { id: 2, method: "tools/call", params: { name: SESSION_HOST_REQUEST_HELPER,
-    arguments: { native_session_id: "claude-caller", native_agent_id: "", tool_use_id: "exact-tool",
-      outer_tool_name: "mcp__head_core__head_project_status", original_arguments: JSON.stringify(wire.params.arguments) } } });
-  assert.equal(prepared.result.isError, undefined);
-  const res = await invoke(native, wire), obs = res.result.structuredContent.nativeContext;
-  assert.equal(obs.caller.nativeSessionId, "claude-caller");
-  assert.equal(obs.observations[0].requestId, "actual-prompt");
-  if (["win32", "linux"].includes(process.platform)) assert.equal(obs.observations[0].processObservation?.state, "live-at-check");
+  for (const name of ["head_project_status", "head_conversation_enter"]) {
+    const toolId = `exact-tool-${name}`, wire = request(f.root, name); wire.params._meta = { "claudecode/toolUseId": toolId };
+    const prepared = await invoke(native, { id: 2, method: "tools/call", params: { name: SESSION_HOST_REQUEST_HELPER,
+      arguments: { native_session_id: "claude-caller", native_agent_id: "", tool_use_id: toolId,
+        outer_tool_name: `mcp__lode__${name}`, original_arguments: JSON.stringify(wire.params.arguments) } } });
+    assert.equal(prepared.result.isError, undefined);
+    const res = await invoke(native, wire), obs = res.result.structuredContent.nativeContext;
+    assert.equal(obs.caller.nativeSessionId, "claude-caller");
+    assert.equal(obs.observations[0].requestId, "actual-prompt");
+    if (["win32", "linux"].includes(process.platform)) assert.equal(obs.observations[0].processObservation?.state, "live-at-check");
+  }
   assert.deepEqual(tree(f.root), before); assert.deepEqual(tree(f.operational), operational);
 });
 

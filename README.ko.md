@@ -8,8 +8,6 @@
 
 [English](README.md) | **한국어** | [Documentation](docs/README.md) | [한국어 문서](docs/ko/README.md)
 
-[복구·Session 선택·World 최신성 안내](docs/ko/recovery-state-separation.md)
-
 도구와 에이전트, 대화가 바뀌어도 검토한 제품 방향으로 개발을 이어갑니다.
 
 대화 압축 뒤에는 저장한 작업을 복구합니다. 작업에 맞는 근거를 준비하고 승인된 변경의 이유를 남깁니다.
@@ -64,6 +62,14 @@ Codex, Claude Code 또는 연동한 OpenCode에서 평소처럼 코딩 에이전
 
 신규 설치는 `lode-agent-core@lode-agent-plugin`을 사용합니다. 이미 HEAD를 쓰고 있다면 기존 설치를 계속 업데이트하면 됩니다. 두 번째 플러그인을 설치하거나 프로젝트 기록을 변환할 필요는 없습니다. MCP 서버의 이름은 `lode`입니다.
 
+Host 권한이나 자동화가 `mcp__head_core__...` 또는 `mcp__lode_core__...`를
+참조한다면 Core의 `head_*` 별칭으로 자동 전환되지 않습니다. 업데이트를
+불러온 뒤 Host의 실제 MCP 도구 목록에서 `lode` 서버와 정확한 도구명을
+확인하고, 사용자가 관리하는 규칙을 바꿀 때 그 이름을 사용하세요. 변경을
+선택하기 전에는 기존 설정과 실행 중 연결을 보존하세요. 디스크 업데이트만으로
+Host가 reload되지는 않습니다. 자세한 내용은 [MCP 이름 안내](#mcp-name-details)를
+참고하세요.
+
 ### Codex Git 마켓플레이스
 
 저장소는 `binary1215/lode`이며, Lode 마켓플레이스는 `lode-codex-marketplace`
@@ -102,7 +108,14 @@ Claude Code는 플러그인을 버전별 캐시에 복사하고 `${CLAUDE_PLUGIN
 초기화합니다. 마켓플레이스로 설치한 Claude Code 사용자는 번들 Skill에 같은
 초기화를 요청할 수 있습니다. 프로젝트에 해당 파일이 없을 때만 Claude Code용
 `CLAUDE.md`와 `.mcp.json`, Codex용 `AGENTS.md`, OpenCode용 `opencode.json`을
-만듭니다. 기존 파일은 보존하고 직접 통합할 때 쓸 생성 파일은 `.lode/generated/`에 둡니다.
+만듭니다. 기존 파일은 보존하고 직접 통합할 때 쓸 생성 파일은 선택된 정본 루트의
+`.lode/generated/` 또는 기존 `.head/generated/`에 둡니다.
+
+설정 중 지침 연결을 선택하면 기존 지침 파일의 원문을 보존하면서 작은 블록을
+한 번만 덧붙일 수 있습니다. Claude Code에는 지침 파일 import를 사용하고,
+Codex에는 프로젝트 지침을 읽도록 안내합니다. 거절하면 파일을 바꾸지 않으며
+작업을 막거나 설정을 다시 제안하지 않습니다. 사용하는 Host의 설치 안내를
+따르세요. 지침을 생성했다는 사실만으로 실행 중인 Host가 읽었다고 볼 수는 없습니다.
 
 초기화 후 프로젝트에서 `claude`나 `opencode`를 시작하세요. Claude Code는
 공유 `lode` 서버를 처음 사용할 때 프로젝트 MCP 승인을 요청합니다. 런타임별
@@ -120,8 +133,8 @@ Claude Code는 플러그인을 버전별 캐시에 복사하고 `${CLAUDE_PLUGIN
 Windows PowerShell:
 
 ```powershell
-git clone https://github.com/binary1215/lode.git lode-agent-plugin
-Set-Location .\lode-agent-plugin
+git clone https://github.com/binary1215/lode.git lode
+Set-Location .\lode
 .\scripts\install.ps1 --native auto --project C:\path\to\project --runtime claude,codex,opencode
 
 lode-agent --version
@@ -131,8 +144,8 @@ lode-agent doctor C:\path\to\project
 macOS 또는 Linux:
 
 ```bash
-git clone https://github.com/binary1215/lode.git lode-agent-plugin
-cd lode-agent-plugin
+git clone https://github.com/binary1215/lode.git lode
+cd lode
 ./scripts/install.sh --native auto --project /path/to/project --runtime claude,codex,opencode
 
 lode-agent --version
@@ -147,7 +160,7 @@ lode-agent doctor /path/to/project
 </details>
 
 <details>
-<summary>기존 HEAD 사용자: 설치 식별자와 MCP 이름 안내</summary>
+<summary id="mcp-name-details">기존 HEAD 사용자: 설치 식별자와 MCP 이름 안내</summary>
 
 신규 Lode 설치는 `lode-agent-core@lode-agent-plugin`, `lode_*`와 Lode Skill 이름을 사용합니다. 기존 `codex-marketplace`와 `claude-marketplace` 주소는 `head-agent-core@head-agent-plugin`, `head_*`와 기존 Skill 이름을 유지합니다. 각 패키지는 `lode` 서버 하나와 도구 이름 한 벌만 노출하며, 같은 구현을 사용합니다. 두 패키지를 함께 설치하지 말고 현재 사용하는 마켓플레이스를 유지하세요.
 
@@ -273,6 +286,7 @@ Git은 바뀐 내용을 보여줍니다. Lode는 의도한 결과, 허용 범위
 
 다음 문서부터 살펴보세요.
 
+- [복구·Session 선택·World 최신성](docs/ko/recovery-state-separation.md): 저장된 방향, Session 경로와 파생 World 상태의 구분
 - [아키텍처](docs/ko/architecture.md): 공급자 중립적 구성
 - [권한 평면](docs/ko/authority-plane-contract.md): 실행 가능한 Graph/record 및
   권한 비증폭 계약
@@ -851,8 +865,8 @@ Lode Agent Core Plugin은
 - 프로젝트 의미는 런타임 메커니즘과 분리됩니다.
 
 원래 설계 맥락은 업스트림
-[Foundations](https://github.com/Won6314/head-agent-core/blob/main/packages/core/docs/FOUNDATIONS.md)와
-[Technical Architecture](https://github.com/Won6314/head-agent-core/blob/main/packages/core/docs/TECHNICAL_ARCHITECTURE.md)를
+[Foundations](https://github.com/Won6314/head-agent-core/blob/ba220c55c14b8af947bf6d1fb9d27a620a2cf2aa/packages/core/docs/FOUNDATIONS.md)와
+[Technical Architecture](https://github.com/Won6314/head-agent-core/blob/ba220c55c14b8af947bf6d1fb9d27a620a2cf2aa/packages/core/docs/TECHNICAL_ARCHITECTURE.md)를
 참고하세요.
 
 </details>

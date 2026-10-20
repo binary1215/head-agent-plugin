@@ -8,8 +8,6 @@
 
 ## 먼저 읽을 문서
 
-- [복구 의미·Session 선택·World 도메인](recovery-state-separation.md)
-
 - [아키텍처 결정](architecture.md)
 - [공급자 중립 Lode 헌법](lode-constitution.md)
 - [권한 평면과 Graph/기록 경계](authority-plane-contract.md)
@@ -33,6 +31,7 @@
 
 ## 실행, 복구, 역할 조정
 
+- [복구 의미·Session 선택·World 도메인](recovery-state-separation.md)
 - [작업 산출물 저장 가이드](artifact-storage.md)
 - [Execution Lineage 계약과 Run 수명주기](execution-lineage.md)
 - [공급자 중립 ChangeSet과 검토된 영향](change-sets.md)
@@ -69,5 +68,5 @@
 다음 문서는 이전 설계 비교나 감사를 설명합니다. 위의 현재 실행 가능 계약보다
 우선하지 않습니다.
 
-- [원본 Lode Core 비교](original-head-core-comparison.md)
+- [원본 HEAD Core 비교](original-head-core-comparison.md)
 - [Lode-Agent GraphDB Brief v4 요약 및 설계 검토](Lode_GraphDB_Brief_v4.md)

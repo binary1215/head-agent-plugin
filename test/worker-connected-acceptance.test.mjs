@@ -181,7 +181,7 @@ test("C02 same-model workers actually overlap with distinct authorization/owners
     assert.equal(record.authorization.authorizationId, worker.authorization.authorizationId);
     assert.equal(record.receipt.providerBoundary.actualProviderInvoked, false);
     assert.equal(record.receipt.processBoundary.descendantTreeOwnershipValidated, true);
-    assert.equal(inspectRuntimeExecutionLease({ projectRoot: f.root, projectId: worker.authorization.projectId,
+    assert.equal(inspectRuntimeExecutionLease({ projectRoot: f.root, storage: f.storage, projectId: worker.authorization.projectId,
       authorizationId: worker.authorization.authorizationId }).status, "consumed-released");
     const control = fs.readFileSync(path.join(jobDirectory(worker), "control.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
     const nested = fs.readFileSync(path.join(jobDirectory(worker), "stderr.bin"), "utf8").trim().split("\n")

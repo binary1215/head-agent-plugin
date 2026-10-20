@@ -215,8 +215,8 @@ Product Canon에 이미 승인된 entity가 있는 프로젝트는 candidate boo
     "endpoint": "https://graph.example.test",
     "database": "head",
     "secretReferenceNames": {
-      "username": "HEAD_GRAPHDB_USERNAME",
-      "password": "HEAD_GRAPHDB_PASSWORD"
+      "username": "LODE_GRAPHDB_USERNAME",
+      "password": "LODE_GRAPHDB_PASSWORD"
     }
   }
 }
@@ -226,6 +226,12 @@ endpoint, database 및 environment-style secret-reference name만 저장됩니�
 credential, password/token field 및 credential value는 거부됩니다. 변경 불가능한
 selection은 선택 시점의 상태를 `pending-unverified-adapter`로 기록하며, 온보딩은 이를
 명시적으로 공개하면서 로컬 JSON을 통해 계속됩니다.
+
+`LODE_GRAPHDB_USERNAME`과 `LODE_GRAPHDB_PASSWORD`는 새 설정 예시에서 호출자가
+선택한 참조 이름이며, 환경변수를 자동으로 연결하는 별칭 체계가 아닙니다.
+기존 선택은 `HEAD_GRAPHDB_USERNAME`과 `HEAD_GRAPHDB_PASSWORD`를 포함해 저장된
+정확한 이름을 유지합니다. 패키지 업데이트를 위해 이 이름을 바꾸거나 selection
+digest를 다시 쓰지 마세요.
 
 첫 current GraphSnapshot이 생긴 뒤, 대화 밖에서 참조된 두 environment variable을
 주입하고 host를 재시작하여 plugin process가 이를 상속하게 하세요. 정상 대화 경로는

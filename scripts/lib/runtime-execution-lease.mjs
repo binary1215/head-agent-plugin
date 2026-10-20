@@ -12,6 +12,7 @@ import { requireCurrentWorkerMember } from "./worker-member-registry.mjs";
 export const RUNTIME_EXECUTION_LEASE_VERSION = "0.3.0";
 export const RUNTIME_OPERATIONAL_STATE_VERSION = "0.1.0";
 export const RUNTIME_OPERATIONAL_STATE_ENV = "HEAD_AGENT_OPERATIONAL_STATE_ROOT";
+export const RUNTIME_OPERATIONAL_STATE_CANONICAL_ENV = "LODE_AGENT_OPERATIONAL_STATE_ROOT";
 const SUPPORTED_DURABLE_LEASE_VERSIONS = new Set(["0.2.0", RUNTIME_EXECUTION_LEASE_VERSION]);
 
 const fail = (message, code = "RUNTIME_EXECUTION_LEASE_ERROR") => {
@@ -125,7 +126,7 @@ function durableLeaseDirectory(projectRoot, authorizationId, storage) {
 }
 
 function configuredOperationalStateRoot({ environment = process.env, platform = process.platform, homeDirectory = os.homedir(), storage, resolvedProject } = {}) {
-  const canonicalEnvironment = "LODE_AGENT_OPERATIONAL_STATE_ROOT";
+  const canonicalEnvironment = RUNTIME_OPERATIONAL_STATE_CANONICAL_ENV;
   const legacyOverride = String(environment?.[RUNTIME_OPERATIONAL_STATE_ENV] || "").trim();
   const canonicalOverride = String(environment?.[canonicalEnvironment] || "").trim();
   for (const [name, override] of [[RUNTIME_OPERATIONAL_STATE_ENV, legacyOverride], [canonicalEnvironment, canonicalOverride]]) {

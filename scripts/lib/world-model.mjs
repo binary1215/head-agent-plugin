@@ -853,7 +853,7 @@ export function readWorldModelSnapshot({ root = ".", worldModelId, storeAdapter 
 // mutations and reproducible Capsule consumers keep their existing checks.
 export function readWorldModelForDiscovery({ root = ".", worldModelId = "", storeAdapter = null } = {}) {
   const { projectRoot, project, storage } = readGraphProject(root);
-  if (!project) fail("HEAD Agent Core is not initialized.", "NOT_INITIALIZED");
+  if (!project) fail("Lode Agent Core is not initialized.", "NOT_INITIALIZED");
   if (worldModelId && !/^world-model-[a-f0-9]{24}$/.test(worldModelId)) fail("World Model snapshot id is invalid.", "INVALID_WORLD_MODEL_ID");
   const adapter = createWorldModelStoreAdapter({ storage, projectRoot, adapter: storeAdapter });
   if (!storeAdapter) safeGraphFile(projectRoot, relativeProjectArtifact(storage, "world-model", "current.json"));

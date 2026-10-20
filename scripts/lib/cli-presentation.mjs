@@ -162,6 +162,19 @@ export function formatProjectBootstrap(value) {
   const recovery = value.readiness?.recovery;
   const ready = core?.state === "ready";
   const needsProductReview = product?.state === "review_required";
+  const linking = value.instructionIntegration;
+  const preservedLinks = linking?.files?.filter(item => item.status.startsWith("preserved-")) || [];
+  const instructionPreservationLabels = {
+    "preserved-shared-file": "preserved (shared file)",
+    "preserved-unsupported-encoding": "preserved (unsupported encoding)",
+  };
+  const instructionNotice = preservedLinks.length
+    ? `Project instructions: ${linking.files.map(item => `${item.path}: ${instructionPreservationLabels[item.status] || item.status}`).join("; ")}; originals are preserved and ordinary work continues. Actual Host consumption was not verified.`
+    : linking?.status === "linked"
+    ? "Project instructions: linked; actual Host consumption was not verified."
+    : linking?.status === "unavailable"
+      ? "Project instruction linking remains unavailable for the affected files; originals are preserved and ordinary work continues."
+      : null;
   const integrityAttention = !ready || (recovery?.lodeActionRequired ?? recovery?.headActionRequired);
   const next = value.nextAction?.id === "work_directly"
     ? "Continue the user's original task in this conversation."
@@ -173,6 +186,7 @@ export function formatProjectBootstrap(value) {
     `Recovery: ${RECOVERY_LABELS[recovery?.state] || recovery?.state || "unknown"}`,
     `Product knowledge: ${PRODUCT_LABELS[product?.state] || product?.state || "unknown"}`,
     `User decision: ${needsProductReview ? "required before Product candidates can be approved; ordinary work remains available" : "none"}`,
+    ...(instructionNotice ? [instructionNotice] : []),
     ...(integrityAttention ? [ready
       ? "Recovery notice: inspect the checkpoint before relying on recovery; ordinary work remains available when independent of it."
       : "Integrity notice: inspect the reported Core boundary before a mutating Lode operation."] : []),
@@ -901,6 +915,16 @@ function formatSessionList(value) {
     if (!originalObject(session)) { text += originalField(`sessions[${index}]`, session); continue; }
     const fields = new Set();
     text += originalFacts(session, ["purpose", "sessionId", "default"], `sessions[${index}]`, fields);
+    if (originalObject(session.state)) {
+      const state = session.state, pointers = [];
+      if (state.activeRunId) pointers.push("Run pointer");
+      if (state.pendingReview) pointers.push("pending review pointer");
+      if (state.requiredPlanAction) pointers.push("plan-action pointer");
+      text += `Stored work hints: ${pointers.length ? pointers.join(", ") : "no pending/work pointer recorded; not a completion claim"}.\n`;
+      text += state.updatedAt
+        ? `Last recorded state update (not live activity): ${JSON.stringify(state.updatedAt)}\n`
+        : "Last recorded state update: unavailable; activity is unknown.\n";
+    }
     text += originalRemainder(session, fields, `sessions[${index}]`);
   }
   if (!value.sessions.length) text += originalField("sessions", value.sessions);

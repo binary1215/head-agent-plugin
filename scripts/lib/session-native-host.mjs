@@ -133,10 +133,15 @@ export function createNativeSessionHostBridge({ environment = process.env, runti
         throw error;
       }
       if (!selecting) {
-        if (name === "head_project_status" && response?.result && !response.error && !response.result.isError) {
+        // Only enrich a successful entry. Caller observations cannot soften a
+        // primary recovery/selection failure or stand in for logical work state.
+        const successfulEntry = name === "head_conversation_enter"
+          && ["conversation_ready", "conversation_direction_restored"].includes(response?.result?.structuredContent?.status);
+        if ((name === "head_project_status" || successfulEntry) && response?.result && !response.error && !response.result.isError) {
           try {
             const { projectNativeObservations, appendNativeStatus } = await import("./native-session-observations.mjs");
             const projection = await projectNativeObservations({ root: args.project_root, caller, environment });
+            if (successfulEntry && !projection?.observations?.length) return response;
             return { ...response, result: appendNativeStatus(response.result, projection) };
           } catch { /* Preserve exactly the successful primary response. */ }
         }

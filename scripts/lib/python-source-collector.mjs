@@ -49,11 +49,12 @@ export function sourceCurrent(root, sources) {
 }
 
 export function pythonExecutable() {
-  if (process.env.HEAD_PYTHON) {
-    const configured = process.env.HEAD_PYTHON;
-    if (!path.isAbsolute(configured) || !fs.existsSync(configured) || !fs.statSync(configured).isFile()) throw sourceError("PYTHON_NOT_CONFIGURED");
-    return fs.realpathSync(configured);
-  }
+  const configured = [process.env.LODE_PYTHON, process.env.HEAD_PYTHON].filter(Boolean).map((value) => {
+    if (!path.isAbsolute(value) || !fs.existsSync(value) || !fs.statSync(value).isFile()) throw sourceError("PYTHON_NOT_CONFIGURED");
+    return fs.realpathSync(value);
+  });
+  if (configured.length === 2 && configured[0] !== configured[1]) throw sourceError("PYTHON_CONFIGURATION_CONFLICT");
+  if (configured.length) return configured[0];
   for (const name of process.platform === "win32" ? ["python.exe", "python3.exe"] : ["python3", "python"]) {
     for (const directory of (process.env.PATH ?? "").split(path.delimiter)) {
       if (!path.isAbsolute(directory) || /[\\/]WindowsApps(?:[\\/]|$)/i.test(directory)) continue;

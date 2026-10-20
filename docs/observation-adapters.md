@@ -10,7 +10,9 @@ GraphDB is required. A task-only request returns a Lode selection step rather
 than inventing semantic relevance from words.
 
 The current live collector is **Python stdlib AST**, not LSP: Python 3.8+ found
-on Host PATH, or a trusted absolute `HEAD_PYTHON` setting. It runs the packaged
+on Host PATH, or a trusted absolute `LODE_PYTHON` setting. `HEAD_PYTHON` remains a
+compatibility name; conflicting configured values are rejected rather than
+silently selecting an interpreter. It runs the packaged
 worker with `-I -S -B` in a neutral directory, parses supplied bytes, never imports
 project modules, and opens no network listener. It reports positive direct-name
 lexical candidates for an unambiguous undecorated module function or an earlier

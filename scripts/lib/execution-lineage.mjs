@@ -120,7 +120,7 @@ function projectForWrite(root) {
 
 function projectForRead(root) {
   const inspected = inspectProject(root);
-  if (inspected.status === "not_initialized") fail("HEAD Agent Core is not initialized.", "NOT_INITIALIZED");
+  if (inspected.status === "not_initialized") fail("Lode Agent Core is not initialized.", "NOT_INITIALIZED");
   projectStorage.set(inspected.project, inspected.storage);
   return inspected.project;
 }

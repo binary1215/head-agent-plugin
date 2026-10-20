@@ -105,8 +105,8 @@ export function usage({ all = false, surface = "ordinary" } = {}) {
   const cliDisplay = `${ARTIFACT_COMPOSITION.identity}-agent`;
   const continuityName = ARTIFACT_COMPOSITION.identity === "head" ? "head-continuity" : "lode-continuity";
   const allCommands = [
-      `${cliDisplay} init <project> [--runtime claude,codex,opencode] [--profile core|product] [--input <onboarding.json>]`,
-      `${cliDisplay} resume <project> [--runtime claude,codex,opencode] [--profile core|product] [--input <onboarding.json>]`,
+      `${cliDisplay} init <project> [--runtime claude,codex,opencode] [--profile core|product] [--input <onboarding.json>] [--instruction-integration link|preserve]`,
+      `${cliDisplay} resume <project> [--runtime claude,codex,opencode] [--profile core|product] [--input <onboarding.json>] [--instruction-integration link|preserve]`,
       `${cliDisplay} --version`,
       `${cliDisplay} status <project>`,
       `${cliDisplay} doctor <project>`,
@@ -366,6 +366,7 @@ function runRoutedCommand(argv, { observationRegistry = null, compactionLifecycl
     pluginRoot,
     runtimes: options.runtime?.split(","),
     profile: options.profile || "core",
+    instructionIntegration: options["instruction-integration"] ?? null,
     onboarding: options.input ? inputJson(options, "Project onboarding") : null,
   });
   if (command === "status" || command === "doctor") return inspectProjectExperience({ root });
@@ -511,7 +512,7 @@ function runRoutedCommand(argv, { observationRegistry = null, compactionLifecycl
   }
   if (command === "source-scope-status") {
     const inspected = inspectProject(root);
-    if (inspected.status === "not_initialized") throw new Error("HEAD Agent Core is not initialized.");
+    if (inspected.status === "not_initialized") throw new Error("Lode Agent Core is not initialized.");
     return readRepositorySourceScope({ projectRoot: inspected.project.projectRoot, storage: inspected.storage });
   }
   if (command === "feature-mapping-start") return startFeatureMapping({ root, semanticProposal: options.input ? inputJson(options, "Feature mapping semantic proposal") : null, expectedCandidateSetId: options["expected-candidate-set"] ?? null });

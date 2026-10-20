@@ -218,6 +218,41 @@ const englishReadme = fs.readFileSync(path.join(root, "README.md"), "utf8");
 for (const [name, readme] of [["README.md", englishReadme], ["README.ko.md", koreanReadme]]) {
   assert.match(readme, /status-beta-blue/, `${name} must publish the beta status badge`);
   assert.match(readme, /\[MIT License\]\(LICENSE\)/, `${name} must link the canonical MIT license`);
+  assert.match(readme, /git clone https:\/\/github\.com\/binary1215\/lode\.git lode\r?\n/, `${name} must clone into the documented lode directory`);
+  assert.match(readme, /Set-Location \.\\lode\r?\n/, `${name} PowerShell directory must match the clone target`);
+  assert.match(readme, /cd lode\r?\n/, `${name} shell directory must match the clone target`);
+  assert.match(readme, /lode-agent --version/, `${name} must preserve the actual installed executable`);
+  const normalizedReadme = readme.replace(/\r\n/g, "\n");
+  const noticeStart = normalizedReadme.indexOf(name === "README.md" ? "## Install\n" : "## 설치\n");
+  const firstInstallCommand = normalizedReadme.indexOf("codex plugin marketplace add", noticeStart);
+  assert.ok(noticeStart >= 0 && firstInstallCommand > noticeStart, `${name} must retain an installation section`);
+  const installNotice = normalizedReadme.slice(noticeStart, firstInstallCommand);
+  for (const token of ["`lode`", "`mcp__head_core__...`", "`mcp__lode_core__...`", "`head_*`"])
+    assert.ok(installNotice.includes(token), `${name} must disclose the Host namespace migration boundary near installation: ${token}`);
+  assert.doesNotMatch(normalizedReadme.slice(0, noticeStart), /\]\(docs\/(?:ko\/)?recovery-state-separation\.md\)/, `${name} recovery reference belongs in documentation navigation, not the opening banner`);
+  assert.match(normalizedReadme.slice(noticeStart), /\]\(docs\/(?:ko\/)?recovery-state-separation\.md\)/, `${name} must retain access to recovery guidance`);
+}
+
+for (const languageDir of [docsDir, koDir]) {
+  for (const file of ["codex-marketplace.md", "claude-marketplace.md"]) {
+    const guide = fs.readFileSync(path.join(languageDir, file), "utf8");
+    const notice = guide.slice(guide.indexOf("plugin marketplace add"), guide.indexOf("## Upgrade") > 0 ? guide.indexOf("## Upgrade") : guide.indexOf("## 업그레이드"));
+    for (const token of ["`lode`", "`mcp__head_core__...`", "`mcp__lode_core__...`", "`head_*`"])
+      assert.ok(notice.includes(token), `${file} must keep the Host migration notice next to installation: ${token}`);
+  }
+  const history = fs.readFileSync(path.join(languageDir, "original-head-core-comparison.md"), "utf8");
+  assert.match(history, /2026-08-20/, "Keep the historical comparison date");
+  assert.match(history, /2026-10-20/, "Label the separate source-path verification date");
+  for (const commit of ["ba220c55c14b8af947bf6d1fb9d27a620a2cf2aa", "067701f0c0390a6b9f7dfd1a90a417d10247bd02"])
+    assert.ok(history.includes(`https://github.com/Won6314/head-agent-core/tree/${commit}`), "Current verification references must be immutable upstream commit links");
+  const sourceCollection = fs.readFileSync(path.join(languageDir, "observation-adapters.md"), "utf8");
+  for (const token of ["`LODE_PYTHON`", "`HEAD_PYTHON`"])
+    assert.ok(sourceCollection.includes(token), "Python interpreter guidance must retain both canonical and compatibility settings");
+  const onboarding = fs.readFileSync(path.join(languageDir, "onboarding.md"), "utf8");
+  assert.match(onboarding, /"username": "LODE_GRAPHDB_USERNAME"/, "New GraphDB examples use caller-selected Lode reference names");
+  assert.match(onboarding, /"password": "LODE_GRAPHDB_PASSWORD"/, "New GraphDB examples use caller-selected Lode reference names");
+  for (const token of ["`HEAD_GRAPHDB_USERNAME`", "`HEAD_GRAPHDB_PASSWORD`"])
+    assert.ok(onboarding.includes(token), "Existing saved secret-reference names must remain documented");
 }
 assert.deepEqual(
   links(koreanReadme).filter((target) => /^https?:/i.test(target)).sort(),

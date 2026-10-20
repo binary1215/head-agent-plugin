@@ -8,8 +8,6 @@
 
 [English](README.md) | [한국어](README.ko.md) | [Documentation](docs/README.md) | [한국어 문서](docs/ko/README.md)
 
-[Recovery, Session selection and World freshness](docs/recovery-state-separation.md)
-
 Keep AI development on the reviewed product direction across tools, agents and conversations.
 
 Recover saved work after compaction. Prepare task-specific context and keep the reasons for accepted changes.
@@ -64,6 +62,14 @@ Choose the path for your tool. The Codex and Claude Code packages include the co
 
 New installations use `lode-agent-core@lode-agent-plugin`. Already using HEAD? Keep updating your existing installation; no second plugin or project-record conversion is needed. The MCP server is named `lode`.
 
+If Host permissions or automation name `mcp__head_core__...` or
+`mcp__lode_core__...`, they do not migrate through the Core's `head_*` aliases.
+After loading an update, inspect the Host's actual MCP tool list for server
+`lode` and use those exact names when updating your own rules. Preserve the
+existing configuration and running connection until you choose to change them;
+a disk update alone does not reload the Host. See the
+[MCP-name details](#mcp-name-details).
+
 ### Codex Git marketplace
 
 The repository is `binary1215/lode`. Its Lode marketplace is published on
@@ -106,7 +112,14 @@ request the same initialization through the bundled Skill. Lode creates
 `CLAUDE.md` plus `.mcp.json` for Claude Code, `AGENTS.md` for Codex, and
 `opencode.json` for OpenCode only when those project files are absent. Existing
 files are preserved and generated manual-integration projections remain under
-`.lode/generated/`.
+the selected root's `.lode/generated/` or existing `.head/generated/` directory.
+
+If you choose instruction linking during setup, Lode can append a small block
+to an existing instruction file once, preserving its original content. Claude
+Code uses its instruction-file imports; Codex receives a directive to read the
+project instructions. Declining leaves the file unchanged and does not block
+your task or trigger another setup offer. See the installation guidance for
+your Host; generated instructions alone do not prove that a running Host read them.
 
 After initialization, start `claude` or `opencode` in the project. Claude Code
 asks for project MCP approval before using the shared `lode` server. The
@@ -125,8 +138,8 @@ runtime are optional.
 Windows PowerShell:
 
 ```powershell
-git clone https://github.com/binary1215/lode.git lode-agent-plugin
-Set-Location .\lode-agent-plugin
+git clone https://github.com/binary1215/lode.git lode
+Set-Location .\lode
 .\scripts\install.ps1 --native auto --project C:\path\to\project --runtime claude,codex,opencode
 
 lode-agent --version
@@ -136,8 +149,8 @@ lode-agent doctor C:\path\to\project
 macOS or Linux:
 
 ```bash
-git clone https://github.com/binary1215/lode.git lode-agent-plugin
-cd lode-agent-plugin
+git clone https://github.com/binary1215/lode.git lode
+cd lode
 ./scripts/install.sh --native auto --project /path/to/project --runtime claude,codex,opencode
 
 lode-agent --version
@@ -152,7 +165,7 @@ explicit `--project` initialization step.
 </details>
 
 <details>
-<summary>Already using HEAD? Installation identity and MCP-name details</summary>
+<summary id="mcp-name-details">Already using HEAD? Installation identity and MCP-name details</summary>
 
 New Lode installations use `lode-agent-core@lode-agent-plugin`, `lode_*` and Lode Skill names. Existing `codex-marketplace` and `claude-marketplace` addresses keep `head-agent-core@head-agent-plugin`, `head_*` and their existing Skill names. Each package registers one `lode` server and lists one tool vocabulary; both run the same implementation. Keep the marketplace you already use rather than installing both.
 
@@ -279,6 +292,7 @@ identifiers, and artifact field names remain unchanged across languages.
 
 Start with these documents:
 
+- [Recovery, Session selection and World freshness](docs/recovery-state-separation.md): distinguish saved direction from Session routing and derived World state;
 - [Architecture](docs/architecture.md): the provider-neutral composition;
 - [Authority planes](docs/authority-plane-contract.md): the executable
   Graph/record and non-amplification contract;
@@ -881,9 +895,9 @@ The implementation uses these principles across providers:
 - project meaning remains separate from runtime mechanisms.
 
 Read the upstream
-[Foundations](https://github.com/Won6314/head-agent-core/blob/main/packages/core/docs/FOUNDATIONS.md)
+[Foundations](https://github.com/Won6314/head-agent-core/blob/ba220c55c14b8af947bf6d1fb9d27a620a2cf2aa/packages/core/docs/FOUNDATIONS.md)
 and
-[Technical Architecture](https://github.com/Won6314/head-agent-core/blob/main/packages/core/docs/TECHNICAL_ARCHITECTURE.md)
+[Technical Architecture](https://github.com/Won6314/head-agent-core/blob/ba220c55c14b8af947bf6d1fb9d27a620a2cf2aa/packages/core/docs/TECHNICAL_ARCHITECTURE.md)
 for the original design context.
 
 </details>

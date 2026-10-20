@@ -285,5 +285,12 @@ node <plugin-root>/scripts/lode.mjs managed <command> <project> <arguments>
 node <plugin-root>/scripts/lode.mjs help-all
 ```
 
-Initialization preserves existing root instructions and reports generated
-alternatives under `.lode/generated/` for manual integration.
+Initialization preserves existing root instructions by default. During an
+explicit setup/connect request, reuse the user's already-given choice through
+the existing init/resume `instruction_integration: "link"` option (CLI
+`--instruction-integration link`); `preserve` makes no instruction edits. Do not
+ask again, repeatedly offer a declined connection or make setup a prerequisite
+for an ordinary task. Linking appends one bounded block using the verified
+actual `.head/` or `.lode/` sources. Claude uses native `@` imports; Codex receives
+an explicit instruction to read those files, not an assumed `@` import. Synthetic
+link verification does not establish that an actual Host consumed the files.

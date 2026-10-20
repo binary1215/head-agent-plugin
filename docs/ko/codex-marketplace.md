@@ -50,6 +50,14 @@ codex plugin marketplace add binary1215/lode --ref lode-codex-marketplace
 codex plugin add lode-agent-core@lode-agent-plugin
 ```
 
+HEAD 호환 패키지도 서버명은 `lode`입니다. `mcp__head_core__...` 또는
+`mcp__lode_core__...`에 연결된 Host 권한과 자동화는 내부 `head_*` 작업
+별칭으로 자동 전환되지 않습니다. 업데이트를 불러오기로 선택할 때 Host의
+연결된 MCP 도구 목록을 확인하고, 사용자 규칙을 바꿀 때 `lode`에 실제 노출된
+정확한 이름을 사용하세요. 그전까지 기존 설정과 실행 중 연결은 보존하세요.
+서버명을 바꾸려고 캐시된 플러그인이나 과거 롤백 패키지를 고치지 마세요.
+디스크 업데이트만으로 Host가 reload되지는 않습니다.
+
 설치 후 새 Codex 작업을 시작하세요. 일반 사용은 번들 `lode-agent-core` Skill을
 통해 시작하며, 이 Skill은 typed `lode` MCP 작업을 호출합니다. 설치만으로 `.lode/`나 `.head/`를 생성하거나,
 Features를 추론·승인하거나, GraphDB에 연결하거나, 프로젝트 파일을 변경하지 않습니다.

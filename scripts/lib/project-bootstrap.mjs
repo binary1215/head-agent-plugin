@@ -10,6 +10,7 @@ import { inspectOnboarding, inspectOptionalOnboarding, inspectOptionalOnboarding
 import { buildRepositorySourceScope } from "./repository-source-scope.mjs";
 import { inspectRecoveryCheckpointDiagnosis } from "./recovery-checkpoint-diagnosis.mjs";
 import { actionability, withExperienceProjections } from "./experience-projection.mjs";
+import { linkProjectInstructions, validateInstructionIntegration } from "./project-instruction-link.mjs";
 
 export const PROJECT_BOOTSTRAP_PROTOCOL_VERSION = "0.6.0";
 
@@ -512,6 +513,7 @@ function bootstrapResponse({ root, profile, before, installation, onboardingActi
     profileSemantics: "operation-choice-not-persisted-project-mode",
     projectAction: before.status === "not_initialized" ? "initialized" : "resumed",
     installationAction: installation.status,
+    ...(installation.instructionIntegration ? { instructionIntegration: installation.instructionIntegration } : {}),
     onboardingAction,
     inputDisposition,
     productGovernanceActivated: experience.readiness.product.governanceActivated,
@@ -520,7 +522,8 @@ function bootstrapResponse({ root, profile, before, installation, onboardingActi
   };
 }
 
-export async function initializeOrResumeProject({ root = ".", pluginRoot, runtimes = null, profile: requestedProfile = "core", onboarding = null, onValidatedSessionSelection = null } = {}) {
+export async function initializeOrResumeProject({ root = ".", pluginRoot, runtimes = null, profile: requestedProfile = "core", onboarding = null, instructionIntegration = null, onValidatedSessionSelection = null } = {}) {
+  validateInstructionIntegration(instructionIntegration);
   const profile = validateProfile(requestedProfile);
   const onboardingInput = validateOnboardingInput(onboarding);
   if (profile === "core" && Object.keys(onboardingInput).length) {
@@ -547,6 +550,7 @@ export async function initializeOrResumeProject({ root = ".", pluginRoot, runtim
     installation = convergeProjectInstallation({ root, pluginRoot, runtimes, onValidatedSessionSelection });
   }
 
+  if (instructionIntegration != null) installation.instructionIntegration = linkProjectInstructions({ root, choice: instructionIntegration });
   if (profile === "product") await recoverOnboardingPromotion({ root });
   // Explicit resume can initialize a missing optional inventory. Existing
   // inventories are refreshed by actual record writers or explicit indexing;

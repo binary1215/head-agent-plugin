@@ -489,7 +489,7 @@ function claimInstallRoot(installRoot) {
   const markerFile = ownershipFile(installRoot);
   if (fs.existsSync(installRoot) && !fs.existsSync(markerFile)) {
     const entries = fs.readdirSync(installRoot);
-    if (entries.length) fail("HEAD_DISTRIBUTION_INSTALL_ROOT_CONFLICT", "Installation root contains data not owned by HEAD Agent Core.");
+    if (entries.length) fail("HEAD_DISTRIBUTION_INSTALL_ROOT_CONFLICT", "Installation root contains data not owned by Lode Agent Core.");
   }
   ensureDirectory(installRoot);
   if (fs.existsSync(markerFile)) {
@@ -516,7 +516,7 @@ function pointerFile(installRoot) {
 function readPointer(installRoot, { required = true } = {}) {
   const file = pointerFile(installRoot);
   if (!fs.existsSync(file)) {
-    if (required) fail("HEAD_DISTRIBUTION_NOT_INSTALLED", "HEAD Agent Core is not installed at the selected installation root.");
+    if (required) fail("HEAD_DISTRIBUTION_NOT_INSTALLED", "Lode Agent Core is not installed at the selected installation root.");
     return null;
   }
   const pointer = readJson(file, "HEAD_DISTRIBUTION_POINTER_INVALID");

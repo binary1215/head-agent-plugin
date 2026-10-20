@@ -48,6 +48,15 @@ codex plugin marketplace add binary1215/lode --ref lode-codex-marketplace
 codex plugin add lode-agent-core@lode-agent-plugin
 ```
 
+The server name is `lode`, including in the HEAD compatibility package. Host
+permissions and automation bound to `mcp__head_core__...` or
+`mcp__lode_core__...` do not migrate through internal `head_*` operation aliases.
+When you choose to load an update, inspect the Host's connected MCP tool list
+and use the exact names it exposes for `lode` when updating your own rules.
+Preserve existing configuration and the running connection until then. Do not
+rewrite a cached plugin or historical rollback package to rename its server;
+an on-disk update alone does not reload the Host.
+
 Start a new Codex task after installation. Normal use begins through the
 bundled `lode-agent-core` Skill, which calls the typed `lode` MCP
 operations. Installation alone does not create `.lode/` or `.head/`, infer or approve

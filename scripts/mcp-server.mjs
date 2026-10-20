@@ -286,7 +286,7 @@ const supplementalReadOnlyHints = {
 const allTools = [
   {
     name: "head_core_contract",
-    description: "Read the active HEAD Agent Core roles, runtimes, and capability boundary.",
+    description: "Read the active Lode Agent Core roles, runtimes, and capability boundary.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
   {
@@ -322,6 +322,7 @@ const allTools = [
       properties: {
         project_root: { type: "string", minLength: 1 },
         profile: { type: "string", enum: ["core", "product"], default: "core" },
+        instruction_integration: { type: "string", enum: ["link", "preserve"], description: "Optional existing setup choice. Link a bounded host-specific instruction block only when the user chose it; preserve makes no instruction edits. Never a prerequisite for ordinary work." },
         runtimes: {
           type: "array", minItems: 1, maxItems: 3, uniqueItems: true,
           items: { type: "string", enum: ["claude", "codex", "opencode"] },
@@ -2427,6 +2428,7 @@ async function dispatchRouted(request, { surface = "ordinary", graphDbTransport 
           pluginRoot,
           runtimes: args.runtimes || null,
           profile: args.profile || "core",
+          instructionIntegration: args.instruction_integration ?? null,
           onboarding: onboardingInputFromMcp(args),
           onValidatedSessionSelection,
         })

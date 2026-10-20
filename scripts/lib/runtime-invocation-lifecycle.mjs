@@ -776,7 +776,7 @@ export function readRuntimeInvocationAuthorization({ root = ".", authorizationId
     fail("Runtime invocation authorization id is invalid.", "INVALID_RUNTIME_INVOCATION_AUTHORIZATION_ID");
   }
   const inspected = inspectProject(root);
-  if (inspected.status === "not_initialized") fail("HEAD Agent Core is not initialized.", "NOT_INITIALIZED");
+  if (inspected.status === "not_initialized") fail("Lode Agent Core is not initialized.", "NOT_INITIALIZED");
   const file = authorizationFile(inspected.project.projectRoot, authorizationId, inspected.storage);
   if (!fs.existsSync(file)) fail(`Runtime invocation authorization not found: ${authorizationId}.`, "RUNTIME_INVOCATION_AUTHORIZATION_NOT_FOUND");
   const authorization = verifyRuntimeInvocationAuthorization(readJson(file, "Runtime invocation authorization"));
@@ -786,7 +786,7 @@ export function readRuntimeInvocationAuthorization({ root = ".", authorizationId
 
 export function inspectRuntimeInvocationExecutionLease({ root = ".", authorizationId } = {}) {
   const inspected = inspectProject(root);
-  if (inspected.status === "not_initialized") fail("HEAD Agent Core is not initialized.", "NOT_INITIALIZED");
+  if (inspected.status === "not_initialized") fail("Lode Agent Core is not initialized.", "NOT_INITIALIZED");
   const authorization = readRuntimeInvocationAuthorization({ root: inspected.project.projectRoot, authorizationId }).authorization;
   const recordedReceiptFile = path.join(
     inspected.project.projectRoot,

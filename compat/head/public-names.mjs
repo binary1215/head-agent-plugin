@@ -1477,6 +1477,11 @@ export const OPERATION_NAME_PAIRS = Object.freeze([
 ].map(Object.freeze));
 export const ENVIRONMENT_NAME_PAIRS = Object.freeze([
   {
+    "canonical": "LODE_PYTHON",
+    "legacy": "HEAD_PYTHON",
+    "class": "trusted-path-domain"
+  },
+  {
     "canonical": "LODE_AGENT_ARCADEDB_NATIVE_MODE",
     "legacy": "HEAD_AGENT_ARCADEDB_NATIVE_MODE",
     "class": "ordinary-or-test-setting"

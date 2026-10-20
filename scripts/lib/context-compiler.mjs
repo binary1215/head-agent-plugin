@@ -1211,7 +1211,7 @@ export function compileContext({ root = ".", task, budget = DEFAULT_CONTEXT_BUDG
 export function readContextCapsule({ root = ".", capsuleId } = {}) {
   if (typeof capsuleId !== "string" || !/^capsule-[a-f0-9]{24}$/.test(capsuleId)) fail("Capsule id is invalid.", "INVALID_CAPSULE_ID");
   const inspected = inspectProject(root);
-  if (inspected.status === "not_initialized") fail("HEAD Agent Core is not initialized.", "NOT_INITIALIZED");
+  if (inspected.status === "not_initialized") fail("Lode Agent Core is not initialized.", "NOT_INITIALIZED");
   const file = path.join(inspected.project.projectRoot, relativeProjectArtifact(inspected.storage, "context", "capsules", `${capsuleId}.json`));
   if (!fs.existsSync(file)) fail(`Context Capsule not found: ${capsuleId}`, "CAPSULE_NOT_FOUND");
   const capsule = readJson(file, "Context Capsule");

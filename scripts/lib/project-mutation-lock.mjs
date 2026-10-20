@@ -24,7 +24,7 @@ function lockFor(root, scope, storage) {
   if (!/^[a-z][a-z0-9-]{0,63}$/.test(scope)) fail("Invalid mutation scope.", "INVALID_PROJECT_MUTATION_SCOPE");
   const canonicalRoot = fs.realpathSync(path.resolve(root));
   const headRoot = path.join(canonicalRoot, formatForVerifiedOwner(storage).directory);
-  if (!fs.existsSync(headRoot)) fail("HEAD Agent Core is not initialized.", "NOT_INITIALIZED");
+  if (!fs.existsSync(headRoot)) fail("Lode Agent Core is not initialized.", "NOT_INITIALIZED");
   retryLockRead(() => safeDirectory(headRoot));
   return path.join(headRoot, ".operations", `${scope}.lock`);
 }

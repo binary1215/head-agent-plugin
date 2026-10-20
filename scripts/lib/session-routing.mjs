@@ -105,7 +105,7 @@ export function sessionSelectionUnresolved(root, { includeProjectFacts = false, 
   // records needed for the unavailable-selection response, including mixed reads.
   const storage = resolveProjectStorage(root);
   const projectFile = safeSessionPath(root, formatForVerifiedOwner(storage).directory, "project.json");
-  if (!fs.existsSync(projectFile)) fail("HEAD Agent Core is not initialized.", "NOT_INITIALIZED");
+  if (!fs.existsSync(projectFile)) fail("Lode Agent Core is not initialized.", "NOT_INITIALIZED");
   const project = read(projectFile);
   if (project.schemaVersion !== 1 || project.projectRoot !== canonicalRoot(root)
     || typeof project.projectId !== "string" || !project.projectId) fail("Project identity differs.", "PROJECT_IDENTITY_MISMATCH");

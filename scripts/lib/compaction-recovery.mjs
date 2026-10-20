@@ -62,7 +62,7 @@ function turnId(value, label) {
 
 function readyProject(root, action, { readOnly = false } = {}) {
   const inspected = inspectProject(root);
-  if (inspected.status === "not_initialized") fail("HEAD Agent Core is not initialized.", "NOT_INITIALIZED");
+  if (inspected.status === "not_initialized") fail("Lode Agent Core is not initialized.", "NOT_INITIALIZED");
   if (readOnly && isProjectRecoveryReadable(inspected)) return inspected;
   if (inspected.status === "drifted") fail(`Managed file drift must be resolved before ${action}.`, "MANAGED_DRIFT");
   if (inspected.status !== "ready") fail(`Project must be ready before ${action}; current status: ${inspected.status}.`, "PROJECT_NOT_READY");

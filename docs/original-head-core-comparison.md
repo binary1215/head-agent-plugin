@@ -16,7 +16,7 @@ drop-in replacement, or a superset of every upstream host capability.
 
 ## Reference basis
 
-The comparison uses the original repository's current shared Core sources:
+The historical comparison names these paths in the extracted original Core:
 
 - `packages/core/head/HEAD_CORE.md` for whole-outcome ownership and decision
   authority;
@@ -26,6 +26,22 @@ The comparison uses the original repository's current shared Core sources:
   Herdr, Session/Run, worker, and role-message architecture;
 - `packages/core/theory/04-evolution-evidence-and-limits.md` and the general-rule
   course for proportional machinery and generative rules.
+
+The exact upstream commit used on 2026-08-20 was not recorded here. These path
+strings are historical references; the following check does not reconstruct or
+replace that unknown baseline.
+
+Source paths were checked again on 2026-10-20 at upstream
+[`ba220c55c14b8af947bf6d1fb9d27a620a2cf2aa`](https://github.com/Won6314/head-agent-core/tree/ba220c55c14b8af947bf6d1fb9d27a620a2cf2aa):
+[HEAD Core](https://github.com/Won6314/head-agent-core/blob/ba220c55c14b8af947bf6d1fb9d27a620a2cf2aa/packages/core/head/HEAD_CORE.md),
+[Foundations](https://github.com/Won6314/head-agent-core/blob/ba220c55c14b8af947bf6d1fb9d27a620a2cf2aa/packages/core/docs/FOUNDATIONS.md),
+[Technical Architecture](https://github.com/Won6314/head-agent-core/blob/ba220c55c14b8af947bf6d1fb9d27a620a2cf2aa/packages/core/docs/TECHNICAL_ARCHITECTURE.md)
+and [Evolution, evidence and limits](https://github.com/Won6314/head-agent-core/blob/ba220c55c14b8af947bf6d1fb9d27a620a2cf2aa/packages/core/theory/04-evolution-evidence-and-limits.md).
+The separately checked plugin-root commit
+[`067701f0c0390a6b9f7dfd1a90a417d10247bd02`](https://github.com/Won6314/head-agent-core/tree/067701f0c0390a6b9f7dfd1a90a417d10247bd02)
+has `instructions/HEAD_CORE.md` but not the historical
+`packages/core/docs/FOUNDATIONS.md` path. These permanent links identify the
+2026-10-20 check, not a new comparative verdict or the source of the earlier audit.
 
 The reference establishes six portable principles that this plugin must retain:
 

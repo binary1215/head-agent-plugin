@@ -192,14 +192,20 @@ Local materialization is complete and is the default. ArcadeDB can be selected w
     "endpoint": "https://graph.example.test",
     "database": "head",
     "secretReferenceNames": {
-      "username": "HEAD_GRAPHDB_USERNAME",
-      "password": "HEAD_GRAPHDB_PASSWORD"
+      "username": "LODE_GRAPHDB_USERNAME",
+      "password": "LODE_GRAPHDB_PASSWORD"
     }
   }
 }
 ```
 
 Only endpoint, database, and environment-style secret-reference names are persisted. Embedded URL credentials, password/token fields, and credential values are rejected. The immutable selection records its status at selection time as `pending-unverified-adapter`, and onboarding continues through local JSON with explicit disclosure.
+
+`LODE_GRAPHDB_USERNAME` and `LODE_GRAPHDB_PASSWORD` are caller-chosen reference
+names in this new-configuration example, not an automatic environment alias
+mechanism. An existing selection keeps its exact saved names, including any
+`HEAD_GRAPHDB_USERNAME` and `HEAD_GRAPHDB_PASSWORD` references; do not rename
+them or rewrite selection digests as part of a package update.
 
 After the first current GraphSnapshot exists, inject both referenced environment variables outside the conversation and restart the host so the plugin process inherits them. The normal conversation path calls `lode_graphdb_connection_preflight` first. That exact-child check performs no network request and returns only the configured reference names and their presence booleans; it never returns credential, endpoint, or database values. Once both references are present, the Skill calls `lode_graphdb_database_status`, obtains explicit user confirmation, calls `lode_graphdb_database_initialize`, obtains a separate remote-write confirmation, and calls `lode_graphdb_projection_activate`. These typed MCP operations accept confirmation and exact-target reset evidence but never credential values. The equivalent recovery/automation CLI is `world-graph-remote-database-status`, `world-graph-remote-database-initialize`, and `world-graph-remote-activate`.
 

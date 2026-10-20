@@ -10,12 +10,29 @@
 
 ## 참조 기준
 
-이 비교는 원본 저장소의 현재 공유 Core 소스를 사용합니다.
+과거 비교는 추출한 원본 Core의 다음 경로를 참조합니다.
 
 - 전체 결과의 소유권과 의사결정 권한은 `packages/core/head/HEAD_CORE.md`를 참조합니다.
 - 제한된 컨텍스트, Canon, 위임, 증거 및 Core/프로젝트 경계는 `packages/core/docs/FOUNDATIONS.md`를 참조합니다.
 - 설치된 OpenCode, Herdr, Session/Run, worker 및 역할 메시지 아키텍처는 `packages/core/docs/TECHNICAL_ARCHITECTURE.md`를 참조합니다.
 - 비례적 장치와 생성 규칙은 `packages/core/theory/04-evolution-evidence-and-limits.md` 및 일반 규칙 과정을 참조합니다.
+
+2026-08-20에 사용한 정확한 업스트림 커밋은 여기에 기록되어 있지 않습니다.
+위 경로 문자열은 역사적 참조이며, 다음 확인 결과로 당시의 미확인 기준을
+복원하거나 대체하지 않습니다.
+
+2026-10-20에 업스트림
+[`ba220c55c14b8af947bf6d1fb9d27a620a2cf2aa`](https://github.com/Won6314/head-agent-core/tree/ba220c55c14b8af947bf6d1fb9d27a620a2cf2aa)의
+소스 경로를 다시 확인했습니다.
+[HEAD Core](https://github.com/Won6314/head-agent-core/blob/ba220c55c14b8af947bf6d1fb9d27a620a2cf2aa/packages/core/head/HEAD_CORE.md),
+[Foundations](https://github.com/Won6314/head-agent-core/blob/ba220c55c14b8af947bf6d1fb9d27a620a2cf2aa/packages/core/docs/FOUNDATIONS.md),
+[Technical Architecture](https://github.com/Won6314/head-agent-core/blob/ba220c55c14b8af947bf6d1fb9d27a620a2cf2aa/packages/core/docs/TECHNICAL_ARCHITECTURE.md),
+[Evolution, evidence and limits](https://github.com/Won6314/head-agent-core/blob/ba220c55c14b8af947bf6d1fb9d27a620a2cf2aa/packages/core/theory/04-evolution-evidence-and-limits.md)의
+영구 링크입니다. 별도로 확인한 plugin-root 커밋
+[`067701f0c0390a6b9f7dfd1a90a417d10247bd02`](https://github.com/Won6314/head-agent-core/tree/067701f0c0390a6b9f7dfd1a90a417d10247bd02)에는
+`instructions/HEAD_CORE.md`가 있지만 과거의
+`packages/core/docs/FOUNDATIONS.md` 경로는 없습니다. 이 링크는 2026-10-20의
+확인 기준이며, 새로운 비교 판정이나 이전 감사의 출처를 뜻하지 않습니다.
 
 이 참조 구현은 이 플러그인이 반드시 유지해야 하는 여섯 가지 이식 가능한 원칙을 확립합니다.
 

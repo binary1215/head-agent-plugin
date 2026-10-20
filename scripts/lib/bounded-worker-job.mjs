@@ -12,7 +12,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { readRuntimeInvocationAuthorization, prepareRuntimeInvocationExecution, buildRuntimeResultPacketDraft, verifyRuntimeInvocationLifecycleReceipt } from "./runtime-invocation-lifecycle.mjs";
 import { createBoundedWorkerDispatch, readBoundedWorkerDispatch } from "./bounded-worker-dispatch.mjs";
-import { inspectRuntimeExecutionLease, readRuntimeExecutionSettlement, resolveRuntimeOperationalStateRoot, RUNTIME_OPERATIONAL_STATE_ENV } from "./runtime-execution-lease.mjs";
+import { inspectRuntimeExecutionLease, readRuntimeExecutionSettlement, resolveRuntimeOperationalStateRoot, RUNTIME_OPERATIONAL_STATE_ENV, RUNTIME_OPERATIONAL_STATE_CANONICAL_ENV } from "./runtime-execution-lease.mjs";
 import { readRuntimeInvocationRecord, persistRuntimeInvocationRecord } from "./runtime-invocation-record.mjs";
 import { resolveVerifiedProcessSupervisor } from "./runtime-process-supervisor.mjs";
 import { readRuntimeOutputSpool } from "./runtime-output-spool.mjs";
@@ -33,6 +33,8 @@ const hash = (bytes) => crypto.createHash("sha256").update(bytes).digest("hex");
 const encode = (value) => Buffer.from(JSON.stringify(value));
 const fail = (message, code = "WORKER_JOB_CONFLICT") => { throw Object.assign(new Error(message), { code }); };
 const nativeLaunchPath = (file) => process.platform === "win32" ? path.toNamespacedPath(file) : file;
+const operationalEnvironmentNames = [RUNTIME_OPERATIONAL_STATE_CANONICAL_ENV, RUNTIME_OPERATIONAL_STATE_ENV];
+const operationalEnvironmentName = key => operationalEnvironmentNames.find(name => name.toLowerCase() === key.toLowerCase());
 const proposalMode = authorization => isWorkerPatchProposalMode(authorization.workerInput?.executionBoundary?.mode);
 const proposalPolicy = policy => ["CodexFreshProposalPolicyPlan", "CodexNativePrefixPolicyPlan"].includes(policy?.kind);
 const verifyProposalPolicy = policy => policy?.kind === "CodexNativePrefixPolicyPlan" ? verifyCodexNativePrefixPolicyPlan(policy) : verifyCodexFreshProposalPolicyPlan(policy);
@@ -232,10 +234,14 @@ function verifiedBinding(directory, projectRoot, authorization) {
   const requestBytes = regularBytes(path.join(directory, "request.json"), 8 * 1024 * 1024, true);
   if (hash(requestBytes) !== binding.requestDigest) fail("Worker job request changed.");
   const request = JSON.parse(requestBytes);
+  // Retained requests are immutable: accept either historical spelling without
+  // rewriting bytes or their bound digest, and never hide a conflicting alias.
+  const operationalKeys = Object.keys(request.request.environment).filter(operationalEnvironmentName);
   if (request.deadlineUnixMs !== binding.deadlineUnixMs || request.request.workingDirectory !== projectRoot
-    || request.request.environment[RUNTIME_OPERATIONAL_STATE_ENV] !== binding.operationalRoot) fail("Worker job execution root or deadline differs.");
+    || !operationalEnvironmentNames.some(key => Object.hasOwn(request.request.environment, key))
+    || operationalKeys.some(key => request.request.environment[key] !== binding.operationalRoot)) fail("Worker job execution root or deadline differs.");
   if (proposalMode(authorization)) {
-    const keys = Object.keys(request.request.environment), expected = new Set(["systemroot", "windir", "temp", "tmp", "codex_home", RUNTIME_OPERATIONAL_STATE_ENV.toLowerCase()]);
+    const keys = Object.keys(request.request.environment), expected = new Set(["systemroot", "windir", "temp", "tmp", "codex_home", RUNTIME_OPERATIONAL_STATE_ENV.toLowerCase(), RUNTIME_OPERATIONAL_STATE_CANONICAL_ENV.toLowerCase()]);
     if (keys.some(key => !expected.has(key.toLowerCase())) || new Set(keys.map(key => key.toLowerCase())).size !== keys.length
       || request.request.environment.CODEX_HOME !== binding.policy.codexHome) fail("Fresh proposal owner environment differs from its fixed startup boundary.");
   }
@@ -297,6 +303,11 @@ export async function startBoundedWorkerJob({ root = ".", authorizationId, role 
   current(projectRoot, authorization);
   const adapter = hosts.get(host);
   if (!adapter) fail("No verified worker job Host is connected; ordinary attached work remains available.", "WORKER_JOB_HOST_UNAVAILABLE");
+  for (const [key, value] of Object.entries(adapter.environment)) {
+    const name = operationalEnvironmentName(key);
+    if (name && value.trim() && resolveRuntimeOperationalStateRoot({ projectRoot, storage: originalFormat(authorization),
+      environment: { [name]: value }, create: false }) !== operationalRoot) fail("Worker Host operational state alias differs from its bound root.");
+  }
   workspaceBoundary(authorization, projectRoot, adapter.policy, adapter.workspaceBinding, true);
   if (adapter.codexPolicyCapability) {
     if (hash(regularBytes(adapter.hostModuleFile, 1024 * 1024)) !== adapter.hostModuleDigest) fail("Trusted Codex Host reconnect code changed after binding.", "WORKER_JOB_CODE_DRIFT");
@@ -316,7 +327,8 @@ export async function startBoundedWorkerJob({ root = ".", authorizationId, role 
   jobDirectory(operationalRoot, authorization, true);
   const deadlineUnixMs = Date.now() + authorization.limits.timeoutMs;
   const environment = Object.fromEntries(Object.entries(process.env).filter(([key]) => ["systemroot", "windir", "temp", "tmp"].includes(key.toLowerCase())));
-  Object.assign(environment, adapter.environment, { [RUNTIME_OPERATIONAL_STATE_ENV]: operationalRoot });
+  Object.assign(environment, adapter.environment, { [RUNTIME_OPERATIONAL_STATE_CANONICAL_ENV]: operationalRoot });
+  for (const key of Object.keys(environment)) if (operationalEnvironmentName(key) && key !== RUNTIME_OPERATIONAL_STATE_CANONICAL_ENV) delete environment[key];
   const request = { protocolVersion: "0.1.0", timeoutMs: authorization.limits.timeoutMs, deadlineUnixMs,
     maxStdoutBytes: 1024 * 1024, maxStderrBytes: 1024 * 1024,
     request: { schemaVersion: 1, protocolVersion: "0.1.0", executable: process.execPath,

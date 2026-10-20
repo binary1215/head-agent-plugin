@@ -8,8 +8,6 @@ work logs are intentionally excluded from the distribution and are not runtime a
 
 ## Start here
 
-- [Recovery meaning, Session selection and World domains](recovery-state-separation.md)
-
 - [Architecture decision](architecture.md)
 - [Provider-neutral Lode constitution](lode-constitution.md)
 - [Authority planes and the Graph/record boundary](authority-plane-contract.md)
@@ -33,6 +31,7 @@ work logs are intentionally excluded from the distribution and are not runtime a
 
 ## Execution, recovery, and coordination
 
+- [Recovery meaning, Session selection and World domains](recovery-state-separation.md)
 - [Work artifact storage guide](artifact-storage.md)
 
 - [Execution Lineage contract and Run lifecycle](execution-lineage.md)
@@ -70,5 +69,5 @@ work logs are intentionally excluded from the distribution and are not runtime a
 These documents explain prior design comparisons or audits. They do not override the
 current executable contracts above.
 
-- [Original Lode Core comparison](original-head-core-comparison.md)
+- [Original HEAD Core comparison](original-head-core-comparison.md)
 - [Lode-Agent GraphDB Brief v4 summary and design review](Lode_GraphDB_Brief_v4.md)

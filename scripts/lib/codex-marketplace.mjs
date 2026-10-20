@@ -4,6 +4,7 @@ import path from "node:path";
 import { stageDistributionRelease, verifyDistributionRelease } from "./distribution-lifecycle.mjs";
 import { verifyNativeBundleOverlay } from "./native-artifact-delivery.mjs";
 import { ARTIFACT_COMPOSITION, artifactCompositionForIdentity } from "./lode-artifact-composition.mjs";
+import { verifyMarketplaceContent } from "./marketplace-content.mjs";
 
 const CODEX_MARKETPLACE_PROTOCOL = "0.1.0";
 const DEFAULT_MARKETPLACE_NAME = ARTIFACT_COMPOSITION.marketplaceName;
@@ -353,6 +354,7 @@ export function verifyCodexMarketplaceSnapshot({
   if (canonical(actualTree) !== canonical(expectedTreeEntries(expectedFiles))) {
     fail("HEAD_CODEX_MARKETPLACE_TREE_MISMATCH", "Marketplace snapshot contains missing or unexpected files or directories.");
   }
+  verifyMarketplaceContent({ root: marketplaceRoot, files: expectedFiles });
 
   return {
     status: "codex_marketplace_snapshot_verified",

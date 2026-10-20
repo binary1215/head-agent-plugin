@@ -34,6 +34,11 @@ result, and whether it is local, published or installed, partial or complete.
 A completed review is not an accepted implementation, and a retrieved
 explanation is not a verified effect.
 
+When the distinction matters, identify what the user requested, what the agent
+suggested and what actually changed outside the agreed scope. Do not present an
+agent suggestion as a user request or hide an out-of-scope change in a progress
+summary. This needs no fixed reporting format or extra approval step.
+
 Keep routine internal success quiet. Explain a meaningful change, failure or
 wait in terms of the affected work and the actual next actor or action; do not
 invent progress, automatic resumption or certainty. Link an existing useful
