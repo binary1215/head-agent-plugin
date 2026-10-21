@@ -11,7 +11,22 @@ are made only for separately designated releases; missing intermediate tags are
 not backfilled. Marketplace publication does not prove local installation or
 Host/MCP reload.
 
-## 0.3.0-beta.55 — candidate, publication not yet verified
+## 0.3.0-beta.56 — candidate, publication not yet verified
+
+- Keep multiple selected records and exact-linked file comparisons open together.
+- Separate reading focus from exposure and camera; add rectangle selection,
+  repeatable boundary expansion, contribution folding and real view history.
+- Highlight selected connection branches with fixed component references, all
+  equal shortest predecessors and original directions; do not infer causality.
+- Keep large selections accessible through paging and cancellable calculations.
+  These are local read-only presentation changes, not new authority or gates.
+- Synthetic UI regressions are not actual browser/GUI acceptance.
+
+## 0.3.0-beta.55 — published
+
+Source: `fe731c88183f021e05c9a1a6e8bb7ac34890cd9c`.
+CI [39581040674](https://github.com/binary1215/lode/actions/runs/39581040674)
+succeeded; Lode and compatibility Codex/Claude marketplace branches were verified.
 
 - Preserve selected graph context during search while retaining explicit scope.
 - Explain verified copied/pending Project locations without adopting them in status.

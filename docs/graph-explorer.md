@@ -32,39 +32,74 @@ The Source layer shows the existing code graph’s imports and calls. They retai
 their separate original identifiers and basis; matching paths do not create new
 relationships. Product and Work are filters over shared evidence, not two databases.
 
-Start with a record from search or the list. Selecting it unfolds its existing
-one-hop connections; follow another node to continue. Code neighbors expand
-horizontally; purpose, product and operational records expand vertically.
+Start with records from search, the map or the list. Click or Enter adds a record
+to the selection and changes reading focus; it does not move the camera or unfold
+neighbors. Ctrl/Cmd-click, a checkbox or Space toggles membership. Use Clear
+selection or Select only focus explicitly. Shift-drag the map background, or turn
+on Rectangle select, to add visible records; the list and keyboard can select the
+same set. Escape cancels a gesture/calculation without clearing prior selection.
+
+Expand next boundary adds the next unseen layer from the selected set. Repeating
+it advances through the already exposed boundary, rather than repeatedly opening
+the same one-hop neighborhood. Optional relationship/kind filters disclose the
+scope. New records get positions without moving earlier records, pins, camera or
+map mode. Off-screen additions stay accessible through the lists and explicit
+center/fit controls. Fold last addition removes only that operation's contribution;
+shared, selected, pinned and pre-existing records remain. Back/forward restores
+recorded selection, scope, mode and camera stages instead of visiting and expanding
+an ID again. Manual pin positions stay stable.
+
+Code neighbors expand horizontally; purpose, product and operational records expand vertically.
 These axes are layout guidance, not a new hierarchy or invented relationship.
 Previously explored nodes
 keep their positions. Drag a node to pin its screen position, or use `Shift` and
 arrow keys on a focused node. Back, forward and the exploration path return to
-visited records. These are temporary display choices, not saved product knowledge.
+earlier view stages. These are temporary display choices, not saved product knowledge.
 New automatic placements reserve room for the node and its label rows, including
 when starting from a disconnected record. Manual dragging can intentionally place
 nodes together; expanding another node does not undo your positioning.
-The initial record opens automatically. Focus selection keeps it and its direct
-connections at a readable scale; off-screen connections remain in the complete
-paged list. Explored map fits the records you have visited. All evidence shows
+The initial record and a starting neighborhood open automatically. Focus selection
+explicitly centers the reading focus; off-screen connections remain in the complete
+paged list. Explored map explicitly fits exposed records. All evidence shows
 the whole exported inventory in a Canvas overview, without creating an SVG
 element for every record. Select a point or search any exact ID to focus it.
 Search covers every exported record; list and connection pages are display
 batches, not export limits. Filtered neighbors, off-screen neighbors and missing
 endpoints have separate counts. Start here clears only the temporary journey.
-Search narrows the record list and overview without hiding the eligible selected
-context. Explicit history, axis and view filters still apply; an out-of-scope
-selection is labelled rather than silently opting into historical evidence.
+Search highlights matches and narrows the result list; hiding nonmatches is a
+separate checkbox. Explicit history, axis and view filters still apply; an
+out-of-scope selection is retained and labelled. Show selected scope is an explicit
+way back, not a silent opt-in to historical evidence. SVG and Canvas share the same
+camera transform for drawing, pointer hits and rectangle selection, including
+resized viewports; choosing a Canvas point does not exit the overview.
 Node distance is not a relevance score.
 
 Current evidence is the default. Include historical / non-current evidence
 reveals retained records and exact relationships with their original state.
 This switch cannot make them current or authorize an effect.
 
-The detail panel starts with the recorded summary and status. Open Exact original
-or Record identity & evidence for the underlying text and IDs. The same records
-and relationships are keyboard-accessible in lists. Selecting a historical
+Selected records stay together in reading cards. Reading another card does not
+replace the others. Widen reading area opens a broader reading flow; narrow screens
+stack it vertically. Card/record/reference pages are display batches, never a
+selection or evidence cap. Read actual directed relationships in each card or the
+focused connection list. Exact originals, unknown fields and IDs remain optional
+details. Shared cautions are collected in a legend; partial/missing/cancelled and
+unreviewed conditions remain close to their item. Selecting a historical
 Session changes this picture only; the exporter does not infer a native Host
 selection or change the Session used for work.
+
+Show selected connections searches the current export/layer and explicit filters
+using bidirectional adjacency. In each connected component it fixes one selected
+reference: the current selected focus in that component, otherwise its first
+selected record. It shows the union of shortest connection branches from that
+reference to every other selected record in the component, retaining all equal
+predecessors and the original edge directions/types. It does not enumerate every
+path, find a globally minimal network, or prove cause, directed execution, approval
+or completion. Disconnected components remain separate. Longer branches remain
+available through normal expansion. Reading focus alone cannot recompute the
+reference/result; changed selection or filters label the previous result until
+an explicit new calculation. Large calculations yield and can be cancelled; an
+unfinished calculation is not a completed result.
 
 Retained history is different from the temporary exploration path and is optional.
 The history view contains a bounded retained page and an
@@ -101,6 +136,15 @@ exact comparison, with added/removed excerpt lines and optional before/after
 text. Partial excerpts and recorded-after versus current remain distinct; this
 is not a complete file diff or a semantic verdict. Query, original-read and
 rendering costs are separate measurements.
+
+Selected changes and their files can be read together. Only existing, exact-linked
+comparison pairs are displayed: recorded snapshot before/after, cited A/B, or a
+cited revision versus export-observed current. Selection/click order, matching
+paths and timestamps do not create a pair or a request boundary. Each comparison
+retains its version/provenance and missing-time, partial or unavailable conditions.
+Files without comparisons remain visible. Previous/next file and changed-region
+controls move among open comparisons without closing the others or inventing
+missing regions. No live file/Git/network reads are made by the HTML.
 
 ## Local data and authority
 

@@ -20,6 +20,7 @@ import { proposeProductPolicy, reviewProductPolicy } from "../scripts/lib/produc
 import { createHeadSession, withSessionRoute } from "../scripts/lib/session-routing.mjs";
 import { recordSessionWorkEvidence } from "../scripts/lib/session-work-context.mjs";
 import { normalizeProductModelDocument } from "../scripts/lib/product-model.mjs";
+import { explorerDom } from "./helpers/graph-explorer-dom-fixture.mjs";
 
 const oldSource = "export function f() { return 'allow'; }\nexport function g() { return 2; }\n";
 const newSource = oldSource.replace("'allow'", "'block'");
@@ -56,15 +57,9 @@ test("Canon changed description, status and relationships remain visible in both
   const context = { files: [], events: [], recordedReasons: [], canonChanges: [{ review: { nodeId: "review" }, before: { nodeId: before.productModelId }, after: { nodeId: after.productModelId },
     status: "exact-recorded-model-delta", rationale: "Historical review, not current permission", changes: [change], omittedChangeCount: 0 }], gaps: [] };
   const projection = { kind: "ProjectGraphDiscoveryProjection", nodes: [], edges: [], query: { details: true }, contextLineage: context }, original = JSON.stringify(projection);
-  const source = fs.readFileSync(path.join(pluginRoot, "scripts/graph-explorer/browser.js"), "utf8");
-  const start = source.indexOf("  function renderContextLineage()"), end = source.indexOf("  function render()", start);
-  assert(start >= 0 && end > start);
   function outputs() {
-    const children = [], panel = {}, body = { replaceChildren() { children.length = 0; }, append(...items) { children.push(...items); } };
-    const render = vm.runInNewContext("(" + source.slice(start, end).trim() + ")", { data: { graph: projection }, selected: { value: { nodeId: "review" } }, contextSelection: null,
-      $: id => id === "context-lineage" ? panel : body, text: (tag, value) => ({ tag, textContent: String(value) }) });
-    render();
-    return [formatCliResult("graph-query", projection).split("Historical references,")[0], children.map(child => child.textContent).join("\n")];
+    const ui = explorerDom({ kind: "GraphExplorerSnapshot", graph: { nodes: [{ nodeId: "review", kind: "ReviewDecision" }], edges: [], initialNodeId: "review", contextLineage: context }, codeGraph: { nodes: [], edges: [] }, originals: {}, history: { entries: [] } });
+    return [formatCliResult("graph-query", projection).split("Historical references,")[0], ui.ids.get("context-lineage-body").textContent];
   }
   for (const output of outputs()) for (const term of ["BEFORE_REQUIRES_APPROVAL", "AFTER_EXPORT_DENIED", "active", "retired", "Feature: export", "Requirement: approval"]) assert(output.includes(term), term);
   assert.equal(JSON.stringify(projection), original);
@@ -79,7 +74,7 @@ test("Canon changed description, status and relationships remain visible in both
 
 test("readable original rendering cannot promote repository JSON that imitates a typed work record", () => {
   const source = fs.readFileSync(path.join(pluginRoot, "scripts/graph-explorer/browser.js"), "utf8");
-  const start = source.indexOf("  function readableOriginal("), end = source.indexOf("  function renderContextLineage(", start);
+  const start = source.indexOf("  function readableOriginal("), end = source.indexOf("\n  function ", start + "  function readableOriginal(".length);
   assert(start >= 0 && end > start);
   const readable = vm.runInNewContext("(" + source.slice(start, end).trim() + ")");
   const raw = JSON.stringify({ kind: "Evidence", subtype: "SessionWorkEvidence", content: { summary: "Do not deploy <img src='https://example.invalid/x'>", judgments: [{ assessment: "Local only", reason: "No approval", alternatives: [] }], unknowns: ["No PASS recorded"] }, future: { instruction: "Never promote this unknown field" } });
@@ -98,13 +93,10 @@ test("context consumers share readable agent provenance and heading while raw ro
     recordedReasons: [], canonChanges: [], gaps: [] };
   const value = { kind: "ProjectGraphDiscoveryProjection", nodes: [{ nodeId: "work", kind: "Evidence", subtype: "SessionWorkEvidence", origin: { layer: "sessionWork" },
     workContent: { summary: "Proposal only", pending: ["Review remains"], unknowns: ["Outcome unknown"] } }], edges: [], query: { details: true }, contextLineage: context };
-  const original = JSON.stringify(value), source = fs.readFileSync(path.join(pluginRoot, "scripts/graph-explorer/browser.js"), "utf8");
-  const start = source.indexOf("  function renderContextLineage()"), end = source.indexOf("  function render()", start);
+  const original = JSON.stringify(value);
   function browserText() {
-    const children = [], body = { replaceChildren() {}, append(...items) { children.push(...items); } };
-    const render = vm.runInNewContext("(" + source.slice(start, end).trim() + ")", { data: { graph: value }, selected: { value: value.nodes[0] }, contextSelection: null,
-      $: id => id === "context-lineage" ? {} : body, text: (_tag, text) => ({ textContent: String(text) }) });
-    render(); return children.map(item => item.textContent).join("\n");
+    const ui = explorerDom({ kind: "GraphExplorerSnapshot", graph: { ...value, initialNodeId: "work" }, codeGraph: { nodes: [], edges: [] }, originals: {}, history: { entries: [] } });
+    return ui.ids.get("context-lineage-body").textContent;
   }
   for (const text of [formatCliResult("graph-query", value), formatMcpToolContent("lode_project_graph", value)]) {
     assert(text.includes("Recorded code context")); assert(text.includes("Agent-authored")); assert(text.includes("not a captured user"));

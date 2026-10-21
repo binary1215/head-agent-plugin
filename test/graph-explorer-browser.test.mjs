@@ -53,7 +53,7 @@ test("a retained non-current relationship is labelled before selection and opt-i
 test("exact bounded excerpt UI shows additions/removals, line roles and missing detail honestly", () => {
   const snapshot = fixture(6000);
   snapshot.graph.contextLineage = { events: [], recordedReasons: [], canonChanges: [], files: [{ path: "src/generic-0.mjs", current: { digest: "a".repeat(64) }, associations: [{ nodeId: "generic-0" }],
-    comparisons: [{ status: "verified", scope: "recorded-changeset-snapshot-pair", currentMatchesRecordedAfter: false, symbols: [], diff: { changed: true,
+    comparisons: [{ status: "verified", scope: "recorded-changeset-snapshot-pair", before: { digest: "a".repeat(64) }, after: { digest: "b".repeat(64) }, currentMatchesRecordedAfter: false, symbols: [], diff: { changed: true,
       before: { startLine: 10, text: "same\nold", omittedLines: 20 }, after: { startLine: 20, text: "same\nnew", textTruncated: true } } }], unrecordedIntervals: "Unknown unsaved work" }] };
   const ui = explorerDom(snapshot), body = ui.ids.get("context-lineage-body").textContent;
   assert(body.includes("− 11/· old")); assert(body.includes("+ ·/21 new"));
