@@ -428,11 +428,11 @@ export class GoWorkerComputeAdapter {
     };
   }
 
-  async #executeFallback(request, signal, reasonCode, workerPid = null) {
+  async #executeFallback(request, signal, reasonCode, workerPid = null, outputRetryToken = null) {
     if (!this.#fallbackDescriptor.supportedOperations.includes(request.operation)) {
       fail(`Neither Go worker nor fallback supports ${request.operation}.`, "UNSUPPORTED_COMPUTE_OPERATION");
     }
-    const response = await this.#fallback.execute(request, { signal });
+    const response = await this.#fallback.execute(request, { signal, outputRetryToken });
     this.#diagnostics.set(request.requestId, operationalDiagnostics({
       backend: this.#fallbackDescriptor.backend,
       adapterName: this.#fallbackDescriptor.name,
@@ -446,13 +446,13 @@ export class GoWorkerComputeAdapter {
     return response;
   }
 
-  async execute(request, { signal = null } = {}) {
+  async execute(request, { signal = null, outputRetryToken = null } = {}) {
     validateComputeRequest(request);
     if (!this.#selection || !this.#selection.manifest.operations.includes(request.operation)) {
-      return this.#executeFallback(request, signal, this.#selectionError?.code || "GO_WORKER_OPERATION_NOT_INSTALLED");
+      return this.#executeFallback(request, signal, this.#selectionError?.code || "GO_WORKER_OPERATION_NOT_INSTALLED", null, outputRetryToken);
     }
     if (this.#selection.manifest.kind === "HeadAgentWorkerManifest" && request.protocol.name !== "head-agent-core-worker-protocol") {
-      return this.#executeFallback(request, signal, "GO_WORKER_FAMILY_NOT_INSTALLED");
+      return this.#executeFallback(request, signal, "GO_WORKER_FAMILY_NOT_INSTALLED", null, outputRetryToken);
     }
     try {
       const executed = await invokeWorker(this.#selection, request, {
@@ -473,7 +473,7 @@ export class GoWorkerComputeAdapter {
       return executed.response;
     } catch (error) {
       if (!signal?.aborted && RECOVERABLE_NATIVE_CODES.has(error.code)) {
-        return this.#executeFallback(request, signal, error.code, error.details?.workerPid || null);
+        return this.#executeFallback(request, signal, error.code, error.details?.workerPid || null, outputRetryToken);
       }
       throw error;
     }

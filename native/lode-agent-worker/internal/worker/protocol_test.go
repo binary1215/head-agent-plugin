@@ -77,6 +77,60 @@ func TestRejectsTamperedInputDigest(t *testing.T) {
 	}
 }
 
+func TestOutputCeiling512KeepsInput64AndCompleteProtocol(t *testing.T) {
+	for _, size := range []int{64, 128, 256, 512} {
+		value := healthRequest(t)
+		value.Limits.MaxOutputBytes = size * 1024 * 1024
+		value = resealRequest(t, value)
+		encoded, _ := canonicalJSON(value)
+		var output bytes.Buffer
+		if err := Run(bytes.NewReader(encoded), &output); err != nil {
+			t.Fatalf("output budget %dMiB: %v", size, err)
+		}
+		var answer response
+		if err := json.Unmarshal(output.Bytes(), &answer); err != nil || answer.Status != "ok" || answer.RequestID != value.RequestID {
+			t.Fatalf("invalid response at %dMiB: %v", size, err)
+		}
+	}
+	for _, change := range []func(*request){
+		func(value *request) { value.Limits.MaxOutputBytes = 512*1024*1024 + 1 },
+		func(value *request) { value.Limits.MaxInputBytes = 64*1024*1024 + 1 },
+	} {
+		value := healthRequest(t)
+		change(&value)
+		if err := validateRequest(resealRequest(t, value)); err == nil || !strings.Contains(err.Error(), "limits") {
+			t.Fatalf("expected independent limit rejection: %v", err)
+		}
+	}
+}
+
+func TestOutputOverflowEmitsTypedBoundedFailureNotCrashOrPartialResult(t *testing.T) {
+	value := healthRequest(t)
+	value.Limits.MaxOutputBytes = 2048
+	value = resealRequest(t, value)
+	for _, text := range []string{strings.Repeat("x", 1800), strings.Repeat("가", 700)} {
+		answer, err := success(value, map[string]any{"payload": text})
+		if err != nil {
+			t.Fatal(err)
+		}
+		encoded, err := encodeResponse(value, answer)
+		if err != nil || len(encoded) > value.Limits.MaxOutputBytes {
+			t.Fatalf("bounded typed response: %v", err)
+		}
+		var actual response
+		if err := json.Unmarshal(encoded, &actual); err != nil {
+			t.Fatal(err)
+		}
+		if actual.Status != "error" || actual.Result != nil || actual.ResultDigest != "" || actual.RequestID != value.RequestID || len(actual.Errors) != 1 || actual.Errors[0].Code != "COMPUTE_OUTPUT_LIMIT" {
+			t.Fatalf("overflow was not a complete typed failure: %+v", actual)
+		}
+	}
+	answer := failure(value, "PERMISSION_DENIED", strings.Repeat("x", 3000))
+	if _, err := encodeResponse(value, answer); err == nil {
+		t.Fatal("a large non-output failure must not be laundered into a retryable output error")
+	}
+}
+
 func resealRequest(t *testing.T, value request) request {
 	t.Helper()
 	canonicalInput, err := canonicalJSON(value.Input)
@@ -150,7 +204,7 @@ func TestScanRejectsHybridBeforeOpeningRepository(t *testing.T) {
 		value.SemanticProducer = semanticProducer{Name: item.producer, Version: "0.5.1"}
 		scope := map[string]any{
 			"schemaVersion": 1, "kind": "RepositorySourceScope",
-			"protocol": map[string]any{"name": item.scope, "version": "0.1.0"},
+			"protocol":     map[string]any{"name": item.scope, "version": "0.1.0"},
 			"includeRoots": []any{}, "excludeRoots": []any{},
 			"authority": "user-selected-observation-boundary", "instructionAuthority": false, "promotionAuthority": false,
 		}
@@ -162,7 +216,7 @@ func TestScanRejectsHybridBeforeOpeningRepository(t *testing.T) {
 		scope["sourceScopeId"], scope["sourceScopeHash"] = "repository-source-scope-"+scopeHash[:24], scopeHash
 		value.Input, _ = canonicalJSON(map[string]any{
 			"schemaVersion": 1, "kind": "RepositoryScanInput",
-			"projectRoot": filepath.Join(t.TempDir(), "missing-repository-must-not-be-opened"),
+			"projectRoot":      filepath.Join(t.TempDir(), "missing-repository-must-not-be-opened"),
 			"managedRootFiles": []string{}, "sourceScope": scope,
 		})
 		answer, err := handle(resealRequest(t, value))

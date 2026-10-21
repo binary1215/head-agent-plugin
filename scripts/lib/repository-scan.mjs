@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import {
   buildComputeRequest,
-  buildComputeSuccessResponse,
+  completeComputeResult,
   DEFAULT_COMPUTE_LIMITS,
   executeComputeOperation,
   JsReferenceComputeAdapter,
@@ -409,7 +409,7 @@ export function validateRepositoryScanExecution(execution, { projectRoot, manage
 export async function executeIncrementalRepositoryScan({ projectRoot, managedRootFiles = [], storage, sourceScope = buildRepositorySourceScope({ storage }), previousSnapshot, limits = {} } = {}) {
   const previousResult = repositoryScanResultFromWorldModel(previousSnapshot);
   const input = buildRepositoryScanInput({ projectRoot, managedRootFiles, sourceScope, storage });
-  const request = buildComputeRequest({
+  let request = buildComputeRequest({
     operation: REPOSITORY_SCAN_OPERATION,
     input,
     semanticProducer: semanticProducerFor(scanFormat(input)),
@@ -421,7 +421,9 @@ export async function executeIncrementalRepositoryScan({ projectRoot, managedRoo
     previousResult,
     reuseDiagnostics: reuse,
   }));
-  const response = buildComputeSuccessResponse(request, result);
+  const completed = completeComputeResult(request, result, { limits });
+  request = completed.request;
+  const response = completed.response;
   // A local constructor supplies this exact frozen result; external execution
   // validation remains mandatory at validateRepositoryScanExecution's boundary.
   validateRepositoryScanResult(response.result);
@@ -438,6 +440,7 @@ export async function executeIncrementalRepositoryScan({ projectRoot, managedRoo
       fallbackReasonCode: "",
       workerRelativePath: "",
       workerSha256: "",
+      ...completed.diagnostics,
       reusedFileCount: reuse.reusedPaths.length,
       analyzedFileCount: reuse.analyzedPaths.length,
       removedFileCount: reuse.removedPaths.length,

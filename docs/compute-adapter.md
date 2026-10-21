@@ -57,14 +57,40 @@ Normalized limits record:
 - maximum bytes per file;
 - maximum total source bytes.
 
-The default `maxOutputBytes` is **64 MiB (67,108,864 bytes)**, also the hard
-ceiling accepted by the JavaScript and Go validators. It bounds the complete
-UTF-8 JSON response, including its envelope, not just `result` or a Host's
-displayed output. Explicit lower budgets remain exact and still fail closed on
-overflow; output is never silently truncated. Initial and incremental repository
-scans inherit this default. Other artifact, Markdown and MCP limits are separate.
-Changing a request's normalized budget changes its `requestId`, not its semantic
-producer, complete result digest or authority.
+The default `maxOutputBytes` is **64 MiB (67,108,864 bytes)**. Without an explicit
+caller output budget, a validated error containing only `COMPUTE_OUTPUT_LIMIT`
+allows **64 → 128 → 256 → 512 MiB**, at most three retries after the first attempt.
+JavaScript and Go accept at most **512 MiB (536,870,912 bytes)** of complete UTF-8
+JSON response, including its envelope, not just `result` or displayed output.
+An explicit output budget, including an explicit default, remains exact without
+automatic growth. Input, source, artifact, Markdown and MCP limits do not change.
+The generic executor shares one deadline and cancellation signal across attempts;
+identity, digest, permission, mixed errors, malformed output, transport stdout
+violations and crashes are not growth triggers. A valid Go worker returns a small
+typed output-limit failure rather than crashing when its encoded success is too big.
+An old 64 MiB native worker may reject a larger request: existing disclosed
+crash/fallback rules still apply, but that rejection does not authorize another
+budget increase. Production manifests still advertise health only.
+
+JavaScript reference operations retain a private canonical completed result for
+the invocation and re-envelope it, without running the handler again. Incremental
+repository scans likewise scan once and re-envelope the same captured facts;
+this synchronous scan does not acquire a new executor timeout. Initial production
+scans use the same retained-result path through the JavaScript fallback. No retry
+repeats installation, World/document writes or persists an attempt artifact.
+Other adapters can re-execute only their computation-only contract with the same
+frozen request input; a repeated filesystem observation is not proof of the same
+source snapshot. Each result must be complete, validated and freshness-checked by
+its consumer. Native repository scanning is not enabled by this policy.
+
+Every larger budget has a new content-derived `requestId`; input, producer,
+non-output limits, and the digest of the same complete result remain unchanged.
+Attempt budgets, retry count and ceiling are operational diagnostics, not semantic
+or authority state. Exhaustion reports the final budget and original cause;
+output is never silently truncated. The 512 MiB byte ceiling is not a memory or
+JSON-runtime capacity guarantee: string-capacity failures are reported separately
+and never retried as output overflow. Envelope bytes and digest are verified
+without building a second giant response string.
 
 The control-plane executor applies timeout and external cancellation to an `AbortSignal`, clears timers and listeners in all outcomes, and returns elapsed time only as operational diagnostics outside the protocol response. JavaScript reference handlers must cooperatively observe that signal; therefore untrusted or non-cooperative work is not eligible for the in-process backend.
 

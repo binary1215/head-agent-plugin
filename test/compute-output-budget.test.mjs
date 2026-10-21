@@ -25,7 +25,8 @@ test("compute defaults to 64MiB while explicit lower budgets, hard ceiling and s
   assert.equal(wide.limits.maxOutputBytes, 64 * MiB);
   assert.equal(narrow.limits.maxOutputBytes, 32 * MiB);
   assert.equal(normalizeComputeLimits({ maxOutputBytes: 2048 }).maxOutputBytes, 2048);
-  assert.throws(() => request({ maxOutputBytes: 64 * MiB + 1 }), { code: "INVALID_COMPUTE_LIMIT" });
+  assert.equal(request({ maxOutputBytes: 512 * MiB }).limits.maxOutputBytes, 512 * MiB);
+  assert.throws(() => request({ maxOutputBytes: 512 * MiB + 1 }), { code: "INVALID_COMPUTE_LIMIT" });
   const value = { result: "unchanged", instructionAuthority: false, promotionAuthority: false };
   assert.notEqual(wide.requestId, narrow.requestId, "normalized limits remain part of request identity");
   assert.equal(buildComputeSuccessResponse(wide, value).resultDigest, buildComputeSuccessResponse(narrow, value).resultDigest);

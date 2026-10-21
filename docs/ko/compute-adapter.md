@@ -58,14 +58,37 @@ normalized limit는 다음 항목을 기록합니다.
 - maximum bytes per file;
 - maximum total source bytes.
 
-기본 `maxOutputBytes`는 **64 MiB(67,108,864바이트)**이며 JavaScript와 Go
-validator가 허용하는 hard ceiling과 같습니다. `result`만이나 Host에 표시되는
-출력이 아니라 envelope를 포함한 전체 UTF-8 JSON response의 한도입니다.
-명시적으로 더 낮게 지정한 예산은 그대로 적용하며, 초과 시 계속 fail-closed로
-거부합니다. 출력을 조용히 잘라내지 않습니다. 초기·증분 repository scan 모두
-이 기본값을 사용합니다. artifact·Markdown·MCP 한도는 별개입니다. 정규화된
-예산이 달라지면 `requestId`는 바뀌지만 semantic producer, 완전한 result의
-digest와 authority는 바뀌지 않습니다.
+기본 `maxOutputBytes`는 **64 MiB(67,108,864바이트)**입니다. 호출자가 출력
+예산을 명시하지 않았고 검증된 오류가 `COMPUTE_OUTPUT_LIMIT` 하나뿐일 때
+**64 → 128 → 256 → 512 MiB**, 최초 시도 이후 최대 3회 재시도합니다.
+JavaScript와 Go의 최대 한도는 **512 MiB(536,870,912바이트)**이며 `result`나
+화면 출력만이 아니라 envelope를 포함한 전체 UTF-8 JSON response에 적용됩니다.
+기본값과 같은 예산이라도 명시했다면 자동 확대하지 않습니다. 입력·소스·artifact·
+Markdown·MCP 한도는 바뀌지 않습니다. 일반 executor는 모든 시도에 하나의
+deadline과 취소 signal을 공유합니다. identity·digest·권한·혼합 오류, 잘못된
+응답, stdout 전송 한도 위반과 crash는 확대 사유가 아닙니다. Go는 정상 성공
+응답의 인코딩 크기가 초과하면 crash 대신 작은 typed 출력 한도 오류를 반환합니다.
+64 MiB까지만 허용하는 구버전 native worker는 더 큰 요청을 거절할 수 있습니다.
+기존의 명시적 crash/fallback 규칙은 유지하지만 그 거절 자체가 다음 예산 확대를
+허용하지는 않습니다. 배포 manifest는 계속 health만 광고합니다.
+
+JavaScript reference는 호출 안에서 완료된 canonical 결과를 비공개로 보관하고
+응답 envelope만 다시 구성합니다. handler를 다시 실행하지 않습니다. 증분 scan도
+소스를 한 번 읽은 결과를 그대로 재사용하며 동기 scan에 새 executor timeout을
+추가하지 않습니다. 초기 production scan도 JavaScript fallback에서 같은 결과
+보관 경로를 사용합니다. 설치·World·문서 저장을 반복하거나 시도별 artifact를
+저장하지 않습니다. 다른 adapter의 재실행도 고정된 request input과 무권한
+계산 계약에 한정됩니다. 파일을 다시 관측했다고 같은 소스 snapshot이 되는 것은
+아니므로 매 결과를 완전하게 검증하고 소비자가 freshness를 확인해야 합니다.
+이 정책은 native repository scan을 활성화하지 않습니다.
+
+예산이 늘면 content-derived `requestId`는 바뀌지만 입력·producer·다른 한도와
+같은 완전한 결과의 digest는 유지됩니다. 시도 예산·재시도 횟수·상한은 의미나
+권한 상태가 아닌 운영 diagnostic입니다. 소진 시 최종 예산과 원래 원인을
+알리며 출력을 잘라내지 않습니다. 512 MiB는 메모리나 JSON runtime 용량을
+보장하지 않습니다. 문자열 용량 오류는 별도 원인으로 보고하며 출력 초과로
+재시도하지 않습니다. 두 번째 거대 응답 문자열을 만들지 않고 envelope 바이트와
+digest를 검증합니다.
 
 control-plane executor는 timeout과 external cancellation을 `AbortSignal`에 적용하고, 모든 결과에서 timer와 listener를 정리하며, elapsed time은 protocol response 외부의 operational diagnostic으로만 반환합니다. JavaScript reference handler는 해당 signal을 협력적으로 관찰해야 합니다. 따라서 신뢰할 수 없거나 비협력적인 work는 in-process backend에서 실행할 수 없습니다.
 

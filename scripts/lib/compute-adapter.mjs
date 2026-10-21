@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { constants as bufferConstants } from "node:buffer";
 import { familyFormatForOriginal, formatForVerifiedOwner } from "./project-storage-format.mjs";
 
 export const COMPUTE_ADAPTER_CONTRACT_VERSION = "0.3.0";
@@ -16,7 +17,7 @@ export const DEFAULT_COMPUTE_LIMITS = Object.freeze({
 const HARD_LIMITS = Object.freeze({
   timeoutMs: { min: 10, max: 300_000 },
   maxInputBytes: { min: 2, max: 64 * 1024 * 1024 },
-  maxOutputBytes: { min: 2_048, max: 64 * 1024 * 1024 },
+  maxOutputBytes: { min: 2_048, max: 512 * 1024 * 1024 },
   maxFiles: { min: 1, max: 100_000 },
   maxFileBytes: { min: 1, max: 16 * 1024 * 1024 },
   maxTotalBytes: { min: 1, max: 1024 * 1024 * 1024 },
@@ -252,25 +253,105 @@ function responseEnvelope(request) {
   };
 }
 
-export function buildComputeSuccessResponse(request, result, { warnings = [] } = {}) {
-  validateComputeRequest(request);
+function prepareComputeResult(result, warnings) {
   assertJsonValue(result, "Compute result");
   assertNoAuthorityEscalation(result);
-  const normalizedResult = canonical(result);
-  const resultJson = JSON.stringify(normalizedResult);
-  if (Buffer.byteLength(resultJson, "utf8") > request.limits.maxOutputBytes) fail("Compute result exceeds maxOutputBytes.", "COMPUTE_OUTPUT_LIMIT");
+  const normalizedResult = deepFreeze(canonical(result));
+  let resultJson;
+  try {
+    resultJson = JSON.stringify(normalizedResult);
+  } catch (error) {
+    if (!(error instanceof RangeError)) throw error;
+    fail("Compute result exceeds the JSON runtime's string capacity; output-budget retries cannot fix this runtime limit.", "COMPUTE_OUTPUT_RUNTIME_LIMIT");
+  }
+  const resultBytes = Buffer.byteLength(resultJson, "utf8");
+  return { result: normalizedResult, resultBytes, resultCodeUnits: resultJson.length,
+    resultDigest: resultBytes <= HARD_LIMITS.maxOutputBytes.max ? digest(resultJson) : "",
+    warnings: normalizeMessages(warnings, "Compute warnings") };
+}
+
+function verifyPreparedOutputSize(request, response, prepared) {
+  const envelopeJson = JSON.stringify({ ...response, result: null });
+  if (Buffer.byteLength(envelopeJson, "utf8") - 4 + prepared.resultBytes > request.limits.maxOutputBytes) fail("Compute response exceeds maxOutputBytes.", "COMPUTE_OUTPUT_LIMIT");
+  if (envelopeJson.length - 4 + prepared.resultCodeUnits > bufferConstants.MAX_STRING_LENGTH) {
+    fail("Compute response exceeds the JSON runtime's string capacity; output-budget retries cannot fix this runtime limit.", "COMPUTE_OUTPUT_RUNTIME_LIMIT");
+  }
+}
+
+function successFromPrepared(request, prepared) {
+  validateComputeRequest(request);
+  if (prepared.resultBytes > request.limits.maxOutputBytes) fail("Compute result exceeds maxOutputBytes.", "COMPUTE_OUTPUT_LIMIT");
   const response = {
     ...responseEnvelope(request),
     status: "ok",
-    result: normalizedResult,
-    resultDigest: digest(resultJson),
-    warnings: normalizeMessages(warnings, "Compute warnings"),
+    result: prepared.result,
+    resultDigest: prepared.resultDigest,
+    warnings: prepared.warnings,
     errors: [],
   };
-  // Ordering cannot affect JSON byte length. The normalized private result does
-  // not need another recursive canonical copy merely to measure this envelope.
-  if (Buffer.byteLength(JSON.stringify(response), "utf8") > request.limits.maxOutputBytes) fail("Compute response exceeds maxOutputBytes.", "COMPUTE_OUTPUT_LIMIT");
+  // Exact UTF-8 envelope accounting, without another giant JSON string/copy.
+  verifyPreparedOutputSize(request, response, prepared);
   return deepFreeze(response);
+}
+
+export function buildComputeSuccessResponse(request, result, { warnings = [] } = {}) {
+  validateComputeRequest(request);
+  return successFromPrepared(request, prepareComputeResult(result, warnings));
+}
+
+function nextOutputRequest(request) {
+  return buildRequest({ operation: request.operation, input: request.input, semanticProducer: request.semanticProducer,
+    limits: { ...request.limits, maxOutputBytes: request.limits.maxOutputBytes * 2 } }, request.protocol.name);
+}
+
+function outputRetryDiagnostics(attempts, explicit) {
+  return { outputBudgetAttempts: [...attempts], outputRetryCount: Math.max(0, attempts.length - 1),
+    outputBudgetAutomatic: !explicit, outputBudgetCeiling: explicit ? attempts[0] ?? null : HARD_LIMITS.maxOutputBytes.max };
+}
+
+function outputFailureMessage(attempts, explicit) {
+  const finalMiB = attempts.at(-1) / (1024 * 1024);
+  return explicit
+    ? `Compute output exceeds the explicit ${attempts[0]}-byte budget; automatic growth is disabled (0 retries).`
+    : `Compute output exceeds ${finalMiB} MiB after ${attempts.length - 1} retries; the 512 MiB output ceiling was reached.`;
+}
+
+function annotateOutputAttemptError(error, attempts, explicit) {
+  if (!error || typeof error !== "object") return error;
+  error.details = { ...error.details, ...outputRetryDiagnostics(attempts, explicit) };
+  if (error.code === "COMPUTE_OUTPUT_RUNTIME_LIMIT" && !error.message.includes("Last output budget")) {
+    error.message += ` Last output budget ${attempts.at(-1)} bytes after ${Math.max(0, attempts.length - 1)} retries (ceiling ${HARD_LIMITS.maxOutputBytes.max} bytes).`;
+  }
+  return error;
+}
+
+// Internal repository-scan plumbing, not a new Host/MCP surface. Retain one
+// completed private result; never repeat the source scan or any project writer.
+export function completeComputeResult(request, result, { limits = {} } = {}) {
+  validateComputeRequest(request);
+  const explicit = Object.hasOwn(limits, "maxOutputBytes") || request.limits.maxOutputBytes !== DEFAULT_COMPUTE_LIMITS.maxOutputBytes;
+  let prepared;
+  try { prepared = prepareComputeResult(result, []); }
+  catch (error) {
+    throw annotateOutputAttemptError(error, [request.limits.maxOutputBytes], explicit);
+  }
+  const attempts = [];
+  for (;;) {
+    attempts.push(request.limits.maxOutputBytes);
+    try {
+      return { request, response: successFromPrepared(request, prepared), diagnostics: outputRetryDiagnostics(attempts, explicit) };
+    } catch (error) {
+      if (error.code !== "COMPUTE_OUTPUT_LIMIT") {
+        throw annotateOutputAttemptError(error, attempts, explicit);
+      }
+      if (explicit || attempts.length >= 4 || request.limits.maxOutputBytes >= HARD_LIMITS.maxOutputBytes.max) {
+        error.message = outputFailureMessage(attempts, explicit);
+        error.details = { ...error.details, ...outputRetryDiagnostics(attempts, explicit), cause: "COMPUTE_OUTPUT_LIMIT" };
+        throw error;
+      }
+      request = nextOutputRequest(request);
+    }
+  }
 }
 
 export function buildComputeErrorResponse(request, errors, { warnings = [] } = {}) {
@@ -303,18 +384,18 @@ export function validateComputeResponse(request, response) {
   if (canonicalJson(warnings) !== canonicalJson(response.warnings) || canonicalJson(errors) !== canonicalJson(response.errors)) {
     fail("Compute response messages are not canonically ordered.", "COMPUTE_RESPONSE_MISMATCH");
   }
-  if (byteLength(response) > request.limits.maxOutputBytes) fail("Compute response exceeds maxOutputBytes.", "COMPUTE_OUTPUT_LIMIT");
   if (response.status === "ok") {
     if (errors.length !== 0) fail("A successful compute response cannot contain errors.", "COMPUTE_RESPONSE_MISMATCH");
-    assertJsonValue(response.result, "Compute result");
-    assertNoAuthorityEscalation(response.result);
-    if (response.resultDigest !== digest(canonicalJson(response.result))) {
+    const prepared = prepareComputeResult(response.result, warnings);
+    if (response.resultDigest !== prepared.resultDigest) {
       fail("Compute result digest or output limit verification failed.", "COMPUTE_RESULT_MISMATCH");
     }
+    verifyPreparedOutputSize(request, response, prepared);
   } else if (response.status === "error") {
     if (response.result !== null || response.resultDigest !== "" || errors.length === 0) {
       fail("A failed compute response has an invalid result or error set.", "COMPUTE_RESPONSE_MISMATCH");
     }
+    if (byteLength(response) > request.limits.maxOutputBytes) fail("Compute response exceeds maxOutputBytes.", "COMPUTE_OUTPUT_LIMIT");
   } else {
     fail("Compute response status is invalid.", "COMPUTE_RESPONSE_MISMATCH");
   }
@@ -335,6 +416,7 @@ function normalizeOperationHandlers(operations) {
 
 export class JsReferenceComputeAdapter {
   #operations;
+  #completedResults = new WeakMap();
 
   constructor({ operations, name = "javascript-reference" } = {}) {
     this.#operations = normalizeOperationHandlers(operations || {});
@@ -359,20 +441,25 @@ export class JsReferenceComputeAdapter {
     };
   }
 
-  async execute(request, { signal = null } = {}) {
+  async execute(request, { signal = null, outputRetryToken = null } = {}) {
     validateComputeRequest(request);
     if (signal?.aborted) return buildComputeErrorResponse(request, [{ code: "COMPUTE_CANCELLED", message: "Compute request was cancelled." }]);
     const handler = this.#operations.get(request.operation);
     if (!handler) return buildComputeErrorResponse(request, [{ code: "UNSUPPORTED_COMPUTE_OPERATION", message: `Unsupported compute operation: ${request.operation}` }]);
     try {
-      const result = await handler(deepFreeze(canonical(request.input)), {
-        requestId: request.requestId,
-        semanticProducer: request.semanticProducer,
-        limits: request.limits,
-        signal,
-      });
+      const binding = canonicalJson({ operation: request.operation, protocol: request.protocol, inputDigest: request.inputDigest,
+        semanticProducer: request.semanticProducer, limits: { ...request.limits, maxOutputBytes: 0 } });
+      let completed = outputRetryToken ? this.#completedResults.get(outputRetryToken) : null;
+      if (completed && completed.binding !== binding) fail("Retained compute result does not match this operation.", "COMPUTE_REQUEST_MISMATCH");
+      if (!completed) {
+        const result = await handler(deepFreeze(canonical(request.input)), {
+          requestId: request.requestId, semanticProducer: request.semanticProducer, limits: request.limits, signal,
+        });
+        completed = { binding, prepared: prepareComputeResult(result, []) };
+        if (outputRetryToken) this.#completedResults.set(outputRetryToken, completed);
+      }
       if (signal?.aborted) return buildComputeErrorResponse(request, [{ code: "COMPUTE_CANCELLED", message: "Compute request was cancelled." }]);
-      return buildComputeSuccessResponse(request, result);
+      return successFromPrepared(request, completed.prepared);
     } catch (error) {
       const code = typeof error?.code === "string" && CODE_PATTERN.test(error.code) ? error.code : "JS_REFERENCE_OPERATION_FAILED";
       return buildComputeErrorResponse(request, [{ code, message: error?.message || "JavaScript reference operation failed." }]);
@@ -405,13 +492,16 @@ export function validateComputeAdapter(adapter, { storage = null } = {}) {
 
 export async function executeComputeOperation({ adapter, operation, input, semanticProducer, limits = {}, signal = null, storage = null } = {}) {
   const descriptor = validateComputeAdapter(adapter, { storage });
-  const request = buildComputeRequest({ operation, input, semanticProducer, limits, storage });
+  let request = buildComputeRequest({ operation, input, semanticProducer, limits, storage });
+  const explicitOutput = Object.hasOwn(limits, "maxOutputBytes");
   if (!descriptor.supportedOperations.includes(request.operation)) fail(`Compute adapter does not support ${request.operation}.`, "UNSUPPORTED_COMPUTE_OPERATION");
   if (signal?.aborted) fail("Compute operation was cancelled.", "COMPUTE_CANCELLED");
   const controller = new AbortController();
   let cancellation = null;
   let timer = null;
   const started = performance.now();
+  const attempts = [];
+  const outputRetryToken = {}; // Invocation-local; WeakMap retention ends here.
   let cancellationPromise = null;
   if (signal) {
     cancellationPromise = new Promise((_, reject) => {
@@ -419,7 +509,7 @@ export async function executeComputeOperation({ adapter, operation, input, seman
         const error = new Error("Compute operation was cancelled.");
         error.code = "COMPUTE_CANCELLED";
         reject(error);
-        controller.abort(signal.reason || error);
+        controller.abort(error);
       };
       signal.addEventListener("abort", cancellation, { once: true });
     });
@@ -433,24 +523,51 @@ export async function executeComputeOperation({ adapter, operation, input, seman
         controller.abort(error);
       }, request.limits.timeoutMs);
     });
-    const racers = [Promise.resolve(adapter.execute(request, { signal: controller.signal })), timeout];
-    if (cancellationPromise) racers.push(cancellationPromise);
-    const response = await Promise.race(racers);
-    validateComputeResponse(request, response);
-    const adapterDiagnostics = consumeAdapterDiagnostics(adapter, request.requestId);
-    if (response.status !== "ok") fail("Compute operation failed.", "COMPUTE_OPERATION_FAILED", { requestId: request.requestId, errors: response.errors, warnings: response.warnings, diagnostics: adapterDiagnostics });
-    return {
-      request,
-      response,
-      result: response.result,
-      diagnostics: {
-        backend: adapterDiagnostics.backend || descriptor.backend,
-        adapterName: adapterDiagnostics.adapterName || descriptor.name,
-        executionMode: adapterDiagnostics.executionMode || descriptor.executionMode,
-        ...adapterDiagnostics,
-        elapsedMs: Math.max(0, performance.now() - started),
-      },
+    const ensureActive = () => {
+      if (controller.signal.aborted) throw controller.signal.reason;
+      if (signal?.aborted) fail("Compute operation was cancelled.", "COMPUTE_CANCELLED");
+      if (performance.now() - started >= request.limits.timeoutMs) {
+        const error = Object.assign(new Error("Compute operation timed out."), { code: "COMPUTE_TIMEOUT" });
+        controller.abort(error);
+        throw error;
+      }
     };
+    for (;;) {
+      ensureActive();
+      attempts.push(request.limits.maxOutputBytes);
+      const racers = [Promise.resolve(adapter.execute(request, { signal: controller.signal, outputRetryToken })), timeout];
+      if (cancellationPromise) racers.push(cancellationPromise);
+      const response = await Promise.race(racers);
+      ensureActive();
+      // Validate identity, messages, digest and authority before classifying an
+      // error. An invalid/oversized success is not a trusted retry instruction.
+      validateComputeResponse(request, response);
+      const adapterDiagnostics = consumeAdapterDiagnostics(adapter, request.requestId);
+      if (response.status !== "ok") {
+        const outputOnly = response.errors.length === 1 && response.errors[0].code === "COMPUTE_OUTPUT_LIMIT";
+        if (outputOnly && !explicitOutput && attempts.length < 4 && request.limits.maxOutputBytes < HARD_LIMITS.maxOutputBytes.max) {
+          request = nextOutputRequest(request);
+          continue;
+        }
+        const runtimeOnly = response.errors.length === 1 && response.errors[0].code === "COMPUTE_OUTPUT_RUNTIME_LIMIT";
+        fail(outputOnly ? outputFailureMessage(attempts, explicitOutput) : runtimeOnly
+          ? `${response.errors[0].message} Last output budget ${attempts.at(-1)} bytes after ${attempts.length - 1} retries (ceiling ${HARD_LIMITS.maxOutputBytes.max} bytes).`
+          : "Compute operation failed.", "COMPUTE_OPERATION_FAILED", {
+          requestId: request.requestId, errors: response.errors, warnings: response.warnings,
+          diagnostics: { ...adapterDiagnostics, ...outputRetryDiagnostics(attempts, explicitOutput) },
+        });
+      }
+      return {
+        request, response, result: response.result,
+        diagnostics: {
+          backend: adapterDiagnostics.backend || descriptor.backend, adapterName: adapterDiagnostics.adapterName || descriptor.name,
+          executionMode: adapterDiagnostics.executionMode || descriptor.executionMode, ...adapterDiagnostics,
+          ...outputRetryDiagnostics(attempts, explicitOutput), elapsedMs: Math.max(0, performance.now() - started),
+        },
+      };
+    }
+  } catch (error) {
+    throw annotateOutputAttemptError(error, attempts, explicitOutput);
   } finally {
     if (timer) clearTimeout(timer);
     if (signal && cancellation) signal.removeEventListener("abort", cancellation);

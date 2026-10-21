@@ -150,7 +150,7 @@ func validateRequest(value request) error {
 	}
 	if value.Limits.TimeoutMS < 10 || value.Limits.TimeoutMS > 300000 ||
 		value.Limits.MaxInputBytes < 2 || value.Limits.MaxInputBytes > 64*1024*1024 ||
-		value.Limits.MaxOutputBytes < 2048 || value.Limits.MaxOutputBytes > 64*1024*1024 ||
+		value.Limits.MaxOutputBytes < 2048 || value.Limits.MaxOutputBytes > 512*1024*1024 ||
 		value.Limits.MaxFiles < 1 || value.Limits.MaxFiles > 100000 ||
 		value.Limits.MaxFileBytes < 1 || value.Limits.MaxFileBytes > 16*1024*1024 ||
 		value.Limits.MaxTotalBytes < 1 || value.Limits.MaxTotalBytes > 1024*1024*1024 {
@@ -178,6 +178,9 @@ func success(value request, result any) (response, error) {
 	canonicalResult, err := canonicalJSON(result)
 	if err != nil {
 		return response{}, err
+	}
+	if len(canonicalResult) > value.Limits.MaxOutputBytes {
+		return failure(value, "COMPUTE_OUTPUT_LIMIT", "Compute result exceeds maxOutputBytes."), nil
 	}
 	answer := envelope(value)
 	answer.Status = "ok"
@@ -276,6 +279,24 @@ func handle(value request) (response, error) {
 	return failure(value, "UNSUPPORTED_COMPUTE_OPERATION", fmt.Sprintf("Unsupported compute operation: %s", value.Operation)), nil
 }
 
+func encodeResponse(value request, answer response) ([]byte, error) {
+	encoded, err := canonicalJSON(answer)
+	if err != nil {
+		return nil, fmt.Errorf("encode worker response: %w", err)
+	}
+	if len(encoded) > value.Limits.MaxOutputBytes {
+		if answer.Status != "ok" {
+			return nil, errors.New("worker error response exceeds request output limit")
+		}
+		// Typed, bounded failure is distinct from a crash/stdout protocol breach.
+		encoded, err = canonicalJSON(failure(value, "COMPUTE_OUTPUT_LIMIT", "Compute response exceeds maxOutputBytes."))
+		if err != nil || len(encoded) > value.Limits.MaxOutputBytes {
+			return nil, errors.New("worker output-limit response exceeds request output limit")
+		}
+	}
+	return encoded, nil
+}
+
 // Run processes exactly one bounded request and emits exactly one response.
 // The worker never spawns descendants, writes project state, or opens network connections.
 func Run(input io.Reader, output io.Writer) error {
@@ -297,12 +318,9 @@ func Run(input io.Reader, output io.Writer) error {
 	if err != nil {
 		return err
 	}
-	encoded, err := canonicalJSON(answer)
+	encoded, err := encodeResponse(value, answer)
 	if err != nil {
 		return fmt.Errorf("encode worker response: %w", err)
-	}
-	if len(encoded) > value.Limits.MaxOutputBytes {
-		return errors.New("worker response exceeds request output limit")
 	}
 	if _, err := output.Write(append(encoded, '\n')); err != nil {
 		return fmt.Errorf("write worker response: %w", err)
