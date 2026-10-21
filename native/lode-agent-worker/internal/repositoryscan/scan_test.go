@@ -122,11 +122,30 @@ func TestSourceAnalysisUsesExactDeclarationRanges(t *testing.T) {
 	}
 }
 
+func TestUnmatchedBodyKeepsCanonicalJavaScriptHeader(t *testing.T) {
+	for _, item := range []struct{ name, language, text, signature string }{
+		{"balanced", "javascript", "export function balanced() { return 1; }", "export function balanced()"},
+		{"unclosed", "javascript", "export function unclosed() {\n return 1;\n", "export function unclosed()"},
+		{"regex-brace", "javascript", `export function regexBrace() { return /\{/; }`, "export function regexBrace()"},
+		{"arrow", "typescript", "export const arrow = () => {\n return 1;\n", "export const arrow = () =>"},
+		{"class", "javascript", "export class Unclosed {\n method() { return 1; }\n", "export class Unclosed"},
+	} {
+		t.Run(item.name, func(t *testing.T) {
+			symbols := extractSymbols(item.text, item.language, newlineOffsets(item.text))
+			if len(symbols) != 1 || symbols[0].(map[string]any)["signature"] != item.signature {
+				t.Fatalf("header diverged from JS reference: %#v", symbols)
+			}
+			// This aligns the bounded observation, not a claim that malformed code
+			// or brace-containing regex literals have been fully parsed.
+		})
+	}
+}
+
 func lodeScanFixture(t *testing.T, root string, managed []string) []byte {
 	t.Helper()
 	scope := map[string]any{
 		"schemaVersion": 1, "kind": "RepositorySourceScope",
-		"protocol": map[string]any{"name": "lode-agent-core-repository-source-scope", "version": "0.1.0"},
+		"protocol":     map[string]any{"name": "lode-agent-core-repository-source-scope", "version": "0.1.0"},
 		"includeRoots": []any{}, "excludeRoots": []any{},
 		"authority": "user-selected-observation-boundary", "instructionAuthority": false, "promotionAuthority": false,
 	}

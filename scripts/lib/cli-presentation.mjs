@@ -529,103 +529,6 @@ export function formatSessionWorkContext(value) {
   return text + originalRemainder(value, handled, "workContext");
 }
 
-function visibleContextText(text) {
-  return text.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g,
-    character => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`);
-}
-
-function readableContextLineage(context) {
-  let output = "Recorded code context (P4): observed text changes and recorded reasons do not prove causality.\n";
-  if (context.status === "unavailable") return output + `Context unavailable: ${context.reasonCode || "unknown"}. Ordinary work can continue.\n`;
-  for (const event of context.events || []) {
-    const source = event.sourceRole === "HEAD-authored-P3-work-evidence-not-user-transcript"
-      ? "Agent-authored work evidence; not a captured user transcript" : event.sourceRole;
-    output += `Record: ${event.title}\n  Source: ${source}; ${event.reviewState}; ${event.freshness}.\n`;
-    if (event.cancelledActions.length) output += `  Cancelled actions: ${event.cancelledActions.join("; ")}\n`;
-    if (event.pending.length) output += `  Recorded pending: ${event.pending.join("; ")}\n`;
-    if (event.unknowns.length) output += `  Recorded unknowns: ${event.unknowns.join("; ")}\n`;
-    if (event.missingLink) output += `  ${event.missingLink}\n`;
-    if (event.contentPartial || event.titlePartial) output += "  Partial excerpt; the original may contain more.\n";
-    if (event.reference?.path) output += `  Original: ${event.reference.path}\n`;
-  }
-  for (const file of context.files || []) {
-    output += `Source: ${file.path}\n`;
-    for (const pair of file.comparisons) {
-      output += `  ${pair.scope}: ${pair.status}; file bytes ${pair.fileBytes || "unknown"}.\n`;
-      if (pair.currentMatchesRecordedAfter === false) output += "  Recorded after is not current. Later changes are separate.\n";
-      for (const symbol of pair.symbols) output += `  ${symbol.after?.qualifiedName || symbol.before?.qualifiedName}: ${symbol.observation}${symbol.locationChanged ? "; line location moved" : ""}. Behavior equivalence is not determined.\n`;
-      if (pair.diff?.changed) for (const [side, title] of [["before", "Recorded/cited source"], ["after", pair.scope === "recorded-changeset-snapshot-pair" ? "Recorded after (not necessarily current)" : "Observed current source"]]) {
-        const excerpt = pair.diff[side]; output += `${pair.labels?.[side] || title}, from line ${excerpt.startLine}:\n${excerpt.text}\n`;
-        if (excerpt.omittedLines || excerpt.textTruncated) output += "  Comparison excerpt is partial; inspect the exact source reference for more.\n";
-      }
-      if (pair.reasonCode || pair.gap) output += `  Gap: ${pair.reasonCode || pair.gap.reasonCode}\n`;
-    }
-    output += `  ${file.unrecordedIntervals}\n`;
-  }
-  for (const reason of context.recordedReasons || []) output += `Recorded reason, not proven change cause: ${reason.reason || reason.rationale || reason.assessment}\n  Original: ${reason.reference?.path || "unavailable"}\n`;
-  for (const delta of context.canonChanges || []) {
-    output += `Recorded Canon comparison: ${delta.status}\n`;
-    if (delta.rationale) output += `Recorded review reason: ${delta.rationale}\n`;
-    for (const change of delta.changes) {
-      output += `${change.field} / ${change.key}\n`;
-      const describe = value => value === undefined || value === null ? "Not present" : Array.isArray(value)
-        ? value.map(item => typeof item === "string" ? item : `${item.kind}: ${item.key}`).join("; ") || "(none)" : value === "" ? "(empty)" : String(value);
-      // Normalized Canon fields only. Unchanged representative statements
-      // must not hide changed conditions/status; raw unknown fields remain diagnostic.
-      for (const field of ["name", "statement", "description", "status", "parentFeatureGroupKeys", "featureGroupKeys", "capabilityKeys", "governedBy", "appliesTo"])
-        if (JSON.stringify(change.before?.[field]) !== JSON.stringify(change.after?.[field]))
-          output += `  ${field}\n    Before: ${describe(change.before?.[field])}\n    After: ${describe(change.after?.[field])}\n`;
-    }
-    if (delta.omittedChangeCount) output += `  ${delta.omittedChangeCount} additional changes omitted from this view.\n`;
-  }
-  for (const gap of context.gaps || []) output += `Evidence gap: ${gap.reasonCode}\n`;
-  output += "Historical references, associations and source differences grant no current approval. Exact IDs/basis remain in JSON/structured diagnostics.\n";
-  return output;
-}
-
-function formatProjectGraph(value) {
-  if (!originalObject(value) || value.kind !== "ProjectGraphDiscoveryProjection" || !Array.isArray(value.nodes) || !Array.isArray(value.edges)) return null;
-  const handled = new Set(["nodes", "edges"]);
-  let text = "Project graph evidence (P4 navigation, not current direction or effect permission):\n"
-    + "Returned nodes/edges only; empty or partial results do not prove absence.\n"
-    + originalFacts(value, ["status", "query"], "graph", handled);
-  if (originalObject(value.contextLineage)) {
-    try { text += visibleContextText(readableContextLineage(value.contextLineage)); }
-    catch { text += "Recorded context has an unfamiliar shape; exact diagnostic fields follow.\n" + originalField("graph.contextLineage", value.contextLineage); }
-    handled.add("contextLineage");
-  }
-  const compact = value.query?.details !== true;
-  if (!compact && originalObject(value.coverage) && Object.hasOwn(value.coverage, "state")) text += `graph.coverage.state: ${JSON.stringify(value.coverage.state)}\n`;
-  if (!value.nodes.length) text += originalField("graph.nodes", value.nodes);
-  const work = value.nodes.map((node, index) => ({ index, value: node }))
-    .filter(({ value: node }) => originalObject(node) && Object.hasOwn(node, "workContent"));
-  const common = commonStoredWorkFields(work, "Node", "workContent");
-  text += common.text;
-  for (const [index, node] of value.nodes.entries()) {
-    if (originalObject(node) && Object.hasOwn(node, "workContent")) continue;
-    text += `Node[${index}]:\n`;
-    if (originalObject(node)) {
-      const keys = new Set();
-      text += originalFacts(node, ["nodeId", "kind", "projectId", "sessionId", "ownerSessionId", "reviewState", "freshness", "contentScope", "contentPartial"], `nodes[${index}]`, keys);
-      if (Object.hasOwn(node, "excerpt")) { text += originalField(`nodes[${index}].excerpt`, node.excerpt); keys.add("excerpt"); }
-      text += originalRemainder(node, keys, `nodes[${index}]`);
-      if (!Object.keys(node).length) text += originalField(`nodes[${index}]`, node);
-    } else text += originalField(`nodes[${index}]`, node);
-  }
-  // Graph work nodes carry their exact Session; Project identity is verified
-  // in the query basis, not a top-level projectId or current caller Session.
-  text += groupedWorkBodies(work, "workContent", { projectId: value.basis?.projectId }, common.keys, compact);
-  if (compact) markRenderedBodyGroups(value, handled, work, "workContent", { projectId: value.basis?.projectId });
-  if (!value.edges.length) text += originalField("graph.edges", value.edges);
-  for (const [index, edge] of value.edges.entries()) {
-    text += `Edge[${index}]:\n`;
-    if (originalObject(edge) && Object.keys(edge).length) {
-      const keys = new Set();
-      text += originalFacts(edge, ["from", "kind", "to"], `edges[${index}]`, keys) + originalRemainder(edge, keys, `edges[${index}]`);
-    } else text += originalField(`edges[${index}]`, edge);
-  }
-  return text + originalRemainder(value, handled, "graph");
-}
 
 function formatSessionWorkRecord(value) {
   if (value?.status === "session_selection_unresolved") return formatUnavailableSession(value);
@@ -995,7 +898,7 @@ function formatSessionList(value) {
 export function formatMcpToolContent(name, value) {
   name = resolveOperation(name)?.semanticName ?? name;
   if (name === "head_session_list") return formatSessionList(value);
-  if (name === "head_project_graph") return formatProjectGraph(value) ?? JSON.stringify(value);
+  if (name === "head_project_graph") return formatTerminalGraph(value) ?? JSON.stringify(value);
   if (name === "head_bounded_worker_prepare") return formatWorkerPreparation(value);
   if (["head_worker_integration_status", "head_worker_integration"].includes(name)) return formatWorkerGuidance(value);
   if (["head_bounded_worker_wave_status", "head_bounded_worker_wave_wait"].includes(name)) return formatWorkerGuidance(value);

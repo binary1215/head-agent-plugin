@@ -100,6 +100,8 @@ for (const [provider, build, verify, catalogPath] of [
       assert.equal(catalog.plugins[0].name, composition.pluginName);
       assert.deepEqual(fs.readdirSync(path.join(outputRoot, "plugins")), [composition.pluginName]);
       const pluginRoot = path.join(outputRoot, "plugins", composition.pluginName);
+      assert.deepEqual(JSON.parse(fs.readFileSync(path.join(pluginRoot, "package.json"), "utf8")).engines,
+        JSON.parse(read("package.json")).engines, "Declared Node support must survive all four package projections");
       assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(path.join(pluginRoot, ".mcp.json"), "utf8")).mcpServers), ["lode"]);
       assert.deepEqual(fs.readdirSync(path.join(pluginRoot, "skills")).sort(), Object.values(composition.skills).sort());
       const staged = await import(pathToFileURL(path.join(pluginRoot, "scripts/mcp-server.mjs")).href);

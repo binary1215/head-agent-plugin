@@ -199,6 +199,17 @@ request the same initialization through the bundled Skill. Lode creates
 files are preserved and generated manual-integration projections remain under
 the selected root's `.lode/generated/` or existing `.head/generated/` directory.
 
+OpenCode's local configuration uses that PC's Node executable and Lode installation
+path. If the installation path changes, install Lode on that PC and ask the agent
+to resume the existing Project. At the same canonical Project path, this preserves
+Project and Session IDs and the selected runtimes while updating managed paths.
+A project-owned `opencode.json` stays unchanged; the generated copy remains
+available for manual integration.
+
+This reconnection flow does not relocate the Project to a different absolute
+directory. The current resume entry refuses that copy without rewriting saved
+records. Check the running Host's MCP tool loading separately.
+
 If you choose instruction linking during setup, Lode can append a small block
 to an existing instruction file once, preserving its original content. Claude
 Code uses its instruction-file imports; Codex receives a directive to read the
@@ -216,8 +227,8 @@ or existing `.head/` remains the single canonical Project root.
 <details>
 <summary>Show the optional user-scoped CLI installation</summary>
 
-Requirements: a current Node.js LTS release and either Git or a downloaded
-source archive. Git inside the target project, Go, GraphDB, and a provider
+Supported runtime: Node.js 24 or newer; CI uses Node.js 24.18.0. You also need
+either Git or a downloaded source archive. Git inside the target project, Go, GraphDB, and a provider
 runtime are optional.
 
 Windows PowerShell:

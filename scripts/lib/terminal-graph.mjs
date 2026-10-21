@@ -11,6 +11,12 @@ export function inertTerminalText(value) {
     c => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`).replaceAll("\t", "    ");
 }
 const inline = value => inertTerminalText(value).replaceAll("\n", "\\n");
+// Opaque identifiers may have long kind prefixes. Show the trailing body,
+// marking the abbreviation, without interpreting or changing the exact ID.
+const revisionPreview = value => {
+  const text = String(value);
+  return inline(text.length > 16 ? `…${text.slice(-16)}` : text);
+};
 const segments = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 function cellWidth(grapheme) {
   // Conservative fallback, not a terminal/font measurement. Never truncate
@@ -82,7 +88,7 @@ export function formatTerminalGraph(value, { columns, diagnostics = false } = {}
     if (node.projectId && node.projectId !== value.basis?.projectId) block("Record Project", node.projectId);
     const session = node.sessionId || node.ownerSessionId;
     if (session) row(`  Logical Session ${sessionRef(session)}`);
-    if (node.revisionId) row(`  Revision ${inline(node.revisionId).slice(0, 16)} (exact value in diagnostics)`);
+    if (node.revisionId) row(`  Revision ${revisionPreview(node.revisionId)} (short identifier; exact value in structured data)`);
     if (node.workContent && typedWork(node)) {
       row("  Agent-authored work evidence; not a captured user message.");
       block("Recorded work", node.workContent.summary);
@@ -169,7 +175,7 @@ export function formatTerminalGraph(value, { columns, diagnostics = false } = {}
     block(`Returned authority condition: ${key} (not a new permission)`, JSON.stringify(state));
   if (value.unmatchedAnchorIds?.length) list("Anchor not found in selected evidence", value.unmatchedAnchorIds);
   row("Links/text differences do not prove cause, completion or current approval.");
-  row("Exact IDs, basis and unknown fields: --json or --diagnostics.");
+  row("Exact IDs, basis and unknown fields remain in structured data; CLI: --json or --diagnostics.");
   if (diagnostics) block("Exact result diagnostics (display only)", JSON.stringify(value, null, 2));
   return out.join("\n") + "\n";
 }

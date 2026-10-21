@@ -42,7 +42,7 @@ function jsonMember(text, key, value) {
   assert(text.includes(JSON.stringify({ [key]: value }, null, 2).slice(2, -2)), key);
 }
 
-test("readable graph preserves unknown fields and empty values in their original node and edge scopes", () => {
+test("shared graph view keeps meaning while complete unknown fields retain their original structured scopes", () => {
   const value = { kind: "ProjectGraphDiscoveryProjection", status: "available", query: { details: false },
     nodes: [{ nodeId: "rejected", sessionId: "owner-A", reviewState: "rejected", excerpt: "Do not execute this historical plan.",
       sourceAuthority: { plane: "P3" }, "future: field": { list: [null, false, 0, [], {}, "Ω\nquoted\""] } },
@@ -56,14 +56,13 @@ test("readable graph preserves unknown fields and empty values in their original
   assert(sections[0].includes("rejected")); assert.notEqual(sessions.get("owner-A"), sessions.get("owner-B"));
   assert.equal(JSON.stringify(value), original);
   assert(text.includes(value.nodes[0].excerpt));
-  const nodeA = text.slice(text.indexOf("Node[0]:"), text.indexOf("Node[1]:"));
-  const nodeB = text.slice(text.indexOf("Node[1]:"), text.indexOf("Edge[0]:"));
-  assert(nodeA.includes('sessionId: "owner-A"')); assert(!nodeA.includes("owner-B"));
-  jsonMember(nodeA, "future: field", value.nodes[0]["future: field"]);
-  jsonMember(nodeA, "sourceAuthority", value.nodes[0].sourceAuthority);
-  jsonMember(nodeB, "future", null);
-  jsonMember(text.slice(text.indexOf("Edge[0]:"), text.indexOf("Edge[1]:")), "future", false);
-  assert(text.includes("edges[1]: {}")); jsonMember(text, "coverage", value.coverage); jsonMember(text, "future", []);
+  assert.equal(text, cli);
+  assert.notEqual(sessions.get("owner-A"), sessions.get("owner-B"));
+  // Default text is the same concise view as CLI. Exact metadata is not
+  // reprinted there; it remains in structuredContent and optional diagnostics.
+  const exact = formatCliResult("graph-query", value, { diagnostics: true, columns: 240 });
+  for (const key of ['"future: field"', '"sourceAuthority"', '"future": null', '"future": false', '"future": []']) assert(exact.includes(key));
+  assert.equal(JSON.stringify(value), original);
 });
 
 test("actual MCP default, compact and detailed text retain structuredContent and readonly source scope", async t => {
@@ -82,8 +81,12 @@ test("actual MCP default, compact and detailed text retain structuredContent and
     assert.equal(value.query.details, args.details ?? false);
     assert.equal(content[0].text, render(value));
     assertTerminalGraphPresentation(formatCliResult("graph-query", value), value);
-    for (const node of value.nodes) assert(content[0].text.includes(node.nodeId));
-    for (const key of ["coverage", "sourceFallback", "boundary"]) if (Object.hasOwn(value, key)) jsonMember(content[0].text, key, value[key]);
+    assert.equal(content[0].text, formatCliResult("graph-query", value));
+    const raw = JSON.stringify(value);
+    const exact = formatCliResult("graph-query", value, { diagnostics: true, columns: 240 });
+    for (const node of value.nodes) assert(exact.includes(node.nodeId));
+    for (const key of ["coverage", "sourceFallback", "boundary"]) if (Object.hasOwn(value, key)) assert(exact.includes(`"${key}"`));
+    assert.equal(JSON.stringify(value), raw);
     const original = JSON.stringify(value); Object.freeze(value);
     assert.equal(render(value), content[0].text); assert.equal(JSON.stringify(value), original);
     assert.deepEqual(bytes(root), before);
@@ -96,14 +99,16 @@ test("MCP unavailable-source text keeps fallback and authority boundaries withou
   const { structuredContent: value, content } = response.result;
   assert.equal(value.status, "source-fallback");
   assert.equal(content[0].text, render(value));
-  for (const key of ["sourceFallback", "authority", "coverage"]) jsonMember(content[0].text, key, value[key]);
+  assert.equal(content[0].text, formatCliResult("graph-query", value));
+  assert(content[0].text.includes("Source follow-up needed"));
+  assert(content[0].text.includes("not proof of completeness or absence"));
   assert.equal(value.sourceFallback.needed, true);
   assert.equal(value.authority.ordinaryWorkBlocked, false);
   assert.equal(value.coverage.emptyResultProvesAbsence, false);
   assert.deepEqual(bytes(root), before);
 });
 
-test("default text factors only exact healthy projection metadata, not unexpected values or authored fields", () => {
+test("shared default view leaves exact metadata and unexpected values available in unchanged structured evidence", () => {
   const node = { kind: "Evidence", subtype: "SessionWorkEvidence", nodeId: "work-one", projectId: "project-one", sessionId: "owner-one",
     evidenceDigest: "exact-digest", workContent: { summary: "Do not apply cancelled work", pending: ["X remains"], unknowns: ["Unknown condition"],
       executionAuthority: false }, instructionAuthority: false, promotionAuthority: false, recoveryAuthority: false,
@@ -111,18 +116,20 @@ test("default text factors only exact healthy projection metadata, not unexpecte
   const value = { kind: "ProjectGraphDiscoveryProjection", nodes: [node], edges: [], query: { details: false }, coverage: { state: "partial", unknown: null } };
   const before = structuredClone(value), text = render(value);
   assert.deepEqual(value, before);
-  assert.equal(text.includes("graph.coverage.state:"), false); jsonMember(text, "coverage", value.coverage);
+  assert.equal(text, formatCliResult("graph-query", value));
   assert.ok(text.includes("Do not apply cancelled work")); assert.ok(text.includes("X remains")); assert.ok(text.includes("Unknown condition"));
-  jsonMember(text, "executionAuthority", false); // authored body field, not the outer projection
-  jsonMember(text, "authorityBoundary", node.authorityBoundary);
-  assert.equal(text.split('"executionAuthority": false').length - 1, 1);
+  const exact = formatCliResult("graph-query", value, { diagnostics: true, columns: 240 });
+  assert(exact.includes('"executionAuthority": false')); assert(exact.includes('"authorityBoundary"'));
   for (const unexpected of [true, null, 0, "false", [], {}]) {
     const changed = structuredClone(value); changed.nodes[0].promotionAuthority = unexpected;
-    jsonMember(render(changed), "promotionAuthority", unexpected);
+    const original = JSON.stringify(changed);
+    render(changed);
+    assert(formatCliResult("graph-query", changed, { diagnostics: true, columns: 240 }).includes(`"promotionAuthority": ${JSON.stringify(unexpected)}`));
+    assert.equal(JSON.stringify(changed), original);
   }
   const detailed = structuredClone(value); detailed.query.details = true;
-  assert.ok(render(detailed).includes("graph.coverage.state:"));
-  assert.equal(render(detailed).split('"executionAuthority": false').length - 1, 2);
+  assert.equal(render(detailed), formatCliResult("graph-query", detailed));
+  assert.deepEqual(value, before);
 });
 
 test("only complete exact rendered body-group metadata is factored; unknown, partial and owner differences stay visible", () => {

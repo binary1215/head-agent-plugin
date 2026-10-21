@@ -1,10 +1,13 @@
 {
   "name": "@local/lode-agent-core-plugin",
-  "version": "0.3.0-beta.50",
+  "version": "0.3.0-beta.51",
   "private": true,
   "type": "module",
   "description": "Lode Agent Core plugin distribution",
   "license": "MIT",
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "test": "node --test --test-isolation=none --test-concurrency=1 test/*.test.mjs",
     "check": "npm test && npm run benchmark:prepared-traversal -- --iterations 3",

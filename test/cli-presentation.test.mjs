@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { publicToolName } from "../scripts/lib/lode-artifact-composition.mjs";
+import { inertTerminalText } from "../scripts/lib/terminal-graph.mjs";
 
 test("Session list presents existing purpose and stored pointers without live-state inference", () => {
   const value = { projectId: "project-A", defaultSessionId: "session-A", sessions: [
@@ -124,21 +125,23 @@ test("relative labels preserve literal fences whitespace array indices and unkno
 });
 test("graph common membership names only supported work nodes at original indices, never navigation", () => {
   const fixture = repeatedWorkFixture(), work = fixture.records.map(({ content, ...row }, index) => ({ ...row, nodeId: `work-${index}`, workContent: content,
-    workContentCoverage: { partial: true, unknown: false }, workContentExcerpts: [{ field: "summary", text: `Excerpt ${index}`, index: 0 }] }));
+    origin: { layer: "sessionWork" }, workContentCoverage: { partial: true, unknown: false },
+    workContentExcerpts: [{ field: "summary", text: `Excerpt ${index}`, index: 0, start: 0, end: 9, totalCharacters: 20 }] }));
   const graph = { kind: "ProjectGraphDiscoveryProjection", nodes: [{ nodeId: "nav", kind: "Session", sessionId: "nav-owner", excerpt: "Navigation only" },
     work[0], { nodeId: "reference", kind: "Reference", future: null }, work[1]], edges: [], coverage: { state: "partial", hint: "not proof" } };
   const before = JSON.stringify(graph), text = formatMcpToolContent("head_project_graph", graph);
-  assert.ok(text.includes(`Common stored fields for Node[1], Node[3]:\n${JSON.stringify(fixture.common, null, 2)}`));
-  assert.ok(text.includes('nodes[0].sessionId: "nav-owner"'));
-  // Grouped bodies retain exact source indices, not flat navigation ordering.
-  for (let i = 0; i < 4; i++) assert.equal(text.split(`\nNode[${i}]:\n`).length - 1, 1);
-  assert.ok(text.includes("workContentCoverage.partial: true")); assert.ok(text.includes("workContentExcerpts[0].text (original text):"));
-  assert.ok(text.includes('"hint": "not proof"'));
+  assert.equal(text, formatCliResult("graph-query", graph));
+  assert.ok(text.includes("Logical Session")); assert.ok(text.includes("Navigation only"));
+  // One-based terminal references retain the original indices; they are not
+  // flattened to only the work-node subset.
+  for (let i = 0; i < 4; i++) assert.equal(text.split(`\n[${i + 1}] `).length - 1, 1);
+  assert.ok(text.includes("partial text")); assert.ok(text.includes("Partial original summary[0]"));
   const terminal = formatCliResult("graph-query", graph, { diagnostics: true });
   assert.ok(terminal.includes("Selected connections")); assert.ok(terminal.includes('"hint": "not proof"')); assert.equal(JSON.stringify(graph), before);
   for (const change of [node => { delete node.projectId; }, node => { node.sessionId = null; }, node => { node.kind = "Other"; }, node => { node.workContent = null; }]) {
     const ambiguous = structuredClone(graph); change(ambiguous.nodes[3]); const output = formatMcpToolContent("head_project_graph", ambiguous);
-    assert.ok(!output.includes("Common stored fields for")); assert.ok(output.includes('sessionId: "session-owner"')); assert.ok(output.includes('nodes[0].sessionId: "nav-owner"'));
+    assert.equal(output, formatCliResult("graph-query", ambiguous));
+    assert.ok(!output.includes("Common stored fields for")); assert.ok(output.includes("Logical Session")); assert.ok(output.includes("Navigation only"));
   }
 });
 
@@ -789,15 +792,24 @@ test("graph work text retains unlabeled originals for single and grouped bodies 
     const content = Array.from({ length: count }, (_, index) => explainedContent(index));
     const graph = { kind: "ProjectGraphDiscoveryProjection", query: { details }, basis: { projectId: "project-owner" },
       nodes: content.map((workContent, index) => ({ nodeId: `graph-work-${index}`, projectId: "project-owner", sessionId: "session-owner",
-        kind: "Evidence", subtype: "SessionWorkEvidence", instructionAuthority: false, promotionAuthority: false,
+        kind: "Evidence", subtype: "SessionWorkEvidence", origin: { layer: "sessionWork" }, instructionAuthority: false, promotionAuthority: false,
         recoveryAuthority: false, executionAuthority: false, ordinaryWorkBlocked: false, workContent })),
       edges: [], coverage: { state: "partial", omitted: 7 }, future: { unknown: true } };
     const before = structuredClone(graph), text = formatMcpToolContent("head_project_graph", graph);
     const terminal = formatCliResult("graph-query", graph, { diagnostics: true });
     assert.ok(terminal.includes("Selected connections")); assert.ok(terminal.includes('"unknown": true'));
     for (const label of workRoleLabels) assert.ok(!text.includes(`${label}:\n`), "Session labels must not leak into graph presentation");
-    for (const body of content) assert.ok(text.includes(expectedExplainedBody(body, "workContent", false)));
-    assert.ok(text.includes('"omitted": 7')); assert.ok(text.includes('"unknown": true'));
+    assert.equal(text, formatCliResult("graph-query", graph));
+    assert.ok(text.includes("Recorded work")); assert.ok(text.includes("Recorded judgment"));
+    const visible = text.split("\n").map(line => line.replace(/^  \| /u, "")).join("").replace(/\s+/gu, "");
+    for (const body of content) {
+      const messages = [body.summary, ...body.observedWork, ...body.pending, ...body.unknowns, ...body.suggestedFollowUp,
+        ...body.judgments.flatMap(judgment => [judgment.assessment, judgment.reason, ...judgment.alternatives])];
+      for (const message of messages) assert(visible.includes(inertTerminalText(message).replace(/\s+/gu, "")), message);
+    }
+    // Full literal/unknown content remains in the unmodified result and the
+    // explicit diagnostics; default graph text uses the shared inert view.
+    assert.ok(terminal.includes('"omitted": 7')); assert.ok(terminal.includes('"unknown": true'));
     assert.deepEqual(graph, before);
   }
 });

@@ -432,7 +432,11 @@ func enrichSymbols(text, masked, language string, values []any, lines []int, inc
 					statementEnd = matchEnd + semicolon + 1
 				}
 				endLine = lineAt(lines, statementEnd)
-				signature = normalizedSignature(text[start:statementEnd])
+				headerEnd := statementEnd
+				if open >= 0 {
+					headerEnd = open
+				}
+				signature = normalizedSignature(text[start:headerEnd])
 				symbol["endIndex"] = statementEnd
 			}
 		} else if language == "python" {

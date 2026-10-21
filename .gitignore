@@ -123,3 +123,5 @@ Thumbs.db
 !test/project-graph-source-reference.test.mjs
 !test/project-graph-work-admission.test.mjs
 !test/product-operating-projection.test.mjs
+!test/terminal-graph-equivalence.test.mjs
+!test/opencode-installation-reconnect.test.mjs
