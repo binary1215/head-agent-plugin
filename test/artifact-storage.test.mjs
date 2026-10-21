@@ -5,9 +5,17 @@ import path from "node:path";
 import test from "node:test";
 import { atomicWriteArtifact, atomicCreateArtifact } from "../scripts/lib/artifact-storage.mjs";
 
+function fixture(t, prefix = "head-C-atomic-") {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  t.after(() => {
+    assert.equal(path.dirname(directory), path.resolve(os.tmpdir()));
+    assert.ok(path.basename(directory).startsWith(prefix));
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+  return directory;
+}
 test("atomic publication preserves the existing winner on exclusive retry and cleans failed staging", t => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "head-storage-"));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const root = fixture(t, "head-storage-");
   const file = path.join(root, "record.json");
   atomicCreateArtifact(file, "original");
   assert.throws(() => atomicCreateArtifact(file, "divergent"), { code: "EEXIST" });
@@ -21,8 +29,7 @@ test("atomic publication preserves the existing winner on exclusive retry and cl
 });
 
 test("Windows rename retry is finite and never overwrites a changed target", { skip: process.platform !== "win32" }, t => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "head-storage-retry-"));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const root = fixture(t, "head-storage-retry-");
   const file = path.join(root, "record.json"), rename = fs.renameSync, lstat = fs.lstatSync;
   const denied = () => Object.assign(new Error("temporary sharing denial"), { code: "EPERM" });
   fs.writeFileSync(file, "original");
@@ -58,4 +65,48 @@ test("Windows rename retry is finite and never overwrites a changed target", { s
     const preserved = fs.readdirSync(root).find(name => name.endsWith(".tmp"));
     assert.equal(fs.readFileSync(path.join(root, preserved), "utf8"), "changed staging");
   } finally { fs.renameSync = rename; fs.lstatSync = lstat; }
+});
+
+test("failed partial write cleans the staging inode owned before writing", (t) => {
+  const directory = fixture(t), destination = path.join(directory, "record.json");
+  const write = fs.writeFileSync;
+  fs.writeFileSync = (target, content, options) => {
+    if (typeof target === "number") {
+      write(target, String(content).slice(0, 4), options);
+      throw Object.assign(new Error("Partial write failure"), { code: "EIO" });
+    }
+    return write(target, content, options);
+  };
+  try { assert.throws(() => atomicCreateArtifact(destination, "complete original"), { code: "EIO" }); }
+  finally { fs.writeFileSync = write; }
+  assert.deepEqual(fs.readdirSync(directory), []);
+});
+test("a replaced staging file is preserved because its inode is not owned", (t) => {
+  const directory = fixture(t), destination = path.join(directory, "record.json");
+  const write = fs.writeFileSync, open = fs.openSync;
+  let temporary;
+  fs.openSync = (file, ...args) => { if (String(file).endsWith(".tmp")) temporary = file; return open(file, ...args); };
+  fs.writeFileSync = (target, content, options) => {
+    if (typeof target === "number") {
+      write(target, "partial", options);
+      fs.renameSync(temporary, path.join(directory, "held-owned-partial"));
+      write(temporary, "replacement owned by someone else");
+      throw Object.assign(new Error("Write failure after replacement"), { code: "EIO" });
+    }
+    return write(target, content, options);
+  };
+  try { assert.throws(() => atomicCreateArtifact(destination, "complete original"), (error) => error.code === "EIO" && error.stagingCleanup?.code === "ARTIFACT_STAGING_CHANGED"); }
+  finally { fs.writeFileSync = write; fs.openSync = open; }
+  assert.equal(fs.readFileSync(temporary, "utf8"), "replacement owned by someone else");
+  assert.equal(fs.existsSync(destination), false);
+});
+test("failed publication preserves the original destination and removes only its owned stage", (t) => {
+  const directory = fixture(t), destination = path.join(directory, "record.json");
+  fs.writeFileSync(destination, "original");
+  const rename = fs.renameSync;
+  fs.renameSync = () => { throw Object.assign(new Error("Publication failure"), { code: "EIO" }); };
+  try { assert.throws(() => atomicWriteArtifact(destination, "new record"), { code: "EIO" }); }
+  finally { fs.renameSync = rename; }
+  assert.deepEqual(fs.readdirSync(directory), ["record.json"]);
+  assert.equal(fs.readFileSync(destination, "utf8"), "original");
 });
