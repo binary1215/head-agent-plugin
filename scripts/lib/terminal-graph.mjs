@@ -84,7 +84,7 @@ export function formatTerminalGraph(value, { columns, diagnostics = false } = {}
     if (session) row(`  Logical Session ${sessionRef(session)}`);
     if (node.revisionId) row(`  Revision ${inline(node.revisionId).slice(0, 16)} (exact value in diagnostics)`);
     if (node.workContent && typedWork(node)) {
-      row("  HEAD-authored work evidence; not a captured user message.");
+      row("  Agent-authored work evidence; not a captured user message.");
       block("Recorded work", node.workContent.summary);
       list("Authored topic (navigation only)", node.workContent.workTopics);
       list("Observed work", node.workContent.observedWork);
@@ -98,7 +98,7 @@ export function formatTerminalGraph(value, { columns, diagnostics = false } = {}
         block("Recorded judgment", judgment.assessment); block("Recorded reason (not proven cause)", judgment.reason); list("Alternative", judgment.alternatives);
       }
     }
-    if (node.workContent && !typedWork(node)) block("Unverified work-shaped fields (not HEAD-authored evidence)", JSON.stringify(node.workContent, null, 2));
+    if (node.workContent && !typedWork(node)) block("Unverified work-shaped fields (not agent-authored evidence)", JSON.stringify(node.workContent, null, 2));
     for (const excerpt of node.workContentExcerpts || []) {
       const location = `${excerpt.field}${excerpt.index == null ? "" : `[${excerpt.index}]`}${excerpt.subfield ? `.${excerpt.subfield}` : ""}${excerpt.alternativeIndex == null ? "" : `[${excerpt.alternativeIndex}]`}`;
       block(`Partial original ${location}: characters ${excerpt.start}-${excerpt.end} of ${excerpt.totalCharacters}`, excerpt.text);
@@ -127,7 +127,7 @@ export function formatTerminalGraph(value, { columns, diagnostics = false } = {}
   const context = value.contextLineage;
   if (context) {
     for (const file of context.files || []) {
-      row(""); block("Source context", file.path);
+      row(""); block("Recorded code context", file.path);
       for (const pair of file.comparisons || []) {
         row(`  ${inline(pair.status)}; file bytes ${inline(pair.fileBytes || "unknown")}; ${inline(pair.scope)}`);
         if (pair.currentMatchesRecordedAfter === false) block("Version gap", `${pair.labels?.after || (pair.scope === "recorded-changeset-snapshot-pair" ? "Recorded after" : "Compared version")} differs from current; later changes remain separate.`);

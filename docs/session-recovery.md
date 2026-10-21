@@ -233,8 +233,15 @@ integration transaction below remain separate.
 Multiple existing dispatches may be viewed through the provider-neutral wave
 contract in [`bounded-worker-wave.md`](bounded-worker-wave.md). Wave seal is
 start-evidence aggregation, not result acceptance. Wave `completed` means all
-members succeeded operationally; each member still requires its own ResultPacket,
-Fresh Lode ReviewDecision, and explicit HF-010 checkpoint integration.
+members succeeded operationally. Each member keeps its own authorization, lease
+and returned evidence; this is not a requirement for per-member ReviewDecision
+or checkpoint publication. For a multi-worker Run, Lode gathers the individual
+evidence, assesses the combined basis and publishes one whole Run ResultPacket.
+Fresh Lode review, an explicit ReviewDecision and explicit HF-010 checkpoint
+integration then apply to that whole result. Wave completion performs none of
+these steps, and it does not terminate outstanding members. The single-worker
+`worker-apply` path above is separate from this combined finish; see
+[`worker-context-integration.md`](worker-context-integration.md).
 
 ## P2-first optional live continuation
 

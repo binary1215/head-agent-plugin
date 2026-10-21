@@ -193,7 +193,7 @@
       else if (Array.isArray(value)) for (const item of value) if (typeof item === "string") lines.push(`${title}: ${item}`);
     };
     if (record.kind === "Evidence" && record.subtype === "SessionWorkEvidence" && node.subtype === "SessionWorkEvidence" && node.origin.layer === "sessionWork" && record.content) {
-      lines.push("HEAD-authored recorded work evidence — not a captured user transcript.");
+      lines.push("Agent-authored recorded work evidence; not a captured user transcript.");
       const c = record.content; put("Summary", c.summary);
       for (const judgment of c.judgments || []) { put("Assessment", judgment.assessment); put("Recorded reason", judgment.reason); put("Alternative", judgment.alternatives); }
       for (const [field, title] of [["observedWork", "Recorded observation"], ["pending", "Recorded pending"], ["unknowns", "Unknown"], ["suggestedFollowUp", "Suggested follow-up (not approval)"]]) put(title, c[field]);
@@ -229,7 +229,8 @@
     if (contextSelection !== selectionKey) { panel.open = Boolean(value && context.status !== "unavailable"); contextSelection = selectionKey; }
     const event = (context.events || []).find(item => item.nodeId === value?.nodeId);
     if (event) {
-      body.append(text("p", event.sourceRole, "hint"));
+      body.append(text("p", event.sourceRole === "HEAD-authored-P3-work-evidence-not-user-transcript"
+        ? "Agent-authored work evidence; not a captured user transcript" : event.sourceRole, "hint"));
       for (const connection of event.connections) {
         const other = connection.from === event.nodeId ? connection.to : connection.from, target = model.nodes.get(other);
         const entry = button(`${relation({ type: connection.relation })} · ${target ? label(target) : "Not included in this layer"}`, () => selectNode(target)); entry.disabled = !target; body.append(entry);

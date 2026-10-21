@@ -35,6 +35,8 @@ function developmentOnlyFiles() {
     `docs/${validationProject}-onboarding-review-proposal.md`,
     "docs/HEAD-Agent_GraphDB_Brief_v4.md",
     "docs/Lode_GraphDB_Brief_v4.md",
+    "scripts/verify-publication-version.mjs",
+    "scripts/lib/publication-version.mjs",
   ]);
 }
 

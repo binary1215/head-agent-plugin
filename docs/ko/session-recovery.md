@@ -214,8 +214,14 @@ context만 생성합니다. 명시적 review와 아래의 통합 transaction은 
 여러 기존 dispatch는 공급자 중립적 wave 계약인
 [`bounded-worker-wave.md`](bounded-worker-wave.md)를 통해 볼 수 있습니다. wave seal은
 result acceptance가 아니라 start-evidence aggregation입니다. wave `completed`는 모든
-구성원이 운영상 성공했다는 뜻입니다. 각 구성원에는 여전히 자체 ResultPacket, Fresh
-Lode ReviewDecision 및 명시적 HF-010 checkpoint 통합이 필요합니다.
+구성원이 운영상 성공했다는 뜻입니다. 구성원별 authorization·lease·반환 증거는
+독립적으로 보존하지만, 각 구성원마다 ReviewDecision이나 checkpoint 게시를
+요구하지는 않습니다. 여러 worker가 참여한 Run은 Lode가 개별 증거를 모아 통합
+basis를 평가하고 하나의 전체 Run ResultPacket을 게시합니다. 그 전체 결과에 대해
+Fresh Lode 검토·명시적 ReviewDecision·HF-010 checkpoint 통합을 거칩니다.
+wave 완료는 이 단계를 실행하거나 남은 구성원을 종료하지 않습니다. 위의 단일
+worker `worker-apply` 경로와는 구별하며,
+[`worker-context-integration.md`](worker-context-integration.md)를 참조하세요.
 
 ## P2 우선의 선택적 live continuation
 

@@ -216,6 +216,22 @@ test("concurrent duplicate output is delivered once without serializing unrelate
   assert.equal(context(output).logicalSessionId, f.session.sessionId);
 });
 
+test("a later invalid caller on reused output removes only our previous direction and fences the earlier pending request", async t => {
+  const f = await setup(t), output = await f.transform();
+  updateProjectDirection({ root: f.root, input: { goal: "Local inspection only", cancelledActions: ["Do not publish"] } });
+  const before = snapshot(f.base), resolves = [];
+  f.client.session.get = () => new Promise(resolve => resolves.push(resolve));
+  const pendingEarlier = f.transform(output);
+  output.system.push("Other plugin remains intact");
+  const invalidLater = f.transform(output, "ses_unverified");
+  resolves[1]({ data: { ...f.nativeRecord, id: "wrong-caller" } }); await invalidLater;
+  resolves[0]({ data: { ...f.nativeRecord } }); await pendingEarlier;
+  assert.deepEqual(output.system, ["Original system", "", "Other plugin remains intact"]);
+  assert(!output.system.some(text => text.includes(f.session.sessionId)));
+  assert(!output.system.some(text => text.includes("Do not deploy")));
+  assert.deepEqual(snapshot(f.base), before, "Loss of optional delivery never writes selection or fallback direction");
+});
+
 test("generated canonical/legacy packages contain and load the private renderer through the actual OpenCode shim", async t => {
   const f = await setup(t);
   for (const [provider, build] of [["codex", buildCodexMarketplaceSnapshot], ["claude", buildClaudeMarketplaceSnapshot]]) {

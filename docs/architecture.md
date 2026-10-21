@@ -152,7 +152,7 @@ SourceSnapshot, path, digest, line, optional symbol, Product Model references,
 and bounds before presenting one immutable batch. Core performs no lexical
 product inference, and the proposal has no instruction or promotion authority.
 
-Only a CLI-supplied `ReviewDecision` with `decisionScope: product-canon-bootstrap` may create a Product Canon revision. Acceptance records previous and next Product Model hashes, rebuilds a child SourceSnapshot, and verifies the temporal GraphSnapshot before the state pointer becomes ready. Revision creates a successor candidate set; rejection leaves canon unchanged. Immutable candidate, Evidence, Unknown, ReviewDecision, and ProductModelRevision receipts are projected into the graph for audit, but the projection cannot decide or promote. Read-only MCP exposes verified state and bounded graph traversal but cannot review or promote.
+Only an explicit user-authored `ReviewDecision` with `decisionScope: product-canon-bootstrap` may create a Product Canon revision. The CLI and typed `lode_onboarding_review` operation delegate the same exact-candidate checks to Core; neither routing nor discovery supplies user approval. Acceptance records previous and next Product Model hashes, rebuilds a child SourceSnapshot, and verifies the temporal GraphSnapshot before the state pointer becomes ready. Revision creates a successor candidate set; rejection leaves canon unchanged. Immutable candidate, Evidence, Unknown, ReviewDecision, and ProductModelRevision receipts are projected into the graph for audit, but the projection cannot decide or promote. Read-only status and graph operations cannot review or promote.
 
 Storage selection defaults to the complete local path. A GraphDB endpoint, database, and environment-style secret-reference names can be recorded as pending operational configuration, but credentials are rejected and no remote success is claimed before an adapter passes conformance. See [`onboarding.md`](onboarding.md).
 
@@ -244,8 +244,12 @@ without separate request or receipt files. See
 Provider-neutral launch-wave visibility is a separate P3/P4/P5 composition over
 existing HF-009 dispatches. A `BoundedWorkerWave` cannot create or widen an
 authorization; an explicit seal requires every independent lease consumption;
-status/results remain P4 views and wait remains P5. Each result still crosses
-Fresh Lode review and explicit HF-010 checkpoint integration independently. See
+status/results remain P4 views and wait remains P5. Members retain individual
+authorization, lease and result evidence. For a multi-worker Run, Lode assesses
+the combined result and publishes one whole Run ResultPacket; Fresh Lode review,
+an explicit ReviewDecision and explicit HF-010 checkpoint integration follow
+for that whole result, not independently for every member. Wave completion
+performs none of those transitions. See
 [`bounded-worker-wave.md`](bounded-worker-wave.md).
 
 Checkpoint freshness uses a non-persisted read-only basis over the exact current

@@ -33,13 +33,13 @@ test("terminal uses every selected directed edge without tree inference, path me
   const value = graph(), before = JSON.stringify(value), output = formatCliResult("graph-query", value);
   assert(output.indexOf("e1") < output.indexOf("[1] Evidence"));
   for (const term of ["e1  [1] --CITES--> [2]", "e2  [1] --CITES--> [2]", "e3  [2] --RELATED--> [1]", "e4  [1] --SELF--> [1]", "e5  [3] --RELATED--> [2]", "e6  [4] --RELATED--> [2]", "outside selection: missing", "rejected", "unreviewed", "historical", "Do not deploy", "No runtime PASS", "revision-before", "revision-after", "project-B"]) assert(output.includes(term), term);
-  assert(output.includes("HEAD-authored")); assert(output.includes("Caller-conveyed"));
+  assert(output.includes("Agent-authored")); assert(output.includes("Caller-conveyed"));
   assert(output.includes("Review locally before changes")); assert(output.includes("not live activity or success")); assert(output.includes("Independent review"));
   assert(!output.includes('"future"')); assert(formatTerminalGraph(value, { diagnostics: true }).includes("unknown-original-field"));
   assert.equal(JSON.stringify(value), before);
   value.nodes[0].origin.layer = "world";
   const untyped = formatCliResult("graph-query", value);
-  assert(untyped.includes("Unverified work-shaped fields")); assert(!untyped.includes("HEAD-authored work evidence;"));
+  assert(untyped.includes("Unverified work-shaped fields")); assert(!untyped.includes("Agent-authored work evidence;"));
 });
 
 test("all graph labels, originals, reasons, diffs and errors are inert and cannot forge outer status rows", () => {

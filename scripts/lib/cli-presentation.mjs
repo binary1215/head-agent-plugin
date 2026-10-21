@@ -538,7 +538,9 @@ function readableContextLineage(context) {
   let output = "Recorded code context (P4): observed text changes and recorded reasons do not prove causality.\n";
   if (context.status === "unavailable") return output + `Context unavailable: ${context.reasonCode || "unknown"}. Ordinary work can continue.\n`;
   for (const event of context.events || []) {
-    output += `Record: ${event.title}\n  Source: ${event.sourceRole}; ${event.reviewState}; ${event.freshness}.\n`;
+    const source = event.sourceRole === "HEAD-authored-P3-work-evidence-not-user-transcript"
+      ? "Agent-authored work evidence; not a captured user transcript" : event.sourceRole;
+    output += `Record: ${event.title}\n  Source: ${source}; ${event.reviewState}; ${event.freshness}.\n`;
     if (event.cancelledActions.length) output += `  Cancelled actions: ${event.cancelledActions.join("; ")}\n`;
     if (event.pending.length) output += `  Recorded pending: ${event.pending.join("; ")}\n`;
     if (event.unknowns.length) output += `  Recorded unknowns: ${event.unknowns.join("; ")}\n`;

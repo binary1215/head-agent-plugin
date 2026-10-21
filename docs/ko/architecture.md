@@ -116,7 +116,7 @@ cache를 보장하지 않습니다.
 
 초기화는 공급자 대화와 독립적인 기본 Session과 온보딩 포인터를 보존하고 경량 기존 관측 색인을 갱신합니다. 명시적인 `product` 범위에서만 관리되는 로컬 World Model을 구성합니다. 구조화된 user brief는 candidate를 직접 seed할 수 있고, 그 외에는 fresh provider Lode가 현재 evidence에서 bounded semantic proposal을 작성합니다. JavaScript Core는 정확한 SourceSnapshot, path, digest, line, optional symbol, Product Model reference와 bound를 검증한 뒤 하나의 immutable batch를 제시합니다. Core는 lexical product inference를 하지 않으며 proposal에는 지시 또는 승격 권한이 없습니다.
 
-CLI로 제공되고 `decisionScope: product-canon-bootstrap`이 지정된 `ReviewDecision`만 Product Canon revision을 생성할 수 있습니다. 수락 시 이전 및 다음 Product Model 해시를 기록하고, 자식 SourceSnapshot을 재구축하며, 상태 포인터가 준비 상태가 되기 전에 temporal GraphSnapshot을 검증합니다. revision은 후속 후보 집합을 생성하고, 거부 시 Canon은 변경되지 않습니다. 불변 candidate, Evidence, Unknown, ReviewDecision 및 ProductModelRevision 영수증은 감사를 위해 그래프에 프로젝션되지만, 프로젝션 자체는 결정하거나 승격할 수 없습니다. 읽기 전용 MCP는 검증된 상태와 범위가 한정된 그래프 순회를 노출하지만 검토하거나 승격할 수 없습니다.
+명시적인 사용자 결정으로 작성되고 `decisionScope: product-canon-bootstrap`이 지정된 `ReviewDecision`만 Product Canon revision을 생성할 수 있습니다. CLI와 typed `lode_onboarding_review`는 동일한 exact-candidate 검증을 Core에 위임하며, 라우팅이나 도구 탐색이 사용자 승인을 공급하지 않습니다. 수락 시 이전 및 다음 Product Model 해시를 기록하고, 자식 SourceSnapshot을 재구축하며, 상태 포인터가 준비 상태가 되기 전에 temporal GraphSnapshot을 검증합니다. revision은 후속 후보 집합을 생성하고, 거부 시 Canon은 변경되지 않습니다. 불변 candidate, Evidence, Unknown, ReviewDecision 및 ProductModelRevision 영수증은 감사를 위해 그래프에 프로젝션되지만, 프로젝션 자체는 결정하거나 승격할 수 없습니다. 읽기 전용 상태·그래프 작업은 검토하거나 승격할 수 없습니다.
 
 스토리지 선택의 기본값은 완전한 로컬 경로입니다. GraphDB endpoint, database 및 환경 스타일 secret-reference 이름은 보류 중인 운영 구성으로 기록할 수 있지만, 자격 증명은 거부되며 어댑터가 적합성 검사를 통과하기 전에는 원격 성공을 주장하지 않습니다. [`onboarding.md`](onboarding.md)를 참조하세요.
 
@@ -192,7 +192,7 @@ WholePlanSnapshot
 이제 아티팩트 전용 Session 복원은 정확한 콘텐츠 주소 지정 `SessionRunCheckpoint`, 불변 Session 포인터 및 검증된 Run/plan/contract/Capsule 리니지로부터 현재 소비자 입력을 재구성합니다. 반환되는 `SessionRestoreProjection`은 비영속 P4이며 공급자 세션 ID, 트랜스크립트, 요약, resume 또는 stream을 사용하지 않습니다. Fresh Lode ReviewDecision이 수락된 후 별도의 일회성 작업은 검토된 Run을 복구 필드가 명시적인 Lode/사용자 입력인 P2 체크포인트에 바인딩할 수 있습니다. ResultPacket과 과거 P3 통합 영수증은 그 방향을 작성하거나 대체할 수 없습니다.
 새 통합은 별도 request/receipt 파일 없이 checkpoint 자체에 정확한 수락 계보를 기록합니다. [`session-recovery.md`](session-recovery.md)를 참조하세요.
 
-공급자 중립적인 실행 wave 가시성은 기존 HF-009 디스패치 위에 구성된 별도의 P3/P4/P5 조합입니다. `BoundedWorkerWave`는 권한 부여를 생성하거나 확대할 수 없습니다. 명시적 seal에는 모든 독립적 임대 소비가 필요합니다. status/results는 P4 뷰로, wait는 P5로 유지됩니다. 각 결과는 여전히 Fresh Lode 검토와 명시적 HF-010 체크포인트 통합을 독립적으로 거칩니다. [`bounded-worker-wave.md`](bounded-worker-wave.md)를 참조하세요.
+공급자 중립적인 실행 wave 가시성은 기존 HF-009 디스패치 위에 구성된 별도의 P3/P4/P5 조합입니다. `BoundedWorkerWave`는 권한 부여를 생성하거나 확대할 수 없습니다. 명시적 seal에는 모든 독립적 임대 소비가 필요합니다. status/results는 P4 뷰로, wait는 P5로 유지됩니다. 구성원별 authorization·lease·result evidence는 독립적으로 보존합니다. 여러 worker가 참여한 Run은 Lode가 통합 결과를 평가해 하나의 전체 Run ResultPacket을 게시하고, 그 전체 결과에 대해 Fresh Lode 검토·명시적 ReviewDecision·HF-010 체크포인트 통합을 거칩니다. 구성원마다 이 전이를 별도로 수행하지 않으며 wave 완료 자체는 어떤 전이도 실행하지 않습니다. [`bounded-worker-wave.md`](bounded-worker-wave.md)를 참조하세요.
 
 Checkpoint 최신성은 정확한 현재 P2 identity와 Run/compaction 전이 상태를 포괄하는
 비지속 읽기 전용 basis를 사용합니다. Provider Lode가 자연어 방향을 도출하고, Core는

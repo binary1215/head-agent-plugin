@@ -163,3 +163,17 @@ alternatives use the new server name. Historical release verification and rollba
 retain the original manifest, exact namespace, records and checksums rather than
 rewriting an old package.
 
+### Publication versions
+
+Each Codex/Claude and Lode/HEAD marketplace identity is checked separately before
+publication. A changed distributed source or native build recipe needs a higher
+version; downgrades and conflicting existing version tags are refused. On an
+equivalent same-version retry, publication is skipped: the existing branch, marker
+and payload bytes stay unchanged, even if a rebuild embeds a new source commit.
+This compares recorded source/build inputs, not native executable equivalence.
+Missing same-version equivalence proof stops publication, not normal plugin use.
+Verified older snapshots remain valid and can advance to a higher version without
+reconstructing their historical build recipe. Complete release retries also skip
+all writes; partial or unverifiable releases require explicit repair or a new
+version. Existing tags and release assets are never intentionally replaced.
+

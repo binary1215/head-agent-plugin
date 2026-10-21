@@ -8,7 +8,7 @@ import { compareExactSourceVersions } from "../scripts/lib/context-source-delta.
 import { createContextSourceReader } from "../scripts/lib/context-source-reader.mjs";
 import { queryProjectGraph } from "../scripts/lib/project-graph.mjs";
 import { buildGraphExplorerSnapshot, exportGraphExplorer } from "../scripts/lib/graph-explorer.mjs";
-import { formatCliResult } from "../scripts/lib/cli-presentation.mjs";
+import { formatCliResult, formatMcpToolContent } from "../scripts/lib/cli-presentation.mjs";
 import { dispatch } from "../scripts/mcp-server.mjs";
 import { fixture, sha, snapshot, pluginRoot } from "./helpers/session-work-linkage-fixture.mjs";
 import { buildWorldModel } from "../scripts/lib/world-model.mjs";
@@ -86,8 +86,39 @@ test("readable original rendering cannot promote repository JSON that imitates a
   assert.equal(readable(raw, { kind: "FileRevision", origin: { layer: "world" } }), null);
   assert.equal(readable(raw, { kind: "Evidence", origin: { layer: "world" } }), null);
   const body = readable(raw, { kind: "Evidence", subtype: "SessionWorkEvidence", origin: { layer: "sessionWork" } });
-  assert(body.includes("not a captured user transcript")); assert(body.includes("Do not deploy")); assert(body.includes("No PASS recorded")); assert(!body.includes("Never promote"));
+  assert(body.includes("Agent-authored recorded work evidence")); assert(body.includes("not a captured user transcript")); assert(body.includes("Do not deploy")); assert(body.includes("No PASS recorded")); assert(!body.includes("Never promote"));
   assert(raw.includes("Never promote")); // unknown fields remain in the unchanged raw original
+});
+
+test("context consumers share readable agent provenance and heading while raw roles and the source-context command stay exact", () => {
+  const role = "HEAD-authored-P3-work-evidence-not-user-transcript";
+  const context = { events: [{ nodeId: "work", title: "Proposal only", sourceRole: role, reviewState: "unreviewed", freshness: "historical",
+    cancelledActions: ["Do not deploy"], pending: ["Review remains"], unknowns: ["Outcome unknown"], connections: [] }],
+    files: [{ path: "src/action.mjs", associations: [], comparisons: [], unrecordedIntervals: "Unsaved changes remain unknown" }],
+    recordedReasons: [], canonChanges: [], gaps: [] };
+  const value = { kind: "ProjectGraphDiscoveryProjection", nodes: [{ nodeId: "work", kind: "Evidence", subtype: "SessionWorkEvidence", origin: { layer: "sessionWork" },
+    workContent: { summary: "Proposal only", pending: ["Review remains"], unknowns: ["Outcome unknown"] } }], edges: [], query: { details: true }, contextLineage: context };
+  const original = JSON.stringify(value), source = fs.readFileSync(path.join(pluginRoot, "scripts/graph-explorer/browser.js"), "utf8");
+  const start = source.indexOf("  function renderContextLineage()"), end = source.indexOf("  function render()", start);
+  function browserText() {
+    const children = [], body = { replaceChildren() {}, append(...items) { children.push(...items); } };
+    const render = vm.runInNewContext("(" + source.slice(start, end).trim() + ")", { data: { graph: value }, selected: { value: value.nodes[0] }, contextSelection: null,
+      $: id => id === "context-lineage" ? {} : body, text: (_tag, text) => ({ textContent: String(text) }) });
+    render(); return children.map(item => item.textContent).join("\n");
+  }
+  for (const text of [formatCliResult("graph-query", value), formatMcpToolContent("lode_project_graph", value)]) {
+    assert(text.includes("Recorded code context")); assert(text.includes("Agent-authored")); assert(text.includes("not a captured user"));
+    assert(!text.includes(role)); assert(text.includes("Outcome unknown"));
+  }
+  assert(browserText().includes("Agent-authored work evidence; not a captured user transcript"));
+  assert(fs.readFileSync(path.join(pluginRoot, "scripts/lib/graph-explorer-html.mjs"), "utf8").includes("<summary>Recorded code context</summary>"));
+  assert(formatCliResult("graph-query", value, { diagnostics: true, columns: 240 }).includes(role));
+  assert.equal(JSON.stringify(value), original);
+  context.events[0].sourceRole = "Unknown role must remain unknown";
+  assert(formatMcpToolContent("lode_project_graph", value).includes("Unknown role must remain unknown"));
+  assert(browserText().includes("Unknown role must remain unknown"));
+  const independent = formatCliResult("source-context", { status: "ready", results: [], pendingNeeds: [] });
+  assert(independent.startsWith("Source context:")); assert(!independent.includes("Recorded code context"));
 });
 
 test("new readable context text displays terminal controls inertly without mutating machine-readable evidence", () => {
@@ -184,7 +215,7 @@ test("local exact Git bytes connect writer, query, typed MCP, CLI and Explorer w
   const mcp = await dispatch({ id: 1, method: "tools/call", params: { name: "head_project_graph", arguments: { project_root: f.root, paths: ["src/action.mjs"], details: true, depth: 3 } } });
   assert(!mcp.error); assert(!mcp.result.isError); assert(JSON.stringify(mcp.result).includes("declaration-bytes-unchanged"));
   const cli = await run(t, process.execPath, [path.join(pluginRoot, "scripts/lode.mjs"), "graph-query", f.root, "--paths", "src/action.mjs", "--details"], pluginRoot);
-  assert(cli.includes("Source context")); assert(cli.includes("'allow'")); assert(cli.includes("'block'"));
+  assert(cli.includes("Recorded code context")); assert(cli.includes("'allow'")); assert(cli.includes("'block'"));
   assert(formatCliResult("graph-query", found).includes("Recorded reason (not proven change cause)"));
   const explorer = await buildGraphExplorerSnapshot({ root: f.root, query: "src/action.mjs" });
   assert(explorer.graph.contextLineage.files.some(file => file.path === "src/action.mjs"));
