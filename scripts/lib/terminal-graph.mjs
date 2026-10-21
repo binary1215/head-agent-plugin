@@ -132,6 +132,17 @@ export function formatTerminalGraph(value, { columns, diagnostics = false } = {}
   }
   const context = value.contextLineage;
   if (context) {
+    for (const event of context.events || []) {
+      row(`Recorded context ${ref(event.nodeId)}; ${[event.reviewState, event.freshness].filter(Boolean).map(inline).join("; ")}`);
+      const knownRole = event.sourceRole === "HEAD-authored-P3-work-evidence-not-user-transcript";
+      const workAlreadyShown = refs.get(event.nodeId)?.length === 1 && value.nodes.some(node => node?.nodeId === event.nodeId && node.workContent && typedWork(node));
+      if (!knownRole || !workAlreadyShown) block("Recorded source role", knownRole
+        ? "Agent-authored work evidence; not a captured user transcript"
+        : event.sourceRole || "Unknown source role; not authority");
+      list("Context cancelled action (not proof of rollback)", event.cancelledActions);
+      if (event.missingLink) block("Context evidence gap", event.missingLink);
+      if (event.contentPartial || event.titlePartial) row("  Partial context excerpt; inspect the original for more.");
+    }
     for (const file of context.files || []) {
       row(""); block("Recorded code context", file.path);
       for (const pair of file.comparisons || []) {

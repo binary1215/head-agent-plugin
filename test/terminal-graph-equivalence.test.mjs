@@ -51,6 +51,7 @@ test("MCP shared graph text neutralizes terminal controls while raw selected evi
   const unsafe = "ESC:\u001b[31m OSC:\u001b]0;title\u0007 bidi:\u202eend";
   value.nodes[2].workContent.summary = unsafe;
   value.nodes[0].revisionId = "source-revision-\u001b]0;x\u0007abcdef";
+  value.contextLineage = { events: [{ nodeId: "work", sourceRole: unsafe, cancelledActions: [unsafe] }] };
   const original = JSON.stringify(value);
   for (const width of [16, 88, 240]) {
     const text = formatTerminalGraph(value, { columns: width });
@@ -58,6 +59,24 @@ test("MCP shared graph text neutralizes terminal controls while raw selected evi
   }
   assert(!/[\u001b\u0007\u202e]/u.test(formatMcpToolContent("head_project_graph", value)));
   assert.equal(JSON.stringify(value), original);
+});
+
+test("default context text retains unknown provenance, cancellation and partial state without repeating known provenance", () => {
+  const value = graph();
+  value.contextLineage = { events: [
+    { nodeId: "work", sourceRole: "HEAD-authored-P3-work-evidence-not-user-transcript", reviewState: "unreviewed", freshness: "historical" },
+    { nodeId: "version-a", sourceRole: "Unknown role must remain unknown", cancelledActions: ["Do not deploy"], contentPartial: true, missingLink: "Original not linked" }
+  ] };
+  const original = structuredClone(value), text = formatMcpToolContent("lode_project_graph", value);
+  assert.equal(text, formatCliResult("graph-query", value));
+  assert(text.includes("Unknown role must remain unknown")); assert(text.includes("Do not deploy"));
+  assert(text.includes("Partial context excerpt")); assert(text.includes("Original not linked"));
+  assert(!text.includes("HEAD-authored-P3-work-evidence-not-user-transcript"));
+  assert.equal(text.split("Agent-authored work evidence").length - 1, 1);
+  assert.deepEqual(value, original);
+  const withoutBody = structuredClone(value);
+  withoutBody.nodes[2].workContent = null;
+  assert(formatMcpToolContent("lode_project_graph", withoutBody).includes("Agent-authored work evidence; not a captured user transcript"));
 });
 
 test("actual MCP request handler retains complete structuredContent and leaves synthetic originals unchanged", async t => {

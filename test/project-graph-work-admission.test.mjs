@@ -10,6 +10,7 @@ import { recordSessionWorkEvidence } from "../scripts/lib/session-work-context.m
 import { queryProjectGraph } from "../scripts/lib/project-graph.mjs";
 import { runCommand } from "../scripts/head.mjs";
 import { dispatch } from "../scripts/mcp-server.mjs";
+import { formatCliResult } from "../scripts/lib/cli-presentation.mjs";
 
 const pluginRoot = path.resolve(import.meta.dirname, "..");
 const selector = saved => ({ evidenceId: saved.evidence.evidenceId, evidenceDigest: saved.evidence.evidenceDigest });
@@ -79,7 +80,9 @@ test("natural query retains the exact old reason beside matching results in Core
     const value = response.result.structuredContent, included = inspect(value), text = response.result.content[0].text;
     assert.ok(text.includes("OriginalReasonMarker, not superseded")); assert.ok(text.includes("Do not erase constraints"));
     for (const saved of included) assert.ok(text.includes(saved.evidence.content.pending[0]));
-    assert.ok(text.includes(f.session.sessionId)); assert.ok(text.includes(f.first.evidence.evidenceDigest));
+    assert.ok(text.includes("Logical Session S"));
+    const diagnostics = formatCliResult("graph-query", value, { diagnostics: true, columns: 240 });
+    assert.ok(diagnostics.includes(f.session.sessionId)); assert.ok(diagnostics.includes(f.first.evidence.evidenceDigest));
     t.diagnostic(JSON.stringify({ routed, bodyBytes: Buffer.byteLength(JSON.stringify(value.nodes.filter(n => n.workContent).map(n => n.workContent))),
       textBytes: Buffer.byteLength(text), structuredBytes: Buffer.byteLength(JSON.stringify(value)), wrapperBytes: Buffer.byteLength(JSON.stringify(response)) }));
   }
