@@ -58,6 +58,15 @@ normalized limit는 다음 항목을 기록합니다.
 - maximum bytes per file;
 - maximum total source bytes.
 
+기본 `maxOutputBytes`는 **64 MiB(67,108,864바이트)**이며 JavaScript와 Go
+validator가 허용하는 hard ceiling과 같습니다. `result`만이나 Host에 표시되는
+출력이 아니라 envelope를 포함한 전체 UTF-8 JSON response의 한도입니다.
+명시적으로 더 낮게 지정한 예산은 그대로 적용하며, 초과 시 계속 fail-closed로
+거부합니다. 출력을 조용히 잘라내지 않습니다. 초기·증분 repository scan 모두
+이 기본값을 사용합니다. artifact·Markdown·MCP 한도는 별개입니다. 정규화된
+예산이 달라지면 `requestId`는 바뀌지만 semantic producer, 완전한 result의
+digest와 authority는 바뀌지 않습니다.
+
 control-plane executor는 timeout과 external cancellation을 `AbortSignal`에 적용하고, 모든 결과에서 timer와 listener를 정리하며, elapsed time은 protocol response 외부의 operational diagnostic으로만 반환합니다. JavaScript reference handler는 해당 signal을 협력적으로 관찰해야 합니다. 따라서 신뢰할 수 없거나 비협력적인 work는 in-process backend에서 실행할 수 없습니다.
 
 Go adapter는 `shell: false`, 최소 환경, 그리고 검증된 binary directory를 working directory로 사용해 실행 파일 하나를 직접 시작합니다. manifest는 descendant, network access 및 project write를 금지합니다. Stdout은 request output limit에 framing을 더한 크기로 제한되고 stderr는 별도로 제한되며, timeout 또는 cancellation은 정확히 기록된 child PID를 대상으로 graceful termination 후 제한된 forced termination을 수행합니다. 해당 PID가 종료될 때까지 completion을 보고하지 않습니다. 앞으로 child spawn이 허용되는 worker를 위한 descendant-tree supervision은 계속 유예됩니다.

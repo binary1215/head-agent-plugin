@@ -57,6 +57,15 @@ Normalized limits record:
 - maximum bytes per file;
 - maximum total source bytes.
 
+The default `maxOutputBytes` is **64 MiB (67,108,864 bytes)**, also the hard
+ceiling accepted by the JavaScript and Go validators. It bounds the complete
+UTF-8 JSON response, including its envelope, not just `result` or a Host's
+displayed output. Explicit lower budgets remain exact and still fail closed on
+overflow; output is never silently truncated. Initial and incremental repository
+scans inherit this default. Other artifact, Markdown and MCP limits are separate.
+Changing a request's normalized budget changes its `requestId`, not its semantic
+producer, complete result digest or authority.
+
 The control-plane executor applies timeout and external cancellation to an `AbortSignal`, clears timers and listeners in all outcomes, and returns elapsed time only as operational diagnostics outside the protocol response. JavaScript reference handlers must cooperatively observe that signal; therefore untrusted or non-cooperative work is not eligible for the in-process backend.
 
 The Go adapter starts one executable directly with `shell: false`, a minimal environment, and the verified binary directory as its working directory. The manifest forbids descendants, network access, and project writes. Stdout is bounded by the request output limit plus framing, stderr is bounded separately, and timeout or cancellation targets the exact recorded child PID with graceful termination followed by bounded forced termination. Completion is not reported until the PID exits. Descendant-tree supervision for a future worker that is allowed to spawn children remains deferred.

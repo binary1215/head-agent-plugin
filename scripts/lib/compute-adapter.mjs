@@ -7,7 +7,7 @@ export const WORKER_PROTOCOL_VERSION = "0.2.0";
 export const DEFAULT_COMPUTE_LIMITS = Object.freeze({
   timeoutMs: 30_000,
   maxInputBytes: 16 * 1024 * 1024,
-  maxOutputBytes: 32 * 1024 * 1024,
+  maxOutputBytes: 64 * 1024 * 1024,
   maxFiles: 20_000,
   maxFileBytes: 512 * 1024,
   maxTotalBytes: 256 * 1024 * 1024,
