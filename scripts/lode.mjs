@@ -5,7 +5,8 @@ import { fileURLToPath } from "node:url";
 import { ARTIFACT_COMPOSITION } from "./lib/lode-artifact-composition.mjs";
 import { commandEntry, isManagedMutation, requireOperationSurface, requireSurface } from "./lib/managed-maintenance-surface.mjs";
 import { inspectProject, inspectRuntimeAdapters } from "./lib/lode-core.mjs";
-import { withSessionRoute, withSessionCallContext, sessionCallRequiresBinding, sessionSelectionUnresolved, createLodeSession, listLodeSessions, readProjectDirection, updateProjectDirection } from "./lib/session-routing.mjs";
+import { withSessionRoute, withSessionCallContext, sessionCallRequiresBinding, sessionSelectionUnresolved, createLodeSession, listLodeSessions, readProjectDirection, updateProjectDirection, validateRelocationSessionSelection } from "./lib/session-routing.mjs";
+import { resumeProjectLocation } from "./lib/project-relocation.mjs";
 import { startBoundedWorkerJob, readBoundedWorkerJob, cancelBoundedWorkerJob, reconcileBoundedWorkerJob, readBoundedWorkerPatch } from "./lib/bounded-worker-job.mjs";
 import { operateWorkerIntegration, inspectWorkerIntegration, validateWorkerIntegrationRequest, validateWorkerIntegrationStatusRequest } from "./lib/worker-integration-workflow.mjs";
 import { resolveProjectStorage } from "./lib/project-storage-format.mjs";
@@ -345,9 +346,13 @@ export function runCommand(argv = process.argv.slice(2), { observationRegistry =
   if (index >= 0 || sessionContext) {
     if (argv.lastIndexOf("--session") !== index) throw new Error("Only one logical Session route may be selected.");
     const routed = [...argv]; if (index >= 0) routed.splice(index, 2);
-    if (["init", "resume"].includes(parsed.command)) return runRoutedCommand(routed, {
-      observationRegistry, compactionLifecycleHost, workerJobHost, workerJobSupervisor, workerPreparationBackend, signal, onProcess,
-      projectSessionRoute: { sessionId: index >= 0 ? parsed.options.session : undefined, context: sessionContext } });
+    if (["init", "resume"].includes(parsed.command)) {
+      const projectSessionRoute = { sessionId: index >= 0 ? parsed.options.session : undefined, context: sessionContext };
+      const relocation = resumeProjectLocation({ root: parsed.root, pluginRoot, runtimes: parsed.options.runtime?.split(","), inspectOnly: true,
+        validateSelection: owner => validateRelocationSessionSelection(owner, projectSessionRoute) });
+      if (relocation) return runRoutedCommand(routed, {
+        observationRegistry, compactionLifecycleHost, workerJobHost, workerJobSupervisor, workerPreparationBackend, signal, onProcess, projectSessionRoute });
+    }
     const operation = () => runRoutedCommand(routed, { observationRegistry, compactionLifecycleHost, workerJobHost, workerJobSupervisor, workerPreparationBackend, signal, onProcess });
     if (index < 0 && !sessionCallRequiresBinding(parsed.command, "cli")) return operation();
     try { return withSessionCallContext({ root: parsed.root, sessionId: index >= 0 ? parsed.options.session : undefined, context: sessionContext }, operation); }

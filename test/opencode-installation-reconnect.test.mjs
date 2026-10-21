@@ -52,15 +52,24 @@ test('project-owned OpenCode configuration stays byte-identical while the genera
  assert.equal(after.project.projectId,before.project.projectId);assert.equal(after.state.sessionId,before.state.sessionId);
  t.diagnostic(JSON.stringify({case:'project-owned-config',originalPreserved:true,generatedReconnected:true,hostLoaded:false}));
 });
-test('copying the Project to a different canonical root is rejected rather than silently migrated',async t=>{
+test('copied Project remains unavailable to implicit readers; explicit resume relocates and reconnects its installation',async t=>{
  const {root,project,nextPlugin}=fixture(t);
  await initializeOrResumeProject({root:project,pluginRoot:sourceRoot,profile:'core',runtimes:['opencode']});
  const moved=path.join(root,'other-pc-project');
  fs.cpSync(project,moved,{recursive:true,errorOnExist:true,force:false});
  const sourceBefore=bytes(project),movedBefore=bytes(moved);
+ const original=inspectProject(project),oldProject=fs.readFileSync(path.join(project,original.storage.directory,'project.json'),'utf8');
  assert.equal(inspectProject(moved).status,'not_initialized');
  assert.throws(()=>convergeProjectInstallation({root:moved,pluginRoot:nextPlugin}),{code:'NOT_INITIALIZED'});
- await assert.rejects(initializeOrResumeProject({root:moved,pluginRoot:nextPlugin,profile:'core'}),{code:'MANAGED_COLLISION'});
- assert.deepEqual(bytes(project),sourceBefore);assert.deepEqual(bytes(moved),movedBefore);
- t.diagnostic(JSON.stringify({case:'project-root-moved',inspection:'not_initialized',convergenceCode:'NOT_INITIALIZED',publicBootstrapCode:'MANAGED_COLLISION',sourceUnchanged:true,copyUnchanged:true,migrationImplemented:false}));
+ const resumed=await initializeOrResumeProject({root:moved,pluginRoot:nextPlugin,profile:'core'}),current=inspectProject(moved);
+ assert.equal(resumed.projectLocation.status,'relocated');assert.equal(current.status,'ready');
+ assert.equal(current.project.projectId,original.project.projectId);assert.equal(current.state.sessionId,original.state.sessionId);
+ assert.equal(current.project.projectRoot,fs.realpathSync(moved));assert.equal(current.installation.pluginRoot,fs.realpathSync(nextPlugin));
+ assert.equal(read(path.join(moved,'opencode.json')).mcp.lode.command[1],path.join(fs.realpathSync(nextPlugin),'scripts/mcp-server.mjs'));
+ const history=path.join(moved,current.storage.directory,'project-location/history',`${resumed.projectLocation.historicalProjectDigest}.json`);
+ assert.equal(fs.readFileSync(history,'utf8'),oldProject);
+ const changed=new Set([`${original.storage.directory}/project.json`,`${original.storage.directory}/generated/manifest.json`,`${original.storage.directory}/generated/opencode.json`,'opencode.json']);
+ const after=new Map(bytes(moved));for(const [relative,content]of movedBefore)if(!changed.has(relative.replaceAll('\\','/')))assert.equal(after.get(relative),content,relative);
+ assert.deepEqual(bytes(project),sourceBefore);
+ t.diagnostic(JSON.stringify({case:'explicit-project-root-move',implicitInspection:'not_initialized',implicitConvergenceCode:'NOT_INITIALIZED',projectAndSessionPreserved:true,sourceUnchanged:true,historicalOriginalPreserved:true,installationReconnected:true,hostLoaded:false}));
 });
