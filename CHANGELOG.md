@@ -11,7 +11,21 @@ are made only for separately designated releases; missing intermediate tags are
 not backfilled. Marketplace publication does not prove local installation or
 Host/MCP reload.
 
-## 0.3.0-beta.56 — candidate, publication not yet verified
+## 0.3.0-beta.57 — candidate, publication not yet verified
+
+- Use the existing controlled cleanup clock before invalid-transport requests
+  start automatic shutdown. Keep all named cases and require exact native exit,
+  verified tree cleanup and PID absence; do not change production grace periods
+  or reinterpret uncertain cleanup as success.
+- Carry forward beta.56's graph multi-selection UX. Actual browser GUI acceptance
+  remains pending; a successful CI run is not GUI or Host reload evidence.
+
+## 0.3.0-beta.56 — not published
+
+Source: `be9bcacae377babe3aa425172661b5b9d9820847`.
+CI [39602422243](https://github.com/binary1215/lode/actions/runs/39602422243)
+failed two invalid-transport cleanup tests; marketplace publication was skipped.
+The original failure remains recorded separately from the beta.57 repair.
 
 - Keep multiple selected records and exact-linked file comparisons open together.
 - Separate reading focus from exposure and camera; add rectangle selection,

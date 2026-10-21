@@ -378,11 +378,22 @@ for (const [scenario, code, limits] of [["malformed", "CODEX_RPC_INVALID_FRAME"]
   ["stderr-limit", "CODEX_RPC_STDERR_LIMIT", { maxStderrBytes: 2048 }], ["unknown-response", "CODEX_RPC_UNCORRELATED_RESPONSE"],
   ["duplicate-server", "CODEX_RPC_DUPLICATE_SERVER_REQUEST"], ["init-error", "CODEX_RPC_PROVIDER_ERROR"]]) {
   test(`invalid transport ${scenario} fails closed and cleans the exact tree`, async t => {
-    const f = fixture(t, scenario, limits ? { limits } : {});
-    await assert.rejects(f.request(), { code });
-    if (scenario === "init-error") assert.equal(f.transport.inspect().initialized, false);
-    await f.transport.close().catch(() => {});
-    assert.equal(f.transport.inspect().closed, true);
+    // The rejected request starts close before the test can call it. Control
+    // that same cleanup clock from the start, not only in t.after: otherwise
+    // the 200ms safety budget becomes an unrelated OS scheduling assertion.
+    // Exact native close, cleanup proof and PID absence are still required.
+    const restoreClock = controlCleanupClock(t);
+    try {
+      const f = fixture(t, scenario, limits ? { limits } : {});
+      await assert.rejects(f.request(), { code });
+      assert.equal(f.transport.inspect().failureCode, code);
+      if (scenario === "init-error") assert.equal(f.transport.inspect().initialized, false);
+      await f.transport.close();
+      assert.equal(f.transport.inspect().closed, true);
+      const closed = f.journal.find(event => event.event === "process-closed");
+      assert.equal(closed.exactExitObserved, true);
+      assert.equal(closed.supervision.treeCleanupVerified, true);
+    } finally { restoreClock(); }
   });
 }
 
