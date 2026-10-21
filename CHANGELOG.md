@@ -11,6 +11,28 @@ are made only for separately designated releases; missing intermediate tags are
 not backfilled. Marketplace publication does not prove local installation or
 Host/MCP reload.
 
+## 0.3.0-beta.58 — publication tracked separately
+
+- Collapse selection tools on narrow screens and fit graph labels using measured
+  extents; retain selection actions, pinned positions and graph authority limits.
+- Prefer exact declaration identifiers in graph queries without turning ordinary
+  words into semantic intent or excluding documents. Request-local lookup reuse
+  preserves freshness and integrity checks; no material speedup was measured.
+- Show exact cited historical text when a current file is missing. Display only
+  bounded, byte-verified historical rename candidates, never inferred identity,
+  causality or a replacement current path. Preserve UTF-8 BOM evidence.
+- Correct remaining CLI display labels, add English/Korean security and
+  contribution guidance, and include those documents in distribution payloads.
+- Consolidate duplicate storage test files and legacy fixture setup, and remove
+  redundant discovery-only subprocesses without weakening real process tests.
+- Actual browser GUI acceptance and the reported 7.3-second query remain
+  unverified. A private vulnerability-reporting contact is not yet confirmed.
+  Local and synthetic checks do not prove GUI, Host loading or provider behavior.
+
+This source entry is not publication proof. Verify the exact source commit's CI
+and each canonical/compatibility marketplace marker separately. No intermediate
+tag/GitHub Release, local installation or MCP reload is included.
+
 ## 0.3.0-beta.57 — published to Codex and Claude marketplaces
 
 Source: `e77c8e84ba82bbc70764110087d8485b2dbd7973`.
