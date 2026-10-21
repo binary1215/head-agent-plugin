@@ -25,8 +25,10 @@ Host/MCP reload.
   contribution guidance, and include those documents in distribution payloads.
 - Consolidate duplicate storage test files and legacy fixture setup, and remove
   redundant discovery-only subprocesses without weakening real process tests.
+- Enable GitHub private vulnerability reporting and link its reporting form in
+  both security documents; no response SLA or support window is promised.
 - Actual browser GUI acceptance and the reported 7.3-second query remain
-  unverified. A private vulnerability-reporting contact is not yet confirmed.
+  unverified.
   Local and synthetic checks do not prove GUI, Host loading or provider behavior.
 
 This source entry is not publication proof. Verify the exact source commit's CI

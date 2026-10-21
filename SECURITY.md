@@ -4,8 +4,10 @@
 
 ## Reporting sensitive findings
 
-A private reporting contact has not yet been confirmed for this document.
-Agree a private channel with the maintainer before sending sensitive details.
+Use [GitHub private vulnerability reporting](https://github.com/binary1215/lode/security/advisories/new)
+for sensitive findings. Private vulnerability reporting is enabled for this
+repository; sign in to GitHub to submit the report. No separate email address
+is declared here.
 Do not publish credentials, OAuth tokens, private repository contents, original
 work records or exploitable details in public issues or exported reports.
 No response SLA or security-support window is declared here.
