@@ -10,11 +10,12 @@ test('repository rename preserves installed carrier identity and pins only exact
   }
   assert.equal((workflow.match(/previous_repository="\$\{GITHUB_REPOSITORY\}"/g) ?? []).length, 2);
   assert.equal((workflow.match(/--source-repository "\$\{GITHUB_REPOSITORY\}"/g) ?? []).length, 2);
-  assert.equal((workflow.match(/--marketplace-name "\$\{MARKETPLACE_NAME\}"/g) ?? []).length, 2);
+  // Count builder argument lines, not the read-only publication verifier's inline option.
+  assert.equal((workflow.match(/^ +--marketplace-name "\$\{MARKETPLACE_NAME\}"/gm) ?? []).length, 2);
   assert.equal((workflow.match(/marketplace_name: head-agent-plugin/g) ?? []).length, 2);
   assert.equal((workflow.match(/if \[\[ "\$\{MARKETPLACE_NAME\}" != "head-agent-plugin" \]\]; then exit 1; fi/g) ?? []).length, 2);
   assert.equal((workflow.match(/--expected-repository "\$\{previous_repository\}"/g) ?? []).length, 5);
-  assert(workflow.includes('--force-with-lease="refs/heads/${MARKETPLACE_BRANCH}:${EXPECTED_SHA}"'));
+  assert.equal((workflow.match(/--force-with-lease="refs\/heads\/\$\{MARKETPLACE_BRANCH\}:\$\{EXPECTED_SHA\}"/g) ?? []).length, 2);
   assert(!workflow.includes('--force origin'));
   // This is a workflow contract check, not an actual installation/update test.
   for (const file of ['../README.md', '../README.ko.md']) {
