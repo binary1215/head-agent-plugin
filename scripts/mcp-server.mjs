@@ -5,8 +5,13 @@ import { ARTIFACT_COMPOSITION, publicToolName } from "./lib/lode-artifact-compos
 import { DISCOVERY_PREFIX_PAIRS } from "../compat/head/public-names.mjs";
 const semanticToolName = name => resolveOperation(name)?.semanticName ?? name;
 const presentedSchemas = new WeakMap();
+const presentedSchema = value => Array.isArray(value) ? value.map(presentedSchema)
+  : value && typeof value === "object" ? Object.fromEntries(Object.entries(value).map(([key, entry]) => [key,
+    ["description", "title"].includes(key) && typeof entry === "string" ? entry.replace(/\bHEAD\b/g, "Lode") : presentedSchema(entry)])) : value;
 const presentedTool = tool => {
-  if (!presentedSchemas.has(tool)) presentedSchemas.set(tool, { ...tool, name: publicToolName(tool.name) });
+  // Display prose only. Names, field keys, enums, defaults and wire identifiers
+  // retain the original contract, including in legacy carrier packages.
+  if (!presentedSchemas.has(tool)) presentedSchemas.set(tool, { ...presentedSchema(tool), name: publicToolName(tool.name) });
   return presentedSchemas.get(tool);
 };
 import path from "node:path";
@@ -2324,6 +2329,14 @@ async function dispatchSessionRequest(request, options = {}) {
   let sessionContext = options.sessionContext;
   let bindingFailure = null;
   let relocationNeeded = false;
+  if (request.method === "tools/call" && args?.project_root && requestedName === "head_project_status") {
+    try {
+      const { inspectProjectLocationExperience } = await import("./lib/project-bootstrap.mjs");
+      const projectLocationProjection = inspectProjectLocationExperience({ root: args.project_root,
+        sessionId: hasSelection ? args.session_id : undefined });
+      if (projectLocationProjection) return dispatchRouted(request, { ...options, projectLocationProjection });
+    } catch (error) { return failure(request.id ?? null, error.message); }
+  }
   if (request.method === "tools/call" && args?.project_root && requestedName === "head_project_initialize_or_resume") {
     try {
       if (hasSelection && typeof args.session_id !== "string") throw new Error("An explicit logical Session route must be text; omit it for an unspecified route.");
@@ -2389,7 +2402,7 @@ async function dispatchSessionRequest(request, options = {}) {
   return dispatchRouted(request, options);
 }
 
-async function dispatchRouted(request, { surface = "ordinary", graphDbTransport = null, coordinationWorkspaceHost = null, observationRegistry = null, conformanceTriggerRegistry = null, compactionLifecycleHost = null, workerJobHost = null, workerJobSupervisor = null, workerPreparationBackend = null, signal, onProcess, onValidatedSessionSelection = null, readRelatedNativeContext = null, projectSessionRoute = null } = {}) {
+async function dispatchRouted(request, { surface = "ordinary", graphDbTransport = null, coordinationWorkspaceHost = null, observationRegistry = null, conformanceTriggerRegistry = null, compactionLifecycleHost = null, workerJobHost = null, workerJobSupervisor = null, workerPreparationBackend = null, signal, onProcess, onValidatedSessionSelection = null, readRelatedNativeContext = null, projectSessionRoute = null, projectLocationProjection = null } = {}) {
   requireSurface(surface);
   const id = request.id ?? null;
     if (request.method === "initialize") {
@@ -2435,7 +2448,7 @@ async function dispatchRouted(request, { surface = "ordinary", graphDbTransport 
         },
       }
       : name === "head_project_status"
-        ? (await import("./lib/project-bootstrap.mjs")).inspectProjectExperience({ root: args.project_root })
+        ? projectLocationProjection ?? (await import("./lib/project-bootstrap.mjs")).inspectProjectExperience({ root: args.project_root })
       : name === "head_project_graph"
         ? (await import("./lib/project-graph.mjs")).queryProjectGraph({ root: args.project_root, query: args.query ?? "", view: args.view ?? "all",
           anchorIds: args.anchor_ids ?? [], paths: args.paths ?? [], depth: args.depth, details: args.details ?? false, maxNodes: args.max_nodes, maxEdges: args.max_edges,

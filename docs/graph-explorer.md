@@ -12,6 +12,7 @@ containing the exporter, the agent can run this from the plugin directory:
 ```powershell
 node scripts/lode.mjs graph-explorer "<project-directory>"
 node scripts/lode.mjs graph-explorer "<project-directory>" --query relay --history
+node scripts/lode.mjs graph-explorer "<project-directory>" --share
 ```
 
 Open the returned HTML file in a browser. No server, account, database setup or
@@ -19,6 +20,10 @@ Session binding is required. The default output is a newly created operating-sys
 temporary directory. An optional `--output` selects a new report file; existing
 files and canonical/runtime directories cannot be overwritten. Each explicit
 generation makes one report, not an automatic stream of artifacts.
+
+The executable belongs to the plugin, but `<project-directory>` is the project
+you are working on. Always pass it explicitly. Missing Project, World or source
+evidence is disclosed; the exporter does not substitute Lode's code or a demo.
 
 ## Explore the evidence
 
@@ -46,6 +51,9 @@ element for every record. Select a point or search any exact ID to focus it.
 Search covers every exported record; list and connection pages are display
 batches, not export limits. Filtered neighbors, off-screen neighbors and missing
 endpoints have separate counts. Start here clears only the temporary journey.
+Search narrows the record list and overview without hiding the eligible selected
+context. Explicit history, axis and view filters still apply; an out-of-scope
+selection is labelled rather than silently opting into historical evidence.
 Node distance is not a relevance score.
 
 Current evidence is the default. Include historical / non-current evidence
@@ -81,6 +89,8 @@ The offline HTML stores repeated metadata in a lossless table encoding and
 reconstructs the same JSON records when opened. This changes transport size,
 not evidence identity, fields, multiplicity or authority. Large reports still
 need memory to reconstruct their inventory; an export is not a browser-speed guarantee.
+The HTML and export result disclose the exact UTF-8 file size with a nonblocking
+resource notice. This warning does not trim records or impose a size gate.
 
 Exact original text remains bounded to 64 KiB per file and 256 KiB in total.
 The exporter includes a focused detail bundle for its query, not all original
@@ -99,6 +109,13 @@ repository data when sharing it. It uses no runtime fetch, CDN, telemetry, exter
 image or local server. Untrusted repository text is displayed as text under a
 restrictive content security policy. Explicit local read-only adapters avoid a
 configured remote graph store.
+
+`--share` omits generated `project.root`, local regeneration executable/Project
+arguments, and generated original-expansion `project_root` hints. Exact IDs,
+digests, original bodies, historical references and evidence are not redacted.
+Those originals may themselves contain absolute paths or confidential content:
+review the report before sharing. This option is not anonymization. The ordinary
+export retains local metadata and its safely quoted regeneration command.
 
 The picture is a P4 derived view. It cannot approve an action, promote a candidate,
 write a checkpoint, restore a Session, replay an effect or change original records.

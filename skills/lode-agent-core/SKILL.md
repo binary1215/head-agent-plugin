@@ -151,6 +151,16 @@ are not general exploration gates. Before changes, recheck affected current
 sources and effect authority.
 Read [project discovery](references/project-discovery.md) for implementation.
 
+For an explicitly requested visual graph, use the existing CLI:
+`node <plugin-root>/scripts/lode.mjs graph-explorer "<target-project-root>"`.
+Resolve the executable from this installation, but always pass the user's target
+Project root explicitly, even when the working directory is the plugin folder.
+The graph describes that Project, not Lode itself. Missing Project/World/source
+evidence stays unavailable; never substitute the plugin repository or a demo.
+Return the new offline HTML path. No new MCP tool, database setup or Session
+binding is needed. For sharing use `--share` only as generated-metadata omission,
+not anonymization of originals. See [Graph Explorer](../../docs/graph-explorer.md).
+
 ## Agree the work, not the paperwork
 
 Reuse concrete user agreement that remains valid for the current request,

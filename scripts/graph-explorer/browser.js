@@ -48,10 +48,11 @@
   let model = newModel(activeGraph);
   const historical = node => node.currentTraversalEligible === false || node.snapshotState === "historical" || node.historical === true
     || /^(?:historical|domain-not-current|unavailable)/.test(node.freshness || "");
+  const inEvidenceScope = node => node && ($("include-history").checked || !historical(node))
+    && ($("axis").value === "all" || ($("axis").value === "code") === isCode(node))
+    && ($("view").value === "all" || node.views?.includes($("view").value));
   function matches() {
-    const query = $("search").value.trim().toLocaleLowerCase(), axis = $("axis").value, view = $("view").value;
-    return model.search(query, activeGraph.nodes.filter(node => ($("include-history").checked || !historical(node))
-      && (axis === "all" || (axis === "code") === isCode(node)) && (view === "all" || node.views?.includes(view))));
+    return model.search($("search").value.trim().toLocaleLowerCase(), activeGraph.nodes.filter(inEvidenceScope));
   }
   function setBox() { $("graph").setAttribute("viewBox", box.join(" ")); }
   function focusCamera() {
@@ -66,7 +67,7 @@
     cameraFrame = requestAnimationFrame(() => { cameraFrame = null; if (mapMode !== "overview") renderGraph(visibleMatches); });
   }
   function fit() {
-    const ids = new Set(matches().map(node => node.nodeId)), points = [...model.positions].filter(([id]) => ids.has(id) && model.visible.has(id)).map(([, point]) => point);
+    const points = [...model.positions].filter(([id]) => inEvidenceScope(model.nodes.get(id)) && model.visible.has(id)).map(([, point]) => point);
     if (!points.length) box = [0, 0, 1000, 700];
     else {
       let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
@@ -142,7 +143,10 @@
   function renderGraph(found) {
     const focus = selected?.kind === "node" ? selected.value.nodeId : null, neighborhood = new Set(focus ? [focus, ...model.neighbors(focus)] : []);
     const intended = mapMode === "explored" ? model.visible : neighborhood;
-    const canvas = $("graph"), shown = found.filter(node => {
+    // Search narrows the record list/overview, not the selected journey. Explicit
+    // history, axis and original-view scope still govern every drawn record.
+    const scope = [...intended].map(id => model.nodes.get(id)).filter(inEvidenceScope), scopeIds = new Set(scope.map(node => node.nodeId));
+    const canvas = $("graph"), shown = scope.filter(node => {
       if (!intended.has(node.nodeId)) return false;
       const p = model.positions.get(node.nodeId); if (!p) return false;
       const e = nodeExtent(node);
@@ -191,13 +195,15 @@
       accessibleActivate(group, keyboard => selectNode(node, keyboard));
       group.addEventListener("keydown", event => {
         const delta = { ArrowLeft: [-20, 0], ArrowRight: [20, 0], ArrowUp: [0, -20], ArrowDown: [0, 20] }[event.key];
-        if (!event.shiftKey || !delta) return; event.preventDefault(); const at = model.positions.get(node.nodeId); model.move(node.nodeId, at.x + delta[0], at.y + delta[1]); renderGraph(matches());
+        if (!event.shiftKey || !delta) return; event.preventDefault(); const at = model.positions.get(node.nodeId); model.move(node.nodeId, at.x + delta[0], at.y + delta[1]); renderGraph(visibleMatches);
         const replacement = [...canvas.querySelectorAll("[data-node]")].find(el => el.getAttribute("data-node") === node.nodeId); replacement?.focus();
       }); canvas.append(group);
     }
-    if (!shown.length) { const empty = svg("text", { x: 60, y: 90, class: "empty" }); empty.textContent = found.length ? "Choose a starting record from the list." : "No included records match. This does not prove absence."; canvas.append(empty); }
-    const hidden = [...intended].filter(id => !foundIds.has(id)).length, offscreen = [...intended].filter(id => foundIds.has(id)).length - shown.length;
-    $("status").textContent = `${mapMode === "focus" ? "Selected & direct connections" : "Explored map"}: ${shown.length} on screen, ${offscreen} off-screen, ${hidden} hidden by filters / ${activeGraph.nodes.length} exported. Pan, use All evidence, or follow the complete connection list.${activeGraph.reasonCode ? ` ${activeGraph.reasonCode}` : ""}`;
+    if (!shown.length) { const empty = svg("text", { x: 60, y: 90, class: "empty" }); empty.textContent = selected?.kind === "node" && !inEvidenceScope(selected.value)
+      ? "Selected record is outside the current evidence scope. Change scope or choose a result; it has not been removed."
+      : scope.length ? "Selected context is off-screen. Use Focus selection or pan." : "Choose a starting record from the list. Empty coverage does not prove absence."; canvas.append(empty); }
+    const hidden = [...intended].filter(id => !scopeIds.has(id)).length, offscreen = scope.length - shown.length;
+    $("status").textContent = `${mapMode === "focus" ? "Selected & direct connections" : "Explored map"}: ${shown.length} on screen, ${offscreen} off-screen, ${hidden} unavailable/outside evidence scope / ${activeGraph.nodes.length} exported. Search narrows the list and overview; eligible selected context stays visible.${selected?.kind === "node" && !inEvidenceScope(selected.value) ? " Selected record is outside the current evidence scope; it has not been removed." : ""}${activeGraph.reasonCode ? ` ${activeGraph.reasonCode}` : ""}`;
     setBox();
   }
   function renderDetail() {
@@ -337,6 +343,7 @@
         || file.comparisons.some(pair => pair.changeSet?.nodeId === value.nodeId || pair.recordedReviewDecisionId === value.nodeId));
       const exact = recordConnection || digest && (file.current.digest === digest || file.comparisons.some(pair => pair.before?.digest === digest || pair.after?.digest === digest));
       body.append(text("h3", file.path));
+      if (file.currentObservation) body.append(text("p", file.currentObservation.explanation, "hint"));
       if (!exact) { body.append(text("p", "Same path only; an exact revision link is not established for this selection.", "hint")); continue; }
       body.append(text("p", "File-level context; not automatically the reason for each symbol."));
       for (const association of file.associations) relatedIds.add(association.nodeId);

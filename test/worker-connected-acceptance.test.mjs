@@ -108,7 +108,7 @@ async function git(root, args, expectedCode = 0) {
 
 test("C02 same-model workers actually overlap with distinct authorization/owners and replay never respawns", { skip: process.platform !== "win32" }, async t => {
   const f = await fixture(t);
-  const selection = resolveVerifiedProcessSupervisor({ pluginRoot: process.env.HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT || pluginRoot });
+  const selection = resolveVerifiedProcessSupervisor({ pluginRoot: process.env.LODE_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT || process.env.HEAD_AGENT_PROCESS_SUPERVISOR_FIXTURE_ROOT || pluginRoot });
   const policy = { kind: "protocol-fixture", actualProviderInvoked: false, barrierDirectory: f.barrierDirectory,
     protocolEvidence: f.protocolEvidence, projectBinding: f.projectBinding, supervisorSelection: selection };
   const host = createBoundedWorkerJobHost({ runnerFile: path.join(import.meta.dirname, "helpers/connected-worker-runner.mjs"), policy });

@@ -3,7 +3,7 @@ import { formatForVerifiedOwner } from "./project-storage-format.mjs";
 export const EXPERIENCE_PROJECTION_PROTOCOL_VERSION = "0.1.0";
 
 function item({ id, owner, severity = "notice", actionability: itemActionability = "immediate", summary, blockedOperations = [] }) {
-  return { id, owner, severity, actionability: itemActionability, summary, blockedOperations };
+  return { id, owner, ownerLabel: owner === "user" ? "user" : "Lode", severity, actionability: itemActionability, summary, blockedOperations };
 }
 
 export function actionability({
@@ -31,10 +31,16 @@ export function buildAttentionProjection(experience, storage = undefined) {
   const runtime = experience?.runtime || {};
   const items = [];
 
+  if (["relocation_available", "relocation_pending"].includes(core.state)) items.push(item({
+    id: "project-location-resume", owner, actionability: "when-resuming-this-project",
+    summary: "Existing Project location verified for explicit resume. Session, Run and recovery remain uninspected; no Host binding was restored.",
+    blockedOperations: [],
+  }));
+
   if (core.state === "not_initialized") items.push(item({
     id: "core-initialization",
     owner,
-    summary: `Initialize the Core only because ${owner} use was requested for this project.`,
+    summary: "Initialize the Core only because Lode use was requested for this project.",
     blockedOperations: ["head-managed-capabilities"],
   }));
   if (core.state === "drifted") items.push(item({
@@ -42,7 +48,7 @@ export function buildAttentionProjection(experience, storage = undefined) {
     owner,
     severity: "integrity",
     actionability: core.projectionDriftOnly ? "when-managed-mutation-is-in-scope" : "immediate",
-    summary: `Inspect managed projection drift before a mutating ${owner} operation.`,
+    summary: "Inspect managed projection drift before a mutating Lode operation.",
     blockedOperations: ["head-managed-mutation"],
   }));
   if (experience?.currentProjectDirectionAvailability?.status === "unavailable") items.push(item({
@@ -55,7 +61,7 @@ export function buildAttentionProjection(experience, storage = undefined) {
     id: "recovery-verification",
     owner,
     severity: "integrity",
-    summary: `Inspect recovery readiness for the affected ${owner} operations (${recovery.reasonCode || recovery.state}).`,
+    summary: `Inspect recovery readiness for the affected Lode operations (${recovery.reasonCode || recovery.state}).`,
     blockedOperations: recovery.blockedOperations || [],
   }));
   if (product.state === "review_required") items.push(item({

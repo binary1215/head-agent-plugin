@@ -95,7 +95,7 @@ function productReadiness(status) {
       state: "evidence_required",
       status: "product_evidence_required",
       action: "provide_product_evidence",
-      summary: "Product governance is active and needs a user-owned brief or a fresh HEAD semantic proposal bound to current repository evidence.",
+      summary: "Product governance is active and needs a user-owned brief or a fresh Lode semantic proposal bound to current repository evidence.",
     },
     awaiting_review: {
       state: "review_required",
@@ -379,7 +379,7 @@ function capabilityGuide({ coreState, productState, contextState, runtimes = [] 
       // Core readiness scopes HEAD-managed capabilities, never ordinary work.
       availability: "available",
       useWhen: "The task can be completed coherently in the current Project and Session without durable execution governance.",
-      entrypoint: "Use the active coding conversation; HEAD artifacts are not required for ordinary edits.",
+      entrypoint: "Use the active coding conversation; Lode artifacts are not required for ordinary edits.",
     },
     {
       id: "product-governance",
@@ -399,7 +399,7 @@ function capabilityGuide({ coreState, productState, contextState, runtimes = [] 
       id: "durable-run",
       availability: blocked || "available-on-demand",
       useWhen: "Execution is long, risky, review-sensitive, or must survive provider/context loss.",
-      entrypoint: "WholePlanSnapshot -> ExecutionContract + ContextCapsule -> ResultPacket -> Fresh HEAD review",
+      entrypoint: "WholePlanSnapshot -> ExecutionContract + ContextCapsule -> ResultPacket -> Fresh Lode review",
     },
     {
       id: "bounded-workers",
@@ -486,7 +486,7 @@ function projectExperience(projectInspection, onboardingInspection = null, recov
       summary: unrelatedDefaultProductLoss ? "Continue from the selected Session. Optional Product facts depending on the damaged default Session are unavailable; they are not a prerequisite for this work."
         : coreState === "ready" ? product.summary : projectionDriftOnly
         ? "Continue the task from verified records. Generated projection differences remain untouched; review them only before an affected managed mutation."
-        : "Review managed-file drift before any mutating HEAD operation. No automatic repair is attempted.",
+        : "Review managed-file drift before any mutating Lode operation. No automatic repair is attempted.",
       entrypoint: entrypoint(action, onboardingInspection),
     },
     capabilities: capabilityGuide({ coreState, productState: product.state, contextState: context, runtimes: projectInspection.project.runtimes }),
@@ -495,7 +495,34 @@ function projectExperience(projectInspection, onboardingInspection = null, recov
   }, projectInspection.storage);
 }
 
+// Physical location facts only: no Session selection, recovery, binding lookup,
+// publication lock, or adoption. Normal owned roots retain their existing route.
+export function inspectProjectLocationExperience({ root = ".", sessionId } = {}) {
+  const location = resumeProjectLocation({ root, pluginRoot: activePluginRoot, inspectOnly: true,
+    validateSelection: sessionId === undefined ? null : owner => {
+      if (typeof sessionId !== "string") throw new Error("An explicit logical Session route must be text.");
+      validateRelocationSessionSelection(owner, { sessionId });
+    } });
+  if (!location) return null;
+  const state = location.publicationPending ? "relocation_pending" : "relocation_available";
+  return withExperienceProjections({
+    kind: "LodeProjectExperienceProjection", protocolVersion: PROJECT_BOOTSTRAP_PROTOCOL_VERSION, status: state,
+    projectRoot: location.projectRoot,
+    retainedProject: { projectId: location.projectId, previousRoot: location.previousRoot },
+    projectLocation: { ...location, authorityPlane: "P4", executionReplayAllowed: false, nativeBindingTransferred: false },
+    selectedSession: { status: "not-inspected", selectionClaimed: false },
+    readiness: { core: { state }, product: { state: "not-inspected" }, context: { state: "not-inspected" },
+      recovery: { state: "not-inspected", directionRestored: false, headActionRequired: false } },
+    nextAction: { id: "resume_existing_project", summary: "Explicitly resume this existing Project at the new folder; do not initialize a replacement. This read has not selected or restored a Session.",
+      entrypoint: { cli: "resume", tool: "lode_project_initialize_or_resume", profile: "core" } },
+    authority: { plane: "P4", advisoryOnly: true, persisted: false, mutatesProject: false, grantsAuthorization: false,
+      writesRecoveryDirection: false },
+  });
+}
+
 export function inspectProjectExperience({ root = ".", recoveryOverride = null } = {}) {
+  const location = inspectProjectLocationExperience({ root });
+  if (location) return location;
   const project = inspectProject(root);
   if (project.status !== "ready") return projectExperience(project, null, recoveryOverride);
   return projectExperience(project, inspectOptionalOnboarding({ root }), recoveryOverride);
@@ -670,7 +697,7 @@ async function initializeOrResumeCurrentProject({ root, pluginRoot, runtimes = n
         },
         nextAction: {
           id: "provide_product_evidence",
-          summary: "Repository evidence changed. Re-inspect the current SourceSnapshot and submit a fresh HEAD semantic proposal; do not review the stale candidate set.",
+          summary: "Repository evidence changed. Re-inspect the current SourceSnapshot and submit a fresh Lode semantic proposal; do not review the stale candidate set.",
           entrypoint: entrypoint("provide_product_evidence"),
         },
       };

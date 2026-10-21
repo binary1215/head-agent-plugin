@@ -15,6 +15,8 @@ const INCLUDE_ENTRIES = [
   "LICENSE",
   "README.md",
   "README.ko.md",
+  "CHANGELOG.md",
+  "CHANGELOG.ko.md",
   "assets",
   "compat",
   "docs",

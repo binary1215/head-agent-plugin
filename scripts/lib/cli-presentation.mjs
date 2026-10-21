@@ -95,6 +95,13 @@ function formatUnavailableSession(value, { doctor = false } = {}) {
 
 export function formatProjectStatus(value, { doctor = false } = {}) {
   if (value?.status === "session_selection_unresolved") return formatUnavailableSession(value, { doctor });
+  if (["relocation_available", "relocation_pending"].includes(value?.status)) return [
+    `Lode found an existing Project: ${value.status === "relocation_pending" ? "location publication is pending" : "explicit resume is available at this folder"}.`,
+    `Retained Project identity: ${value.retainedProject.projectId} (not an active Session selection).`,
+    "Session, Run, recovery and Host binding: not inspected or restored.",
+    "Resume this existing Project explicitly; do not initialize a replacement. Independent work can continue.",
+    "This read changed no files, replayed no execution and granted no authorization.", "",
+  ].join("\n");
   const core = value.readiness?.core;
   const product = value.readiness?.product;
   const context = value.readiness?.context;
@@ -151,7 +158,7 @@ export function formatProjectStatus(value, { doctor = false } = {}) {
   }
   if (value.attention?.items?.length) {
     lines.push("", "Attention:");
-    for (const item of value.attention.items) lines.push(`  - ${item.owner}: ${compactText(item.summary, 240)}`);
+    for (const item of value.attention.items) lines.push(`  - ${item.ownerLabel ?? (item.owner === "HEAD" ? "Lode" : item.owner)}: ${compactText(item.summary, 240)}`);
   }
   lines.push("", "This is read-only guidance; it grants no authority and changes no project state.");
   return `${lines.join("\n")}\n`;
@@ -309,7 +316,7 @@ export function formatConversationRecovery(value) {
     return `${value.status === "conversation_direction_restored" ? "Lode restored the verified Session checkpoint — continue the task" : "Lode is ready — continue the task"}${suffix}.\n${emptyQuiet ? "" : context.text}${executionText}${formatSessionWorkContext(entry.workContext)}${formatRelatedNativeWork(entry.relatedNativeWorkContext)}`;
   }
   for (const attention of entry?.attention?.items || []) {
-    if (attention.actionability === "immediate") lines.push(`${attention.owner} follow-up: ${compactText(attention.summary, 300)}`);
+    if (attention.actionability === "immediate") lines.push(`${attention.ownerLabel ?? (attention.owner === "HEAD" ? "Lode" : attention.owner)} follow-up: ${compactText(attention.summary, 300)}`);
   }
   if (value?.status === "host_lifecycle_unavailable") {
     lines.push("Host compaction hooks are unavailable; first-turn artifact restore still works and provider compaction remains Host-owned.");

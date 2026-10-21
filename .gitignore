@@ -131,3 +131,4 @@ Thumbs.db
 !test/helpers/graph-explorer-dom-fixture.mjs
 !test/graph-explorer-codec.test.mjs
 !test/project-relocation.test.mjs
+!test/post-beta54-ux.test.mjs

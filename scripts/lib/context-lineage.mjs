@@ -122,6 +122,14 @@ export async function explainContextLineage({ root, project, storage, selection 
       }
     }
     files.push({ path: relative, current: current.text !== undefined ? { digest: current.digest, basis: current.basis } : current,
+      ...(current.text === undefined ? { currentObservation: {
+        status: current.reasonCode === "ENOENT" ? "current-path-not-found" : "current-source-unavailable",
+        reasonCode: current.reasonCode,
+        explanation: current.reasonCode === "ENOENT"
+          ? "The cited path was not found in this current source read. This does not establish deletion, rename, when it happened or why. Retained citations and recorded snapshot pairs remain separate evidence."
+          : "Current source bytes are unavailable. This is not proof of deletion, rename or unchanged content; consult the exact reason and retained evidence.",
+        deletionEstablished: false, renameEstablished: false,
+      } } : {}),
       associations, comparisons, recordedReasonScope: "Reasons belong to cited work/reviews, not automatically to this file or each symbol.",
       unrecordedIntervals: comparisons.length ? "Other unsaved changes and missing work remain unknown." : "No exact recorded before/after source pair was selected; continue from current source and available originals." });
   }

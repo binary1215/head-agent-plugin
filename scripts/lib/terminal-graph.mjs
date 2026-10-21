@@ -145,6 +145,7 @@ export function formatTerminalGraph(value, { columns, diagnostics = false } = {}
     }
     for (const file of context.files || []) {
       row(""); block("Recorded code context", file.path);
+      if (file.currentObservation) block("Current source observation", file.currentObservation.explanation);
       for (const pair of file.comparisons || []) {
         row(`  ${inline(pair.status)}; file bytes ${inline(pair.fileBytes || "unknown")}; ${inline(pair.scope)}`);
         if (pair.currentMatchesRecordedAfter === false) block("Version gap", `${pair.labels?.after || (pair.scope === "recorded-changeset-snapshot-pair" ? "Recorded after" : "Compared version")} differs from current; later changes remain separate.`);

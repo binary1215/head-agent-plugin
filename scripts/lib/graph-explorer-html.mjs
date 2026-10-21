@@ -11,11 +11,12 @@ export function renderGraphExplorer(snapshot) {
   const script = codec + "\n" + fs.readFileSync(path.join(assets, "exploration.js"), "utf8") + "\n" + fs.readFileSync(path.join(assets, "browser.js"), "utf8");
   const json = JSON.stringify(explorerCodec.encode(snapshot)).replaceAll("<", "\\u003c").replaceAll(">", "\\u003e")
     .replaceAll("&", "\\u0026").replaceAll("\u2028", "\\u2028").replaceAll("\u2029", "\\u2029");
-  return `<!doctype html>
+  const html = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; connect-src 'none'; img-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'">
 <title>Lode Graph Explorer</title><style nonce="${nonce}">${css}</style></head><body>
 <header><div><span class="eyebrow">LODE / LOCAL EVIDENCE</span><h1>Graph Explorer</h1><p id="project"></p></div><div class="snapshot"><strong>Read-only snapshot</strong><span id="generated"></span><span id="coverage"></span></div></header>
+<p class="hint" id="report-notice">HTML size: __LODE_REPORT_BYTE_COUNT__ bytes. Large reports can take substantial browser memory and time; no node/edge cutoff is applied. ${snapshot.metadataPolicy?.mode === "share-generated-metadata" ? "Shared-report mode omits generated local execution/project paths only. " : "Local report includes generated machine paths. "}Original evidence may contain sensitive paths or content. This is not anonymization.</p>
 <main><aside class="controls" aria-label="Graph controls"><label for="search">Search all exported metadata</label><input id="search" type="search" placeholder="Name, exact ID, source, decision…">
 <details id="display-options" open><summary>Evidence scope &amp; display</summary>
 <label for="layer">Evidence layer</label><select id="layer"><option value="project">Project purpose &amp; lineage</option><option value="code">Source imports &amp; calls</option></select>
@@ -38,4 +39,13 @@ export function renderGraphExplorer(snapshot) {
 <details><summary>Snapshot basis &amp; omissions (diagnostics)</summary><pre id="basis"></pre></details><details id="history"><summary>Retained graph structure (diagnostics)</summary><div id="history-body"></div></details></section></main>
 <footer>This file has no runtime fetch, server or action controls. Selecting a historical Session changes this display only. New work and recovery remain in your normal Lode conversation.</footer>
 <script nonce="${nonce}" id="snapshot" type="application/json">${json}</script><script nonce="${nonce}">${script}</script></body></html>\n`;
+  // Include the exact UTF-8 file size, including this decimal field. It is an
+  // advisory, never an export limit; convergence only depends on digit count.
+  let bytes = 0;
+  for (;;) {
+    const result = html.replace("__LODE_REPORT_BYTE_COUNT__", String(bytes));
+    const actual = Buffer.byteLength(result);
+    if (actual === bytes) return result;
+    bytes = actual;
+  }
 }

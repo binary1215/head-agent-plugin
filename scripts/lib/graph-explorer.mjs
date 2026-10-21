@@ -58,7 +58,8 @@ function exactOriginal(root, reference, remaining) {
 }
 
 // UI-private projection. No Session selection, initialization or refresh occurs.
-export async function buildGraphExplorerSnapshot({ root = ".", query = "", history = false } = {}) {
+export async function buildGraphExplorerSnapshot({ root = ".", query = "", history = false, share = false } = {}) {
+  if (typeof share !== "boolean") fail("GRAPH_EXPLORER_INVALID_SHARE_OPTION");
   const started = performance.now(), owner = readGraphProject(root), projectRoot = owner.projectRoot;
   const adapterOwner = { projectRoot, storage: owner.storage };
   const worldAdapter = readOnlyLocalAdapter(LocalJsonWorldModelStoreAdapter, adapterOwner, "world-model");
@@ -136,11 +137,20 @@ export async function buildGraphExplorerSnapshot({ root = ".", query = "", histo
     } catch (error) { retainedHistory = { status: "unavailable", entries: [], diff: null, reasonCode: reason(error) }; }
   }
   if (!owner.project) unavailable.push("PROJECT_GRAPH_NOT_INITIALIZED");
+  // These are generated viewer hints, not original evidence. Do not recursively
+  // redact raw bodies, hashes, historical references or canonical graph records.
+  if (share) for (const node of graph.nodes) if (node.originalExpansion?.arguments?.project_root) {
+    const { project_root, ...argumentsWithoutRoot } = node.originalExpansion.arguments;
+    node.originalExpansion = { ...node.originalExpansion, arguments: argumentsWithoutRoot, requiresExplicitProjectRoot: true };
+  }
   return {
     kind: "GraphExplorerSnapshot", schemaVersion: 1, authorityPlane: "P4-derived-view", runtimeAuthority: false,
-    generatedAt: new Date().toISOString(), project: owner.project ? { projectId: owner.project.projectId, root: projectRoot } : null,
+    generatedAt: new Date().toISOString(), project: owner.project ? { projectId: owner.project.projectId, ...(!share ? { root: projectRoot } : {}) } : null,
+    metadataPolicy: { mode: share ? "share-generated-metadata" : "local", anonymized: false,
+      omitted: share ? ["project.root", "regenerate.argv", "nodes.originalExpansion.arguments.project_root"] : [],
+      notice: "Original evidence, source text, historical records and identifiers are retained and may contain sensitive paths or content. Review before sharing; this is not anonymization." },
     focus: { kind: "project", nativeSessionSelectionClaimed: false }, graph, codeGraph, originals, history: retainedHistory, unavailable,
-    regenerate: { argv: [process.execPath, path.resolve(import.meta.dirname, "../lode.mjs"), "graph-explorer", projectRoot],
+    regenerate: { ...(!share ? { argv: [process.execPath, path.resolve(import.meta.dirname, "../lode.mjs"), "graph-explorer", projectRoot] } : { requiresExplicitLocalPaths: true }),
       shell: process.platform === "win32" ? "powershell" : "posix", scope: "Explicitly generate another create-only report; never executed by this file." },
     bounds: { maxProjectNodes: null, maxProjectEdges: null, maxCodeNodes: null, maxCodeEdges: null,
       metadata: "No node/edge count cutoff; source-reader and platform resource failures remain disclosed.",
@@ -151,7 +161,7 @@ export async function buildGraphExplorerSnapshot({ root = ".", query = "", histo
   };
 }
 
-export async function exportGraphExplorer({ root = ".", query = "", history = false, output = null } = {}) {
+export async function exportGraphExplorer({ root = ".", query = "", history = false, share = false, output = null } = {}) {
   // Validate explicit output before doing potentially expensive reads. Only the
   // newly requested report is writable; no canonical/runtime directory is used.
   let file = output ? path.resolve(output) : null;
@@ -164,12 +174,15 @@ export async function exportGraphExplorer({ root = ".", query = "", history = fa
     file = path.resolve(resolved, path.relative(ancestor, file));
   }
   if (file && fs.existsSync(file)) fail("GRAPH_EXPLORER_OUTPUT_EXISTS");
-  const snapshot = await buildGraphExplorerSnapshot({ root, query, history }), html = renderGraphExplorer(snapshot);
+  const snapshot = await buildGraphExplorerSnapshot({ root, query, history, share }), html = renderGraphExplorer(snapshot);
   const bytes = Buffer.byteLength(html);
   if (!file) file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "lode-graph-explorer-")), "index.html");
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, html, { encoding: "utf8", flag: "wx", mode: 0o600 });
   return { status: "created", file, bytes, projectId: snapshot.project?.projectId || null,
+    metadataPolicy: snapshot.metadataPolicy,
+    advisories: [{ code: "OFFLINE_REPORT_RESOURCE_NOTICE", bytes,
+      message: "Large offline reports can take substantial browser memory and time. No metadata was removed to reduce HTML size; exact-original text has separate disclosed byte bounds." }],
     nodes: snapshot.graph.nodes.length, edges: snapshot.graph.edges.length, coverage: snapshot.graph.coverage,
     metrics: snapshot.metrics, generatedAt: snapshot.generatedAt, snapshotAuthority: "P4-derived-view", ordinaryWorkBlocked: false };
 }

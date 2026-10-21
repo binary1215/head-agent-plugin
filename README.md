@@ -155,6 +155,9 @@ a disk update alone does not reload the Host. See the
 
 ### Codex Git marketplace
 
+Intermediate betas use verified marketplace publication; Git tags are reserved
+for separately designated releases. See the [changelog and publication policy](CHANGELOG.md).
+
 The repository is `binary1215/lode`. Its Lode marketplace is published on
 `lode-codex-marketplace`; the former repository URL still redirects here.
 
@@ -206,9 +209,12 @@ Project and Session IDs and the selected runtimes while updating managed paths.
 A project-owned `opencode.json` stays unchanged; the generated copy remains
 available for manual integration.
 
-This reconnection flow does not relocate the Project to a different absolute
-directory. The current resume entry refuses that copy without rewriting saved
-records. Check the running Host's MCP tool loading separately.
+If you move or copy the complete Project folder, explicitly resume it at the new
+path. Lode verifies the retained owner and preserves Project/Session IDs and
+historical records; a status read alone does not adopt the new location. This
+does not transfer a native Host binding or replay execution. See
+[Session recovery](docs/session-recovery.md). Check the running Host's MCP tool
+loading separately.
 
 If you choose instruction linking during setup, Lode can append a small block
 to an existing instruction file once, preserving its original content. Claude
@@ -716,9 +722,11 @@ documented in [Delivery state observation](docs/delivery-observation.md).
 <details>
 <summary>Snapshots, history and graph queries</summary>
 
-Graph Explorer's standalone exporter creates an HTML snapshot of the selected
-repository evidence. It is not a live view, and there is no dedicated lode-agent
-command or MCP tool for it.
+Graph Explorer's `graph-explorer <project-directory>` CLI creates a read-only
+HTML snapshot of the target project's evidence, not the plugin installation.
+Ask the agent to run that existing CLI; there is no dedicated HTML-export MCP
+tool. It is not a live view. See [Graph Explorer](docs/graph-explorer.md) for
+search, explicit history and sharing options.
 
 For new project information, Lode uses bounded `lode_project_graph` discovery
 first, or reuses sufficient results from the same basis. Work and Product views

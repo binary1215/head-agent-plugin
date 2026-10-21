@@ -102,7 +102,8 @@ export function resumeProjectLocation({ root, pluginRoot, runtimes, validateSele
     // Session preflight compares against the actual version at this boundary,
     // not necessarily the historical before version after a partial commit.
     validateSelection?.({ root: currentRoot, storage, project: JSON.parse(currentProjectBytes) });
-    if (!publish) return { status: "relocation-needed", projectId: original.projectId, projectRoot: currentRoot };
+    if (!publish) return { status: "relocation-needed", projectId: original.projectId, projectRoot: currentRoot,
+      previousRoot: original.projectRoot, publicationPending: fs.existsSync(journalFile) };
     const historyFile = safeLocationFile(currentRoot, directory, `project-location/history/${hash(transaction.beforeProject)}.json`);
     if (fs.existsSync(historyFile)) { if (read(historyFile) !== transaction.beforeProject) fail("Location original digest differs."); }
     else atomicCreateArtifact(historyFile, transaction.beforeProject);

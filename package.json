@@ -1,9 +1,10 @@
 {
   "name": "@local/lode-agent-core-plugin",
-  "version": "0.3.0-beta.54",
+  "version": "0.3.0-beta.55",
   "private": true,
   "type": "module",
   "description": "Lode Agent Core plugin distribution",
+  "homepage": "https://github.com/binary1215/lode",
   "license": "MIT",
   "engines": {
     "node": ">=24"

@@ -152,6 +152,9 @@ Host가 reload되지는 않습니다. 자세한 내용은 [MCP 이름 안내](#m
 
 ### Codex Git 마켓플레이스
 
+중간 베타는 검증된 마켓플레이스 게시로 배포하며 Git 태그는 별도 지정 릴리스에만
+만듭니다. [변경 기록과 게시 정책](CHANGELOG.ko.md)을 참고하세요.
+
 저장소는 `binary1215/lode`이며, Lode 마켓플레이스는 `lode-codex-marketplace`
 브랜치에 게시됩니다. 이전 저장소 주소도 이곳으로 연결됩니다.
 
@@ -198,9 +201,11 @@ OpenCode 로컬 설정은 각 PC의 Node 실행 파일과 Lode 설치 경로를 
 유지하며 관리되는 경로를 갱신합니다. 사용자 소유 `opencode.json`은 그대로 두고
 생성본만 갱신하므로, 필요한 설정 통합에 그 생성본을 사용할 수 있습니다.
 
-이 재연결 절차는 Project 자체를 다른 절대 경로로 옮기지 않습니다. 현재 재개
-진입점은 저장된 기록을 다시 쓰지 않고 해당 복사본을 거부합니다. 실행 중인
-Host가 MCP 도구를 로드했는지는 별도로 확인하세요.
+Project 폴더 전체를 이동하거나 복사했다면 새 경로에서 명시적으로 재개하세요.
+Lode는 보존된 소유 정보를 검증하고 Project·Session ID와 과거 기록을 유지합니다.
+상태 조회만으로 새 위치를 채택하지 않으며, native Host 바인딩을 이전하거나 실행을
+재생하지 않습니다. [Session 복구](docs/ko/session-recovery.md)를 참고하세요.
+실행 중인 Host가 MCP 도구를 로드했는지는 별도로 확인하세요.
 
 설정 중 지침 연결을 선택하면 기존 지침 파일의 원문을 보존하면서 작은 블록을
 한 번만 덧붙일 수 있습니다. Claude Code에는 지침 파일 import를 사용하고,
@@ -686,8 +691,10 @@ Git ref와 배포 근거 수집은 [Release observation](docs/ko/release-observa
 <details>
 <summary>스냅샷, 이력과 그래프 질의</summary>
 
-Graph Explorer의 별도 exporter는 선택한 저장소 근거를 HTML 스냅샷으로 만듭니다.
-실시간 화면이 아니며 전용 lode-agent 명령이나 MCP 도구는 없습니다.
+Graph Explorer의 `graph-explorer <project-directory>` CLI는 플러그인 설치 폴더가
+아닌 대상 프로젝트의 근거를 읽기 전용 HTML 스냅샷으로 만듭니다. 에이전트에게 기존
+CLI 실행을 요청할 수 있으며, 별도 HTML 내보내기 MCP 도구는 없습니다. 실시간 화면은
+아닙니다. 검색·명시적 과거 기록·공유 옵션은 [Graph Explorer](docs/ko/graph-explorer.md)를 참고하세요.
 
 새 프로젝트 정보는 `lode_project_graph`의 범위가 정해진 관계 조회나 충분한 동일
 기준 결과의 재사용으로 찾습니다. 작업과 Product 관점은 같은 원본을 참조하며,
