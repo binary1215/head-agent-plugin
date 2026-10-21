@@ -83,7 +83,7 @@ import { readGraphProject, safeGraphFile } from "./discovery-index.mjs";
 import { SOURCE_ANALYSIS_VERSION } from "./source-analysis.mjs";
 import { withSessionRoute } from "./session-routing.mjs";
 import { ARTIFACT_COMPOSITION, publicToolName } from "./lode-artifact-composition.mjs";
-import { familyFormatForOriginal, formatForVerifiedOwner, relativeProjectArtifact } from "./project-storage-format.mjs";
+import { familyFormatForOriginal, formatForVerifiedOwner, relativeProjectArtifact, projectOwnsRecordedRoot } from "./project-storage-format.mjs";
 
 export const WORLD_MODEL_VERSION = "0.19.0";
 export const WORLD_MODEL_STORE = WORLD_MODEL_STORAGE_CONTRACT;
@@ -694,7 +694,7 @@ export function inspectWorldDomainFreshness({ root = ".", domains = WORLD_DOMAIN
     fail("World freshness domains are invalid.", "INVALID_WORLD_FRESHNESS_DOMAINS");
   }
   const stored = readWorldModelForDiscovery({ root, worldModelId, storeAdapter });
-  const snapshot = stored.snapshot, projectRoot = snapshot.projectRoot;
+  const snapshot = stored.snapshot, projectRoot = stored.storage.projectRoot;
   const { project, storage } = readGraphProject(projectRoot);
   const result = {};
   for (const domain of [...new Set(domains)]) {
@@ -821,6 +821,7 @@ export function readWorldModel({ root = ".", storeAdapter = null } = {}) {
   const snapshotEntry = adapter.readSnapshot(pointer.worldModelId);
   if (!snapshotEntry) fail("World Model snapshot is missing.", "WORLD_MODEL_SNAPSHOT_MISSING");
   const snapshot = verifiedSnapshot(snapshotEntry.document, pointer.worldModelId, storage);
+  if (snapshot.projectId !== inspected.project.projectId || !projectOwnsRecordedRoot(storage, snapshot.projectRoot)) fail("World snapshot belongs to another Project/root.", "WORLD_MODEL_IDENTITY_MISMATCH");
   if (snapshot.worldModelHash !== pointer.worldModelHash) fail("World Model pointer hash does not match its snapshot.", "WORLD_MODEL_POINTER_MISMATCH");
   return {
     storage,
@@ -840,10 +841,12 @@ export function readWorldModelSnapshot({ root = ".", worldModelId, storeAdapter 
   const adapter = createWorldModelStoreAdapter({ storage, projectRoot: inspected.project.projectRoot, adapter: storeAdapter });
   const snapshotEntry = adapter.readSnapshot(worldModelId);
   if (!snapshotEntry) fail(`World Model snapshot is missing: ${worldModelId}`, "WORLD_MODEL_SNAPSHOT_MISSING");
+  const snapshot = verifiedSnapshot(snapshotEntry.document, worldModelId, storage);
+  if (snapshot.projectId !== inspected.project.projectId || !projectOwnsRecordedRoot(storage, snapshot.projectRoot)) fail("World snapshot belongs to another Project/root.", "WORLD_MODEL_IDENTITY_MISMATCH");
   return {
     status: "verified",
     file: snapshotEntry.location,
-    snapshot: verifiedSnapshot(snapshotEntry.document, worldModelId, storage),
+    snapshot,
     storage,
     storeAdapter: adapter.describe(),
   };
@@ -872,7 +875,7 @@ export function readWorldModelForDiscovery({ root = ".", worldModelId = "", stor
   const entry = adapter.readSnapshot(selectedId);
   if (!entry) fail("World Model snapshot is missing.", "WORLD_MODEL_SNAPSHOT_MISSING");
   const snapshot = verifiedSnapshot(entry.document, selectedId, storage);
-  if (snapshot.projectId !== project.projectId || snapshot.projectRoot !== projectRoot) fail("World snapshot belongs to another Project/root.", "WORLD_MODEL_IDENTITY_MISMATCH");
+  if (snapshot.projectId !== project.projectId || !projectOwnsRecordedRoot(storage, snapshot.projectRoot)) fail("World snapshot belongs to another Project/root.", "WORLD_MODEL_IDENTITY_MISMATCH");
   if (!worldModelId && pointer.worldModelHash !== snapshot.worldModelHash) fail("World pointer hash differs from retained bytes.", "WORLD_MODEL_POINTER_MISMATCH");
   return { snapshot, pointer, storage, file: entry.location, historical: !pointer || selectedId !== pointer.worldModelId };
 }
@@ -1744,7 +1747,7 @@ export function queryWorldTemporalGraph({
   const needsMask = eligibility.nodeIds.length !== graph.nodes.length || eligibility.edgeIds.length !== graph.edges.length;
   const projected = queryGraphProjection({
     storage: inspected.storage,
-    projectRoot: inspected.snapshot.projectRoot,
+    projectRoot: inspected.storage.projectRoot,
     graph: inspected.snapshot.temporalProvenanceGraph,
     adapter: graphProjectionAdapter,
     query: {
@@ -1776,7 +1779,7 @@ export function inspectWorldGraphProjection({ root = ".", storeAdapter = null, g
   const inspected = inspectWorldModel({ root, storeAdapter });
   const projection = inspectGraphProjection({
     storage: inspected.storage,
-    projectRoot: inspected.snapshot.projectRoot,
+    projectRoot: inspected.storage.projectRoot,
     graph: inspected.snapshot.temporalProvenanceGraph,
     adapter: graphProjectionAdapter,
   });
@@ -1795,7 +1798,7 @@ export function materializeWorldMarkdownProjection({ root = ".", storeAdapter = 
   if (inspected.status !== "current") fail("Repository World Model is stale and cannot regenerate document projections.", "WORLD_MODEL_STALE");
   const materialized = materializeMarkdownProjection({
     storage: inspected.storage,
-    projectRoot: inspected.snapshot.projectRoot,
+    projectRoot: inspected.storage.projectRoot,
     graph: inspected.snapshot.temporalProvenanceGraph,
     adapter: documentProjectionAdapter,
   });
@@ -1814,7 +1817,7 @@ export function inspectWorldMarkdownProjection({ root = ".", storeAdapter = null
   const inspected = inspectWorldModel({ root, storeAdapter });
   const projection = inspectMarkdownProjection({
     storage: inspected.storage,
-    projectRoot: inspected.snapshot.projectRoot,
+    projectRoot: inspected.storage.projectRoot,
     graph: inspected.snapshot.temporalProvenanceGraph,
     adapter: documentProjectionAdapter,
   });
@@ -1842,7 +1845,7 @@ export function captureWorldMarkdownChanges({ root = ".", storeAdapter = null, d
   }
   const captured = captureDocumentChangeCandidates({
     storage: inspected.storage,
-    projectRoot: inspected.snapshot.projectRoot,
+    projectRoot: inspected.storage.projectRoot,
     graph: inspected.snapshot.temporalProvenanceGraph,
     adapter: documentProjectionAdapter,
     persist,

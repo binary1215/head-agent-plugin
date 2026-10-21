@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { verifyProjectLocation, safeLocationFile, locationJournalRelative } from "./project-location-proof.mjs";
 import { LEGACY_FORMAT, PROTOCOL_PAIRS, KIND_PAIRS, VALUE_PAIRS } from "../../compat/head/format.mjs";
 
 const lodeFormat = Object.freeze({ dialect: "lode", directory: ".lode", projectPrefix: "lode-", roleField: "lode", sessionIdField: "lodeSessionId",
@@ -70,7 +71,8 @@ function marker(root, directory) {
   }
   if (directory === ".head") {
     if (project?.schemaVersion !== 1 || project.projectRoot !== root) return { state: "foreign", projectFile, project, bytes };
-    return { state: "owned", projectFile, project, bytes };
+    if (fs.existsSync(safeLocationFile(root, directory, locationJournalRelative))) fail("Resume the exact pending Project folder relocation.", "PROJECT_RELOCATION_PENDING");
+    return { state: "owned", projectFile, project, bytes, location: project.location ? verifyProjectLocation(root, directory, project) : null };
   }
   const expectedId = `lode-${digest(root).slice(0, 20)}`;
   const branded = project?.schemaVersion === 1 && typeof project.projectId === "string"
@@ -78,18 +80,19 @@ function marker(root, directory) {
     && typeof project.authority?.lode === "string" && typeof project.authority?.user === "string";
   const related = project?.projectRoot === root || project?.projectId === expectedId;
   if (!branded || !related) return { state: "foreign", projectFile, project, bytes };
+  if (fs.existsSync(safeLocationFile(root, directory, locationJournalRelative))) fail("Resume the exact pending Project folder relocation.", "PROJECT_RELOCATION_PENDING");
   if (typeof project.createdAt !== "string" || !Number.isFinite(Date.parse(project.createdAt))
     || !Array.isArray(project.runtimes) || !project.runtimes.length || !project.runtimes.every(value => typeof value === "string")
     || !project.integrations || typeof project.integrations !== "object" || Array.isArray(project.integrations)) {
     fail("Recognized Lode Project canon is malformed.", "INVALID_CANON");
   }
-  if (project.projectRoot !== root || project.projectId !== expectedId || Object.hasOwn(project.authority, "head")) {
+  if (project.projectRoot !== root || !project.location && project.projectId !== expectedId || Object.hasOwn(project.authority, "head")) {
     fail("Project canon does not match this canonical root.", "PROJECT_IDENTITY_MISMATCH");
   }
   for (const candidate of [path.join(root, directory), projectFile]) {
     if (fs.lstatSync(candidate).isSymbolicLink()) fail(`Managed path traverses a symlink: ${candidate}`, "SYMLINK_PATH");
   }
-  return { state: "owned", projectFile, project, bytes };
+  return { state: "owned", projectFile, project, bytes, location: project.location ? verifyProjectLocation(root, directory, project) : null };
 }
 
 // This is the existing upper Project-selection boundary only. It deliberately
@@ -121,7 +124,7 @@ export function resolveProjectStorage(root = ".", { readLegacyProject } = {}) {
   const dialect = selected === legacy ? "head" : "lode";
   const storage = Object.freeze({ projectRoot, projectId: selected.project.projectId, dialect,
     directory: dialect === "head" ? ".head" : ".lode", projectFile: selected.projectFile });
-  markerBases.set(storage, digest(selected.bytes));
+  markerBases.set(storage, { projectDigest: digest(selected.bytes), location: selected.location });
   return storage;
 }
 
@@ -130,10 +133,20 @@ export function assertProjectStorageUnchanged(storage) {
   // Re-read the selected original first: a known owned failure cannot silently
   // become another dialect or an absent/default Project after selection.
   const bytes = fs.readFileSync(storage.projectFile);
-  if (digest(bytes) !== markerBases.get(storage)) fail("Project storage changed during the operation.", "PROJECT_IDENTITY_MISMATCH");
+  if (digest(bytes) !== markerBases.get(storage).projectDigest) fail("Project storage changed during the operation.", "PROJECT_IDENTITY_MISMATCH");
   const current = resolveProjectStorage(storage.projectRoot);
   if (!current || current.dialect !== storage.dialect || current.projectId !== storage.projectId) {
     fail("Project storage changed during the operation.", "PROJECT_IDENTITY_MISMATCH");
   }
   return storage;
+}
+
+// This is an evidence ownership alias only. Effect/rootDigest/native binding
+// checks deliberately do not use it. Every upper selection re-verifies history.
+export function projectOwnsRecordedRoot(storage, recordedRoot) {
+  const basis = markerBases.get(storage);
+  return Boolean(basis && (recordedRoot === storage.projectRoot || basis.location?.roots.includes(recordedRoot)));
+}
+export function projectLocationBasis(storage) {
+  return markerBases.get(storage)?.location?.digest ?? null;
 }

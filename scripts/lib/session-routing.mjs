@@ -26,6 +26,7 @@ const validId = (id) => typeof id === "string" && /^session-[a-fA-F0-9-]{36}$/.t
 const independentCliInfo = new Set(["help", "--help", "-h", "help-all", "version", "--version"]);
 const cliProjectCalls = new Map(Object.entries({
   "graph-query": "head_project_graph", "graph-index": "head_project_graph_index",
+  "graph-explorer": "head_project_graph",
   "project-direction-read": "head_project_direction_read", "project-direction-update": "head_project_direction_update",
   "session-list": "head_session_list", "session-create": "head_session_create",
   "world-query": "head_world_query", "world-history": "head_git_history",
@@ -158,12 +159,13 @@ export function sessionDataPath(root, ...parts) {
     : safeSessionPath(root, formatForVerifiedOwner(storage).directory, "sessions", "by-id", selectedId(root), ...parts);
 }
 
-function resolveSessionRoute(base, sessionId) {
-  const storage = resolveProjectStorage(base);
+function resolveSessionRoute(base, sessionId, preflightOwner = null) {
+  const storage = preflightOwner?.storage ?? resolveProjectStorage(base);
   const directory = formatForVerifiedOwner(storage).directory;
   if (!validId(sessionId)) fail("Expected a logical HEAD Session id.", "INVALID_HEAD_SESSION_ID");
   const project = read(safeSessionPath(base, directory, "project.json"));
-  if (project.schemaVersion !== 1 || project.projectRoot !== base || !project.projectId) fail("Project identity differs.", "PROJECT_IDENTITY_MISMATCH");
+  if (project.schemaVersion !== 1 || !project.projectId || (preflightOwner
+    ? JSON.stringify(project) !== JSON.stringify(preflightOwner.project) : project.projectRoot !== base)) fail("Project identity differs.", "PROJECT_IDENTITY_MISMATCH");
   const defaultFile = defaultSessionStatePath(base, storage);
   const namedFile = safeSessionPath(base, directory, "sessions", "by-id", sessionId, "current.json");
   const named = fs.existsSync(namedFile);
@@ -180,6 +182,19 @@ function resolveSessionRoute(base, sessionId) {
   const state = read(file);
   if (!state || state.sessionId !== sessionId || (named ? state.projectId !== project.projectId : state.projectId && state.projectId !== project.projectId)) fail("Session identity does not match this Project.", "HEAD_SESSION_IDENTITY_MISMATCH", file);
   return { sessionId, stateFile: file, projectId: project.projectId, storage };
+}
+
+// Read-only input preflight for the explicit resume transaction. This does not
+// establish a route, mutate a Host binding or make a copied Project current.
+export function validateRelocationSessionSelection({ root, storage, project }, { sessionId, context = null } = {}) {
+  if (context && !callContexts.has(context)) fail("Expected a trusted caller-scoped Host context.", "INVALID_HEAD_SESSION_CALL_CONTEXT");
+  const binding = context?.read(root);
+  if (sessionId === undefined && binding?.status === "lost") fail("Selected logical Session was lost.", "HEAD_SESSION_SELECTION_LOST");
+  const selected = sessionId === undefined ? binding?.sessionId : sessionId;
+  if (selected == null || selected === "") {
+    const file = defaultSessionStatePath(root, storage), state = read(file);
+    if (state?.schemaVersion !== 1 || !validId(state.sessionId) || state.projectId && state.projectId !== project.projectId) fail("Default Session identity differs.", "INVALID_SESSION_CANON", file);
+  } else resolveSessionRoute(canonicalRoot(root), selected, { storage, project });
 }
 
 export function withSessionRoute(root, sessionId, operation) {

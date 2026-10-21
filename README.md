@@ -1,5 +1,5 @@
 <p>
-  <a href="docs/assets/branding/lode-repository-icon.png"><img src="docs/assets/branding/lode-repository-icon.png" alt="Lode repository icon — open full-size image" width="104"></a>
+  <img src="docs/assets/branding/lode-readme-wordmark.png" alt="Lode Agent Core" width="720">
 </p>
 
 # Lode
@@ -931,10 +931,6 @@ copy credentials, or rewrite endpoints.
 
 <details>
 <summary>Design background and principles</summary>
-
-<p>
-  <img src="docs/assets/branding/lode-readme-wordmark.png" alt="Lode Agent Core" width="720">
-</p>
 
 Lode Agent Core Plugin is inspired by
 [Won6314/head-agent-core](https://github.com/Won6314/head-agent-core) and

@@ -5,6 +5,28 @@ Session restore and worker-result integration flow without resuming a hidden
 provider conversation or embedding Herdr-specific process, pane, CLI, socket, or
 TUI behavior.
 
+## Moving a Project folder
+
+After moving or copying the complete Project directory, ask Lode to resume at
+its new path, or run `node scripts/lode.mjs resume "<new-project-directory>"`
+from the plugin directory. The same typed initialize/resume tool supports this;
+an explicit logical `session_id` selects that existing Session.
+
+Resume preserves the Project ID, default and named Session IDs, checkpoints,
+Work records and World originals. It retains exact previous Project metadata
+locally, verifies its identity chain, and updates only the current location and
+its managed manifest entry. Interrupted publication resumes the exact pending
+transition; divergent files or conflicting local owners are not overwritten.
+Actual source and adapter reads use the new path, never the historical path.
+Source changes at the new location still produce ordinary freshness/drift results.
+
+Old execution authorizations, root-bound leases and native Host bindings do not
+move with this identity. Re-establish those operational capabilities only when
+needed under their existing contracts. Resume does not replay an effect, change
+recovery direction, require a new Product review or re-onboard the Project.
+The plugin does not move files for you, scan the old location, or enforce that
+only one copy exists globally. User-owned integration files remain preserved.
+
 ## Original Feature mapping
 
 The original source numbering is preserved rather than repurposed:

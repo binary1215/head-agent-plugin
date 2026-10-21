@@ -16,6 +16,7 @@ import { buildCodexMarketplaceSnapshot } from "../scripts/lib/codex-marketplace.
 import { buildClaudeMarketplaceSnapshot } from "../scripts/lib/claude-marketplace.mjs";
 import { snapshot, pluginRoot } from "./helpers/session-work-linkage-fixture.mjs";
 import { explorerFixture } from "./helpers/graph-explorer-fixture.mjs";
+import { runCommand, usage } from "../scripts/lode.mjs";
 
 test("exploration is reversible display state over exact edges, with stable positions and no cross-layer merging", () => {
   const source = fs.readFileSync(path.join(pluginRoot, "scripts/graph-explorer/exploration.js"), "utf8");
@@ -98,7 +99,14 @@ test("Explorer reuses exact Project/code identities and originals without writes
   assert(Object.values(result.originals).some(original => original.text?.includes("Keep exact prior rationale")));
   const direct = await queryProjectGraph({ root: f.root, query: "", view: "all", details: true, depth: 2, maxNodes: 60, maxEdges: 120,
     graphProjectionAdapter: new LocalJsonGraphProjectionAdapter({ projectRoot: f.root, storage: f.storage }), storeAdapter: new LocalJsonWorldModelStoreAdapter({ projectRoot: f.root, storage: f.storage }) });
-  assert.deepEqual(result.graph.nodes, direct.nodes); assert.deepEqual(result.graph.edges, direct.edges);
+  for (const node of direct.nodes) {
+    const { detailCoverage, ...actual } = result.graph.nodes.find(item => item.nodeId === node.nodeId);
+    assert.deepEqual(actual, node);
+  }
+  for (const edge of direct.edges) {
+    const { currentTraversalEligible, viewerCurrentness, ...actual } = result.graph.edges.find(item => item.edgeId === edge.edgeId);
+    assert.deepEqual(actual, edge);
+  }
 });
 
 test("optional retained history uses exact IDs without refresh and remains a derived comparison", async t => {
@@ -135,8 +143,9 @@ test("empty Project, absent history and stale code keep partial navigation witho
 test("self-contained HTML escapes repository text, keeps strong CSP and creates only the requested export", async t => {
   const f = await explorerFixture(t, { adversarial: true }), before = snapshot(f.root), output = path.join(f.base, "reports/view.html");
   const result = await exportGraphExplorer({ root: f.root, query: "relay", output });
-  assert.deepEqual(snapshot(f.root), before); assert.equal(result.file, output); assert(result.bytes <= 8 * 1024 * 1024);
+  assert.deepEqual(snapshot(f.root), before); assert.equal(result.file, output);
   const html = fs.readFileSync(output, "utf8");
+  assert.equal(result.bytes, Buffer.byteLength(html));
   assert(!html.includes(f.attack)); assert(html.includes("\\u003c/script\\u003e")); assert(html.includes("connect-src 'none'"));
   const executableMarkup = html.replace(/<script nonce="[^"]+" id="snapshot" type="application\/json">[\s\S]*?<\/script>/, "");
   assert(!/\b(?:src|href)=["']https?:/i.test(executableMarkup)); assert(!html.includes("innerHTML"));
@@ -155,6 +164,15 @@ test("protected output aliases and symlinked World originals cannot escape the l
   const result = await buildGraphExplorerSnapshot({ root: f.root, query: "relay", history: true });
   assert.equal(result.codeGraph.status, "unavailable"); assert.equal(result.history.status, "unavailable");
   assert.equal(result.focus.kind, "project"); assert.equal(result.graph.coverage.emptyResultProvesAbsence, false);
+});
+
+test("ordinary CLI exposes the same create-only viewer without a Session binding or project mutation", async t => {
+  const f = await explorerFixture(t), before = snapshot(f.root), output = path.join(f.base, "cli-view.html");
+  const result = await runCommand(["graph-explorer", f.root, "--query", "relay", "--output", output],
+    { sessionContext: { read() { throw Error("Viewer must not require native/logical binding"); } } });
+  assert.equal(result.status, "created"); assert.equal(result.file, output);
+  assert(usage().commands.some(line => line.includes("graph-explorer")));
+  assert.deepEqual(snapshot(f.root), before);
 });
 
 test("oversize original bodies are omitted with exact references and explicit bounds", async t => {

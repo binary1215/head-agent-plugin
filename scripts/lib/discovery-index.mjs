@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { formatForVerifiedOwner, relativeProjectArtifact, resolveProjectStorage } from "./project-storage-format.mjs";
+import { formatForVerifiedOwner, relativeProjectArtifact, resolveProjectStorage, projectLocationBasis } from "./project-storage-format.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { atomicWriteArtifact } from "./artifact-storage.mjs";
@@ -153,13 +153,13 @@ export function readSessionWorkNavigationHints(owner, regularFileIds) {
 
 // Exact reader dependencies, not semantic nodes. Absence is an observation
 // whose later appearance invalidates a proof; malformed work stays local.
-function sessionWorkDependencies(root, entries, context, storage) {
+function sessionWorkDependencies(root, entries, context, storage, recordLimit = MAX_RECORDS) {
   const dependencies = { version: 1, entries: [], layout: [], unavailable: [], complete: true };
   const seen = new Set(); let total = 0;
   const add = (relative, maximum = MAX_REFERENCE_BYTES) => {
     if (seen.has(relative)) return;
     seen.add(relative);
-    if (seen.size > MAX_RECORDS) { dependencies.complete = false; return; }
+    if (seen.size > recordLimit) { dependencies.complete = false; return; }
     try {
       const file = safeGraphFile(root, relative);
       if (!fs.existsSync(file)) { dependencies.layout.push({ path: relative, type: "absent" }); return; }
@@ -191,7 +191,7 @@ function sessionWorkDependencies(root, entries, context, storage) {
   return dependencies;
 }
 
-export function collectProjectGraphInventory(root) {
+export function collectProjectGraphInventory(root, { recordLimit = MAX_RECORDS } = {}) {
   const { projectRoot, project, storage } = readGraphProject(root);
   if (!project) return { projectRoot, project, entries: [], unavailable: [], complete: false, recordsDigest: null };
   const entries = [], unavailable = [], workContext = createSessionWorkReadContext(projectRoot, storage);
@@ -200,7 +200,7 @@ export function collectProjectGraphInventory(root) {
     if (relative.startsWith(relativeProjectArtifact(storage, "sessions/by-id/")) && !new RegExp(`^\\${formatForVerifiedOwner(storage).directory}/sessions/by-id/session-[a-fA-F0-9-]{36}/current\\.json$`).test(relative) && !sessionWorkPath(relative)) return;
     if (relative.startsWith(relativeProjectArtifact(storage, "sessions/work-evidence/")) && !sessionWorkPath(relative)) return;
     if (relative.startsWith(relativeProjectArtifact(storage, "sessions/runs/")) && !relative.endsWith("/run.json")) return;
-    if (entries.length >= MAX_RECORDS) { complete = false; return; }
+    if (entries.length >= recordLimit) { complete = false; return; }
     try {
       const file = safeGraphFile(projectRoot, relative);
       const stat = fs.lstatSync(file);
@@ -214,7 +214,7 @@ export function collectProjectGraphInventory(root) {
     } catch (error) { unavailable.push({ path: relative, reasonCode: error.code || "PROJECT_GRAPH_RECORD_UNAVAILABLE" }); }
   };
   const visit = (relative, depth = 0) => {
-    if (entries.length >= MAX_RECORDS || depth > 8) { complete = false; return; }
+    if (entries.length >= recordLimit || depth > 8) { complete = false; return; }
     try {
       const directory = safeGraphFile(projectRoot, relative);
       if (!fs.existsSync(directory)) return;
@@ -241,20 +241,20 @@ export function collectProjectGraphInventory(root) {
     try {
       const file = safeGraphFile(projectRoot, relative), stat = fs.lstatSync(file);
       if (!stat.isFile() || stat.size > MAX_BYTES || dependencyBytes + stat.size > MAX_INVENTORY_BYTES
-        || dependencies.entries.length >= MAX_RECORDS) fail("PROJECT_GRAPH_DEPENDENCY_LIMIT");
+        || dependencies.entries.length >= recordLimit) fail("PROJECT_GRAPH_DEPENDENCY_LIMIT");
       dependencyBytes += stat.size;
       dependencies.entries.push({ path: relative, sha256: hash(fs.readFileSync(file)), bytes: stat.size });
     } catch (error) { dependencies.unavailable.push({ path: relative, reasonCode: error.code || "PROJECT_GRAPH_DEPENDENCY_UNAVAILABLE" }); }
   };
   const dependencyDirectory = (relative, depth = 0) => {
-    if (depth > 8 || dependencies.layout.length >= MAX_RECORDS) { dependencies.complete = false; return; }
+    if (depth > 8 || dependencies.layout.length >= recordLimit) { dependencies.complete = false; return; }
     try {
       const directory = safeGraphFile(projectRoot, relative);
       if (!fs.existsSync(directory)) { dependencies.layout.push({ path: relative, type: "absent" }); return; }
       if (!fs.lstatSync(directory).isDirectory()) fail("PROJECT_GRAPH_DEPENDENCY_DIRECTORY_INVALID");
       dependencies.layout.push({ path: relative, type: "directory" });
       for (const entry of fs.readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
-        if (dependencies.layout.length >= MAX_RECORDS) { dependencies.complete = false; break; }
+        if (dependencies.layout.length >= recordLimit) { dependencies.complete = false; break; }
         const child = `${relative}/${entry.name}`;
         if (entry.isDirectory()) dependencyDirectory(child, depth + 1);
         else {
@@ -276,7 +276,8 @@ export function collectProjectGraphInventory(root) {
     } catch { /* Malformed boundary is rejected by its original typed reader. */ }
   }
   for (const field of ["entries", "layout", "unavailable"]) dependencies[field].sort((a, b) => a.path.localeCompare(b.path));
-  const readerDependencies = { onboarding: dependencies, sessionWork: sessionWorkDependencies(projectRoot, entries, workContext, storage) };
+  dependencies.projectLocation = projectLocationBasis(storage);
+  const readerDependencies = { onboarding: dependencies, sessionWork: sessionWorkDependencies(projectRoot, entries, workContext, storage, recordLimit) };
   const recordsDigest = projectGraphDigest({ projectId: project.projectId, projectRoot, entries, unavailable, complete, readerDependencies });
   return { projectRoot, project, storage, entries, unavailable, complete, readerDependencies, recordsDigest, workContext };
 }
@@ -309,7 +310,8 @@ function updateProjectGraphIndex(root, changedPaths) {
   const indexFile = safeGraphFile(projectRoot, projectGraphIndexPath(storage));
   if (!fs.existsSync(indexFile)) return refreshProjectGraphIndex({ root });
   const previous = JSON.parse(fs.readFileSync(indexFile, "utf8"));
-  if (!previous.readerDependencies?.sessionWork?.version || changedPaths.some((relative) => relative.startsWith(relativeProjectArtifact(storage, "onboarding/"))
+  if ((previous.readerDependencies?.onboarding?.projectLocation ?? null) !== projectLocationBasis(storage)
+    || !previous.readerDependencies?.sessionWork?.version || changedPaths.some((relative) => relative.startsWith(relativeProjectArtifact(storage, "onboarding/"))
     || relative.startsWith(relativeProjectArtifact(storage, "world-model/snapshots/")))) return refreshProjectGraphIndex({ root });
   if (previous.kind !== "ProjectGraphRecordIndex" || previous.version !== 1 || previous.projectId !== project.projectId
     || previous.rootDigest !== hash(projectRoot) || !Array.isArray(previous.entries) || previous.entries.length > MAX_RECORDS

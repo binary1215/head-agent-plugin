@@ -11,6 +11,8 @@ import { buildRepositorySourceScope } from "./repository-source-scope.mjs";
 import { inspectRecoveryCheckpointDiagnosis } from "./recovery-checkpoint-diagnosis.mjs";
 import { actionability, withExperienceProjections } from "./experience-projection.mjs";
 import { linkProjectInstructions, validateInstructionIntegration } from "./project-instruction-link.mjs";
+import { resumeProjectLocation } from "./project-relocation.mjs";
+import { withSessionCallContext, validateRelocationSessionSelection, sessionSelectionUnresolved } from "./session-routing.mjs";
 
 export const PROJECT_BOOTSTRAP_PROTOCOL_VERSION = "0.6.0";
 
@@ -515,6 +517,7 @@ function bootstrapResponse({ root, profile, before, installation, onboardingActi
     profileSemantics: "operation-choice-not-persisted-project-mode",
     projectAction: before.status === "not_initialized" ? "initialized" : "resumed",
     installationAction: installation.status,
+    ...(installation.location ? { projectLocation: installation.location } : {}),
     ...(installation.instructionIntegration ? { instructionIntegration: installation.instructionIntegration } : {}),
     onboardingAction,
     inputDisposition,
@@ -524,13 +527,41 @@ function bootstrapResponse({ root, profile, before, installation, onboardingActi
   };
 }
 
-export async function initializeOrResumeProject({ root = ".", pluginRoot, runtimes = null, profile: requestedProfile = "core", onboarding = null, instructionIntegration = null, onValidatedSessionSelection = null } = {}) {
+export async function initializeOrResumeProject(options = {}) {
+  const { root = ".", pluginRoot, runtimes = null, profile: requestedProfile = "core", onboarding = null,
+    instructionIntegration = null, projectSessionRoute = null } = options;
   validateInstructionIntegration(instructionIntegration);
   const profile = validateProfile(requestedProfile);
   const onboardingInput = validateOnboardingInput(onboarding);
   if (profile === "core" && Object.keys(onboardingInput).length) {
     fail("PROJECT_BOOTSTRAP_PROFILE_REQUIRED", "Onboarding input requires the explicit product profile.");
   }
+  const location = resumeProjectLocation({ root, pluginRoot, runtimes,
+    validateSelection: owner => validateRelocationSessionSelection(owner, projectSessionRoute ?? {}) });
+  const operation = () => initializeOrResumeCurrentProject({ ...options, root, profile, onboardingInput, location });
+  if (!projectSessionRoute) return operation();
+  const route = { sessionId: projectSessionRoute.sessionId, context: projectSessionRoute.context };
+  const unresolved = reasonCode => {
+    const value = sessionSelectionUnresolved(root, { reasonCode });
+    if (!location) return value;
+    const summary = "Project folder location recovery was applied. Logical Session selection and Host linkage remain unconfirmed; no execution was replayed.";
+    return { ...value, projectLocation: location, nextHeadAction: `${summary} ${value.nextHeadAction}`,
+      presentation: { ...value.presentation, mode: "exception", summary } };
+  };
+  if (!route.context && projectSessionRoute.resolveContext) {
+    try { route.context = await projectSessionRoute.resolveContext(); }
+    catch (error) {
+      if (route.sessionId === undefined) return unresolved(error.code || "HEAD_SESSION_CONTEXT_UNAVAILABLE");
+      // The exact explicit route remains independent of optional P5 storage.
+      // Its canonical validation below is never bypassed by Host availability.
+    }
+  }
+  try { return await withSessionCallContext({ root, ...route }, operation); }
+  catch (error) { if (error.code === "HEAD_SESSION_SELECTION_LOST") return unresolved(error.code); throw error; }
+}
+
+async function initializeOrResumeCurrentProject({ root, pluginRoot, runtimes = null, profile, onboardingInput,
+  instructionIntegration = null, onValidatedSessionSelection = null, location = null }) {
   const before = inspectProject(root);
   let initialization;
   let installation;
@@ -551,6 +582,7 @@ export async function initializeOrResumeProject({ root = ".", pluginRoot, runtim
     };
     installation = convergeProjectInstallation({ root, pluginRoot, runtimes, onValidatedSessionSelection });
   }
+  if (location) installation.location = location;
 
   if (instructionIntegration != null) installation.instructionIntegration = linkProjectInstructions({ root, choice: instructionIntegration });
   if (profile === "product") await recoverOnboardingPromotion({ root });

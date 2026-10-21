@@ -2323,6 +2323,36 @@ async function dispatchSessionRequest(request, options = {}) {
   const dependent = sessionCallRequiresBinding(requestedName);
   let sessionContext = options.sessionContext;
   let bindingFailure = null;
+  let relocationNeeded = false;
+  if (request.method === "tools/call" && args?.project_root && requestedName === "head_project_initialize_or_resume") {
+    try {
+      if (hasSelection && typeof args.session_id !== "string") throw new Error("An explicit logical Session route must be text; omit it for an unspecified route.");
+      const { resumeProjectLocation } = await import("./lib/project-relocation.mjs");
+      const { validateRelocationSessionSelection } = await import("./lib/session-routing.mjs");
+      relocationNeeded = Boolean(resumeProjectLocation({ root: args.project_root, pluginRoot, runtimes: args.runtimes ?? null, inspectOnly: true,
+        validateSelection: owner => validateRelocationSessionSelection(owner, { sessionId: hasSelection ? args.session_id : undefined, context: sessionContext }) }));
+    } catch (error) { return failure(request.id ?? null, error.message); }
+  }
+  // Explicit resume validates/adopts the local Project location before an
+  // optional native Host adapter can read its binding at that current root.
+  // Other tools retain the original selected-Session call boundary unchanged.
+  if (request.method === "tools/call" && args?.project_root && requestedName === "head_project_initialize_or_resume"
+    && relocationNeeded && (hasSelection || sessionContext || options.resolveSessionContext)) {
+    try {
+      if (hasSelection && typeof args.session_id !== "string") throw new Error("An explicit logical Session route must be text; omit it for an unspecified route.");
+      const cleanArgs = { ...args }; delete cleanArgs.session_id;
+      const clean = { ...request, params: { ...request.params, arguments: routed ? { ...outer, arguments: cleanArgs } : cleanArgs } };
+      const response = await dispatchRouted(clean, { ...options, projectSessionRoute: {
+        sessionId: hasSelection ? args.session_id : undefined, context: sessionContext,
+        resolveContext: options.resolveSessionContext ? async () => {
+          try { return await options.resolveSessionContext(request); }
+          catch (error) { bindingFailure = error.code || "HEAD_SESSION_CONTEXT_UNAVAILABLE"; throw error; }
+        } : null } });
+      if (bindingFailure && hasSelection && response?.result) response.result._meta = { ...response.result._meta,
+        headSessionBinding: { status: "unavailable", reasonCode: bindingFailure, scope: "current-explicit-request-only", retainedForSubsequentCalls: false, persisted: false } };
+      return response;
+    } catch (error) { return failure(request.id ?? null, error.message); }
+  }
   if (args?.project_root && (hasSelection || dependent) && !sessionContext && options.resolveSessionContext) {
     try { sessionContext = await options.resolveSessionContext(request); }
     catch (error) {
@@ -2359,7 +2389,7 @@ async function dispatchSessionRequest(request, options = {}) {
   return dispatchRouted(request, options);
 }
 
-async function dispatchRouted(request, { surface = "ordinary", graphDbTransport = null, coordinationWorkspaceHost = null, observationRegistry = null, conformanceTriggerRegistry = null, compactionLifecycleHost = null, workerJobHost = null, workerJobSupervisor = null, workerPreparationBackend = null, signal, onProcess, onValidatedSessionSelection = null, readRelatedNativeContext = null } = {}) {
+async function dispatchRouted(request, { surface = "ordinary", graphDbTransport = null, coordinationWorkspaceHost = null, observationRegistry = null, conformanceTriggerRegistry = null, compactionLifecycleHost = null, workerJobHost = null, workerJobSupervisor = null, workerPreparationBackend = null, signal, onProcess, onValidatedSessionSelection = null, readRelatedNativeContext = null, projectSessionRoute = null } = {}) {
   requireSurface(surface);
   const id = request.id ?? null;
     if (request.method === "initialize") {
@@ -2426,6 +2456,7 @@ async function dispatchRouted(request, { surface = "ordinary", graphDbTransport 
         ? (await import("./lib/project-bootstrap.mjs")).initializeOrResumeProject({
           root: args.project_root,
           pluginRoot,
+          projectSessionRoute,
           runtimes: args.runtimes || null,
           profile: args.profile || "core",
           instructionIntegration: args.instruction_integration ?? null,

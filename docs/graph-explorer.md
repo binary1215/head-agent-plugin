@@ -10,8 +10,8 @@ Ask Lode: “Create a local graph snapshot for this project.” In a distributio
 containing the exporter, the agent can run this from the plugin directory:
 
 ```powershell
-node scripts/graph-explorer.mjs --root "<project-directory>"
-node scripts/graph-explorer.mjs --root "<project-directory>" --query relay --history
+node scripts/lode.mjs graph-explorer "<project-directory>"
+node scripts/lode.mjs graph-explorer "<project-directory>" --query relay --history
 ```
 
 Open the returned HTML file in a browser. No server, account, database setup or
@@ -38,9 +38,19 @@ visited records. These are temporary display choices, not saved product knowledg
 New automatic placements reserve room for the node and its label rows, including
 when starting from a disconnected record. Manual dragging can intentionally place
 nodes together; expanding another node does not undo your positioning.
-Search filters only the included records; hidden-by-filter neighbors are distinct
-from endpoints that were not exported. Fit map adjusts the viewport; Start here
-clears the current map journey. Node distance is not a relevance score.
+The initial record opens automatically. Focus selection keeps it and its direct
+connections at a readable scale; off-screen connections remain in the complete
+paged list. Explored map fits the records you have visited. All evidence shows
+the whole exported inventory in a Canvas overview, without creating an SVG
+element for every record. Select a point or search any exact ID to focus it.
+Search covers every exported record; list and connection pages are display
+batches, not export limits. Filtered neighbors, off-screen neighbors and missing
+endpoints have separate counts. Start here clears only the temporary journey.
+Node distance is not a relevance score.
+
+Current evidence is the default. Include historical / non-current evidence
+reveals retained records and exact relationships with their original state.
+This switch cannot make them current or authorize an effect.
 
 The detail panel starts with the recorded summary and status. Open Exact original
 or Record identity & evidence for the underlying text and IDs. The same records
@@ -62,12 +72,25 @@ Old revisions are not replaced with current files: if the expected digest differ
 the original panel says that the exact revision is unavailable. Stale code keeps
 the original-source fallback while other verified records remain available.
 
-The Project query returns at most 60 nodes and 120 edges; the Source query returns
-at most 40 nodes and 120 edges. Original text is bounded to 64 KiB per file and
-256 KiB in total; the HTML export is bounded to 8 MiB. These are optional-view
-resource bounds, not a judgment about sufficient task context. The existing query
-may inspect more inventory than the number of records displayed. Query, original
-read and rendering costs must not be confused with the output count.
+There is no fixed node/edge count cutoff or arbitrary HTML-size cutoff for the
+viewer inventory. The same typed readers verify the available layers; damaged
+layers or source-reader resource bounds remain disclosed as incomplete coverage.
+Ordinary conversational graph queries keep their existing limits.
+
+The offline HTML stores repeated metadata in a lossless table encoding and
+reconstructs the same JSON records when opened. This changes transport size,
+not evidence identity, fields, multiplicity or authority. Large reports still
+need memory to reconstruct their inventory; an export is not a browser-speed guarantee.
+
+Exact original text remains bounded to 64 KiB per file and 256 KiB in total.
+The exporter includes a focused detail bundle for its query, not all original
+bodies or every historical comparison. A metadata-only selection says so nearby
+and provides a safely quoted command for another create-only report. Missing
+detail does not mean no change. Show recorded code changes opens the existing
+exact comparison, with added/removed excerpt lines and optional before/after
+text. Partial excerpts and recorded-after versus current remain distinct; this
+is not a complete file diff or a semantic verdict. Query, original-read and
+rendering costs are separate measurements.
 
 ## Local data and authority
 

@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { formatForVerifiedOwner, relativeProjectArtifact } from "./project-storage-format.mjs";
+import { formatForVerifiedOwner, relativeProjectArtifact, projectOwnsRecordedRoot, projectLocationBasis } from "./project-storage-format.mjs";
 import { publicToolName } from "./lode-artifact-composition.mjs";
 import { artifactAuthorityBoundary } from "./authority-plane-contract.mjs";
 import {
@@ -17,6 +17,8 @@ const layerCache = new Map();
 const resultCache = new Map();
 const adapterFailures = new Map();
 const adapterIds = new WeakMap();
+// Viewer-only collection capability. No JSON/MCP query argument can select it.
+const viewerInventory = Symbol("graph-explorer-inventory");
 let adapterSequence = 0;
 const authority = Object.freeze({ plane: "P4-derived-view", persistence: "none", instructionAuthority: false,
   promotionAuthority: false, recoveryAuthority: false, executionAuthority: false, ordinaryWorkBlocked: false });
@@ -95,7 +97,7 @@ function relation(type, from, to, provenance, extra = {}) {
 async function verifiedLayer(inventory, layer, entries, model) {
   const dependencies = inventory.readerDependencies?.[layer] || null;
   const key = projectGraphDigest({ root: inventory.projectRoot, projectId: inventory.project.projectId, layer,
-    entries, dependencies, model: ["onboarding", "policy"].includes(layer) ? model?.productModelId : null });
+    entries, dependencies, location: projectLocationBasis(inventory.storage), model: ["onboarding", "policy"].includes(layer) ? model?.productModelId : null });
   // Never reuse success on an incomplete dependency observation. A failed
   // optional layer remains local to that layer, not an ordinary-work gate.
   if (layer !== "sessionWork" && dependencies && (!dependencies.complete || dependencies.unavailable.length)) fail("PROJECT_GRAPH_DEPENDENCY_UNAVAILABLE");
@@ -112,7 +114,7 @@ async function verifiedLayer(inventory, layer, entries, model) {
     const read = readGraphRecord(root, entry.path);
     if (read.digest !== entry.sha256) fail("PROJECT_GRAPH_READ_DRIFT");
     if (read.document.projectId && read.document.projectId !== projectId) fail("PROJECT_GRAPH_CROSS_PROJECT");
-    if (read.document.projectRoot && read.document.projectRoot !== root) fail("PROJECT_GRAPH_CROSS_ROOT");
+    if (read.document.projectRoot && !projectOwnsRecordedRoot(storage, read.document.projectRoot)) fail("PROJECT_GRAPH_CROSS_ROOT");
     return { ...read, path: entry.path };
   });
   if (layer === "product") {
@@ -345,13 +347,21 @@ function limits(options) {
 }
 
 function sourceFacts(root, sources, nodes) {
-  const facts = new Map(), byId = new Map(nodes.map((node) => [node.nodeId, node]));
+  const facts = new Map(), currentByPath = new Map(), byId = new Map(nodes.map((node) => [node.nodeId, node]));
   for (const source of sources) {
     const key = canonicalGraphJson({ path: source.path, digest: source.digest });
     if (!facts.has(key)) {
-      let currentDigest = null, state = "unavailable";
-      try { const file = safeGraphFile(root, source.path); const stat = fs.lstatSync(file); if (!stat.isFile() || stat.size > 64 * 1024 * 1024) fail("PROJECT_GRAPH_SOURCE_LIMIT"); currentDigest = projectGraphDigest(fs.readFileSync(file)); state = currentDigest === source.digest ? "current-source-bytes" : "historical-source-bytes"; }
-      catch { /* Missing original does not corrupt intact retained evidence. */ }
+      // One current-byte observation per exact path in this request. Different
+      // retained digests remain separate evidence, compared with that same
+      // observation. No mtime or verdict is cached across calls.
+      if (!currentByPath.has(source.path)) {
+        let currentDigest = null;
+        try { const file = safeGraphFile(root, source.path); const stat = fs.lstatSync(file); if (!stat.isFile() || stat.size > 64 * 1024 * 1024) fail("PROJECT_GRAPH_SOURCE_LIMIT"); currentDigest = projectGraphDigest(fs.readFileSync(file)); }
+        catch { /* Missing original does not corrupt intact retained evidence. */ }
+        currentByPath.set(source.path, currentDigest);
+      }
+      const currentDigest = currentByPath.get(source.path), state = currentDigest === null ? "unavailable"
+        : currentDigest === source.digest ? "current-source-bytes" : "historical-source-bytes";
       facts.set(key, { path: source.path, retainedDigest: source.digest, currentDigest, freshness: state });
     }
     const fact = facts.get(key), node = byId.get(source.nodeId);
@@ -532,7 +542,8 @@ function compactTraversal(traversed) {
 
 export async function queryProjectGraph(options = {}) {
   const normalized = limits(options);
-  const scoped = reuseScopedDiscovery(options, normalized);
+  const collecting = options[viewerInventory] === true;
+  const scoped = collecting ? null : reuseScopedDiscovery(options, normalized);
   if (scoped && !scoped.contextLineage) return scoped;
   if (scoped) {
     // Reuse the verified selected graph, not its old source-byte explanation.
@@ -546,9 +557,9 @@ export async function queryProjectGraph(options = {}) {
     const resultHash = projectGraphDigest(payload);
     return { ...payload, resultId: `project-graph-result-${resultHash.slice(0, 24)}`, resultHash };
   }
-  const initialMembership = beginScopedDiscovery(options, normalized);
+  const initialMembership = collecting ? null : beginScopedDiscovery(options, normalized);
   let inventory;
-  try { inventory = collectProjectGraphInventory(options.root || "."); }
+  try { inventory = collectProjectGraphInventory(options.root || ".", collecting ? { recordLimit: Infinity } : undefined); }
   catch (error) { return fallbackProjection(normalized, reason(error)); }
   if (!inventory.project) return fallbackProjection(normalized, "PROJECT_GRAPH_NOT_INITIALIZED");
   const root = inventory.projectRoot, projectId = inventory.project.projectId, storage = inventory.storage;
@@ -589,8 +600,9 @@ export async function queryProjectGraph(options = {}) {
           : node.kind.includes("Candidate") ? "candidate" : node.authorityClass === "canon-projected" ? "canon-projected" : "observed-evidence", ...authority });
       if (node.kind === "FileRevision" && node.path && node.digest) sources.push({ path: node.path, digest: node.digest, nodeId: node.nodeId });
     }
-    edges.push(...graph.edges.filter(edge => eligibleEdges.has(edge.edgeId)).map((edge) => ({ ...edge, ...authority,
-      provenance: { graphSnapshotId: graph.graphSnapshotId, worldModelId: world.snapshot.worldModelId } })));
+    for (const edge of graph.edges.filter(edge => collecting || eligibleEdges.has(edge.edgeId))) edges.push({ ...edge, ...authority,
+      ...(collecting ? { currentTraversalEligible: eligibleEdges.has(edge.edgeId), viewerCurrentness: world.historical ? "historical" : eligibleEdges.has(edge.edgeId) ? "snapshot-evidence" : "domain-not-current" } : {}),
+      provenance: { graphSnapshotId: graph.graphSnapshotId, worldModelId: world.snapshot.worldModelId } });
     queryAdapter = async () => {
       const { queryGraphProjection } = await import("./graph-projection-adapter.mjs");
       const adapterKey = options.graphProjectionAdapter ? adapterIds.get(options.graphProjectionAdapter) || (() => { const key = ++adapterSequence; adapterIds.set(options.graphProjectionAdapter, key); return key; })() : "configured";
@@ -655,16 +667,24 @@ export async function queryProjectGraph(options = {}) {
   for (const [candidateId, states] of reviewedEvidenceStates) unique.get(candidateId).reviewState = states.size > 1
     ? "conflicting-reviewed-evidence" : [...states][0];
   const sourceCurrentness = sourceFacts(root, sources, allNodes);
+  const revisionKey = (relative, digest) => JSON.stringify([relative, digest]);
+  const revisions = new Map(), currentnessByRevision = new Map(sourceCurrentness.map(entry => [revisionKey(entry.path, entry.retainedDigest), entry]));
+  for (const node of allNodes) if (["FileRevision", "FileRevisionReference"].includes(node.kind)) {
+    const key = revisionKey(node.path, node.digest);
+    if (!revisions.has(key)) revisions.set(key, node);
+  }
   for (const source of sources) {
     if (!/^[a-f0-9]{64}$/.test(source.digest || "")) continue;
-    let target = allNodes.find((node) => ["FileRevision", "FileRevisionReference"].includes(node.kind) && node.path === source.path && node.digest === source.digest);
+    const key = revisionKey(source.path, source.digest);
+    let target = revisions.get(key);
     if (!target) {
       const nodeId = id("source-revision-reference", { projectId, path: source.path, digest: source.digest });
-      const currentness = sourceCurrentness.find((entry) => entry.path === source.path && entry.retainedDigest === source.digest);
+      const currentness = currentnessByRevision.get(key);
       target = { nodeId, kind: "FileRevisionReference", path: source.path, digest: source.digest, revisionId: nodeId,
         views: ["work", "product"], reviewState: "observed-evidence", integrity: "verified-reference", freshness: currentness?.freshness || "unavailable",
         sourceCurrentness: currentness, sourceReference: { path: source.path, digest: source.digest }, origin: source.origin || { layer: "world" }, ...authority };
       allNodes.push(target); unique.set(nodeId, target);
+      revisions.set(key, target);
     }
     if (target.nodeId !== source.nodeId) edges.push(relation("OBSERVES_EXACT_REVISION", source.nodeId, target.nodeId, source.origin || { layer: "world" }));
   }
@@ -673,7 +693,7 @@ export async function queryProjectGraph(options = {}) {
   const basis = { projectId, rootDigest: projectGraphDigest(root), recordsDigest: inventory.recordsDigest,
     worldModelId: world?.snapshot.worldModelId || null, graphSnapshotId: world?.snapshot.temporalProvenanceGraph?.graphSnapshotId || null,
     sourceCurrentnessDigest: projectGraphDigest(sourceCurrentness), layerDigest: projectGraphDigest(layers.map(({ reused, ...layer }) => layer)), readConsistency: "observed-sequence-not-atomic-filesystem-snapshot" };
-  const traversed = viewTraversal(allNodes, graphEdges, normalized);
+  const traversed = viewTraversal(allNodes, collecting ? graphEdges.filter(edge => edge.currentTraversalEligible !== false) : graphEdges, normalized);
   const withWorkContent = { ...traversed, nodes: presentSessionWorkContent(traversed.nodes, normalized) };
   let contextLineage = null;
   if (normalized.details) {
@@ -685,6 +705,18 @@ export async function queryProjectGraph(options = {}) {
     // graph identity is not proof that old/current byte pairs still exist.
     if (contextLineage) basis.contextLineageDigest = projectGraphDigest(contextLineage);
   }
+  if (collecting) return {
+    kind: "ProjectGraphExplorerInventory", status: allNodes.length ? "available" : "source-fallback", basis,
+    nodes: allNodes, edges: graphEdges.map(edge => ({ ...edge,
+      endpointStates: [edge.from, edge.to].map(nodeId => ({ nodeId, ...(unique.has(nodeId) ? navigationState(unique.get(nodeId))
+        : { reviewState: "unknown-outside-inventory", freshness: "unknown", revisionId: null }) })) })), authority,
+    detailSelection: { ...withWorkContent, ...(contextLineage ? { contextLineage } : {}) },
+    coverage: { state: inventory.complete && !unavailable.length ? "verified-available-layers" : "partial",
+      inventoryBoundReached: !inventory.complete, layers, verifiedNodeCount: allNodes.length, emptyResultProvesAbsence: false },
+    integrity: { verifiedLayers: layers.filter(layer => layer.status === "verified").map(layer => layer.layer), excluded: unavailable },
+    sourceFallback: { available: true, needed: !inventory.complete || unavailable.length > 0, excludedInputs: unavailable },
+    structural: world ? { worldModelId: world.snapshot.worldModelId, graph: world.snapshot.semanticGraph || null, freshness: world.freshness } : null,
+  };
   const selectedAdapterId = options.graphProjectionAdapter ? adapterIds.get(options.graphProjectionAdapter) || (() => { const key = ++adapterSequence; adapterIds.set(options.graphProjectionAdapter, key); return key; })() : "configured";
   const queryKey = projectGraphDigest({ basis, query: normalized, selectedAdapterId });
   const previous = options.previousResult;
@@ -720,6 +752,12 @@ export async function queryProjectGraph(options = {}) {
   boundedCache(resultCache, queryKey, clone(result));
   rememberScopedDiscovery({ options, normalized, inventory, result, nodes: allNodes, edges: graphEdges, world, sourceCurrentness, initialMembership });
   return result;
+}
+
+// Private display consumer, not a new conversational query or authority surface.
+// It reuses the typed readers above; original byte/path/integrity limits remain.
+export function collectGraphExplorerInventory({ root = ".", query = "", storeAdapter = null } = {}) {
+  return queryProjectGraph({ root, query, storeAdapter, details: true, depth: 2, [viewerInventory]: true });
 }
 
 function fallbackProjection(query, reasonCode) {

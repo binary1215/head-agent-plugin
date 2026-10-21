@@ -334,7 +334,7 @@ function queryTemporalProjection(worldModel, graphProjectionAdapter, query) {
   const eligibility = buildWorldTraversalEligibility(worldModel.snapshot, worldModel.freshness.domains);
   const needsMask = eligibility.nodeIds.length !== graph.nodes.length || eligibility.edgeIds.length !== graph.edges.length;
   return queryGraphProjection({
-    projectRoot: worldModel.snapshot.projectRoot,
+    projectRoot: worldModel.storage.projectRoot,
     storage: worldModel.storage,
     graph: worldModel.snapshot.temporalProvenanceGraph,
     adapter: graphProjectionAdapter,

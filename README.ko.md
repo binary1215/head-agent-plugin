@@ -1,5 +1,5 @@
 <p>
-  <a href="docs/assets/branding/lode-repository-icon.png"><img src="docs/assets/branding/lode-repository-icon.png" alt="Lode 저장소 아이콘 — 원본 이미지 열기" width="104"></a>
+  <img src="docs/assets/branding/lode-readme-wordmark.png" alt="Lode Agent Core" width="720">
 </p>
 
 # Lode
@@ -894,10 +894,6 @@ Lode는 정확히 승인된 `provider/model`과 일시적인 권한·개인정�
 
 <details>
 <summary>설계 배경과 원칙</summary>
-
-<p>
-  <img src="docs/assets/branding/lode-readme-wordmark.png" alt="Lode Agent Core" width="720">
-</p>
 
 Lode Agent Core Plugin은
 [Won6314/head-agent-core](https://github.com/Won6314/head-agent-core)에서

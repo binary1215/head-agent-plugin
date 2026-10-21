@@ -4,14 +4,12 @@ import os from "node:os";
 import path from "node:path";
 import { readGraphProject, safeGraphFile } from "./discovery-index.mjs";
 import { relativeProjectArtifact } from "./project-storage-format.mjs";
-import { queryProjectGraph } from "./project-graph.mjs";
-import { LocalJsonGraphProjectionAdapter } from "./graph-projection-adapter.mjs";
+import { collectGraphExplorerInventory } from "./project-graph.mjs";
 import { LocalJsonWorldModelStoreAdapter } from "./world-model-store.mjs";
 import { inspectGraphLineage, diffGraphLineage } from "./graph-lineage.mjs";
-import { queryWorldModel } from "./world-model.mjs";
 import { renderGraphExplorer } from "./graph-explorer-html.mjs";
 
-const MAX_ORIGINAL = 64 * 1024, MAX_ORIGINAL_TOTAL = 256 * 1024, MAX_HTML = 8 * 1024 * 1024;
+const MAX_ORIGINAL = 64 * 1024, MAX_ORIGINAL_TOTAL = 256 * 1024;
 const sha = bytes => crypto.createHash("sha256").update(bytes).digest("hex");
 const fail = code => { throw Object.assign(new Error(code), { code }); };
 const reason = error => /^[A-Z][A-Z0-9_]{0,95}$/.test(error?.code || "") ? error.code : "GRAPH_EXPLORER_UNAVAILABLE";
@@ -63,31 +61,56 @@ function exactOriginal(root, reference, remaining) {
 export async function buildGraphExplorerSnapshot({ root = ".", query = "", history = false } = {}) {
   const started = performance.now(), owner = readGraphProject(root), projectRoot = owner.projectRoot;
   const adapterOwner = { projectRoot, storage: owner.storage };
-  const graphAdapter = readOnlyLocalAdapter(LocalJsonGraphProjectionAdapter, adapterOwner, "graph-projection");
   const worldAdapter = readOnlyLocalAdapter(LocalJsonWorldModelStoreAdapter, adapterOwner, "world-model");
   const queryStarted = performance.now();
-  const graph = await queryProjectGraph({ root: projectRoot, query, view: "all", details: true, depth: 2,
-    maxNodes: 60, maxEdges: 120, graphProjectionAdapter: graphAdapter, storeAdapter: worldAdapter });
+  const inventory = await collectGraphExplorerInventory({ root: projectRoot, query, storeAdapter: worldAdapter });
+  const { structural, detailSelection, ...navigation } = inventory;
+  const selected = new Map((detailSelection?.nodes || []).map(node => [node.nodeId, node]));
+  const graph = { ...navigation, query: { query, details: true },
+    nodes: inventory.nodes.map(node => {
+      if (selected.has(node.nodeId)) return { ...selected.get(node.nodeId), detailCoverage: "selected-detail" };
+      // Recorded pending/unknown/conditions remain visible even outside the
+      // focused exact-original/comparison bundle. This is not a raw-file copy.
+      return { ...node,
+        detailCoverage: "metadata-only", detailReasonCode: "DETAIL_NOT_INCLUDED_FOR_THIS_SELECTION" };
+    }), contextLineage: detailSelection?.contextLineage || null,
+    initialNodeId: detailSelection?.nodes[0]?.nodeId || null,
+    detailScope: "Bounded exact comparisons/originals for the export query; missing detail is not proof of no change." };
   const queryMs = performance.now() - queryStarted;
   if (owner.project && graph.basis?.projectId && graph.basis.projectId !== owner.project.projectId) fail("GRAPH_EXPLORER_PROJECT_MISMATCH");
-  // The temporal Project view and structural semantic graph have different
-  // identities. Query the existing code reader, never invent path-based joins.
+  // The temporal and structural graphs keep their own exact identities.
+  // Both come from the same verified snapshot; no path-based joins are added.
   const sourceAnchor = query || graph.nodes.find(node => node.kind === "FileRevision" && node.sourceCurrentness?.freshness === "current-source-bytes")?.path;
-  let codeGraph = { status: "unavailable", nodes: [], edges: [], reasonCode: "NO_EXPORTED_SOURCE_ANCHOR", fallback: "original-source" };
+  let codeGraph = { status: "unavailable", nodes: [], edges: [], reasonCode: "SEMANTIC_GRAPH_NOT_BUILT", fallback: "original-source" };
   const codeStarted = performance.now();
-  if (owner.project && sourceAnchor) {
-    try {
-      const code = queryWorldModel({ root: projectRoot, query: sourceAnchor, depth: 2, maxResults: 40, storeAdapter: worldAdapter });
-      codeGraph = { ...code, layer: "structural-code-evidence", sourceAnchor,
+  if (structural?.graph) {
+      const code = structural.graph, current = structural.freshness.domains.code.status === "current";
+      codeGraph = { status: current ? "current" : "non-current-retained", worldModelId: structural.worldModelId,
+        ...(!current ? { fallback: "original-source", reasonCode: "WORLD_CODE_EVIDENCE_NOT_CURRENT" } : {}),
+        semanticGraphId: code.semanticGraphId, freshness: structural.freshness, layer: "structural-code-evidence", sourceAnchor,
         nodes: code.nodes.map(node => ({ ...node, nodeId: node.id, revisionId: code.semanticGraphId,
+          currentTraversalEligible: current, freshness: current ? "snapshot-evidence" : "domain-not-current",
           sourceReference: node.path && (node.digest || node.fileDigest) ? { path: node.path, digest: node.digest || node.fileDigest } : null })),
-        edges: code.edges.slice(0, 120).map(edge => ({ ...edge, edgeId: edge.id, sourceReference: edge.evidence })),
-        omittedEdgeCount: Math.max(0, code.edges.length - 120), truncated: Boolean(code.truncated || code.edges.length > 120) };
-    } catch (error) { codeGraph.reasonCode = reason(error); }
+        edges: code.edges.map(edge => ({ ...edge, edgeId: edge.id, sourceReference: edge.evidence, currentTraversalEligible: current,
+          freshness: current ? "snapshot-evidence" : "domain-not-current" })), omittedEdgeCount: 0, truncated: false };
   }
   const codeQueryMs = performance.now() - codeStarted;
   const originals = {}, unavailable = [], seen = new Set(); let originalBytes = 0, originalReadCount = 0;
-  for (const item of [...graph.nodes, ...graph.edges, ...codeGraph.nodes, ...codeGraph.edges]) {
+  // Metadata is complete over verified available layers. Original text remains
+  // a separately bounded focused bundle, not an all-originals export promise.
+  const codeReferences = new Map(), needle = String(query || "").trim().toLocaleLowerCase();
+  for (const node of codeGraph.nodes) if (node.sourceReference?.path && node.sourceReference.digest) {
+    const key = explorerReferenceKey(node.sourceReference), match = Boolean(needle && [node.path, node.name, node.qualifiedName, node.id]
+      .some(value => typeof value === "string" && value.toLocaleLowerCase().includes(needle)));
+    const existing = codeReferences.get(key);
+    if (!existing || match && !existing.match) codeReferences.set(key, { node, match });
+  }
+  // Literal query matches are read first, not an eligibility gate. Every exact
+  // reference remains represented, with text omissions governed only by the
+  // existing byte budget rather than the former 40-code-node result cutoff.
+  const rankedReferences = [...codeReferences.values()].sort((a, b) => Number(b.match) - Number(a.match)
+    || explorerReferenceKey(a.node.sourceReference).localeCompare(explorerReferenceKey(b.node.sourceReference))).map(entry => entry.node);
+  for (const item of [...(detailSelection?.nodes || []), ...(detailSelection?.edges || []), ...rankedReferences]) {
     if (item.projectId && item.projectId !== owner.project?.projectId) fail("GRAPH_EXPLORER_PROJECT_MISMATCH");
     const reference = item.sourceReference || item.provenance, key = explorerReferenceKey(reference);
     if (seen.has(key)) continue;
@@ -117,8 +140,11 @@ export async function buildGraphExplorerSnapshot({ root = ".", query = "", histo
     kind: "GraphExplorerSnapshot", schemaVersion: 1, authorityPlane: "P4-derived-view", runtimeAuthority: false,
     generatedAt: new Date().toISOString(), project: owner.project ? { projectId: owner.project.projectId, root: projectRoot } : null,
     focus: { kind: "project", nativeSessionSelectionClaimed: false }, graph, codeGraph, originals, history: retainedHistory, unavailable,
-    bounds: { maxProjectNodes: 60, maxProjectEdges: 120, maxCodeNodes: 40, maxCodeEdges: 120,
-      maxOriginalBytes: MAX_ORIGINAL, maxOriginalTotalBytes: MAX_ORIGINAL_TOTAL, maxHtmlBytes: MAX_HTML },
+    regenerate: { argv: [process.execPath, path.resolve(import.meta.dirname, "../lode.mjs"), "graph-explorer", projectRoot],
+      shell: process.platform === "win32" ? "powershell" : "posix", scope: "Explicitly generate another create-only report; never executed by this file." },
+    bounds: { maxProjectNodes: null, maxProjectEdges: null, maxCodeNodes: null, maxCodeEdges: null,
+      metadata: "No node/edge count cutoff; source-reader and platform resource failures remain disclosed.",
+      maxOriginalBytes: MAX_ORIGINAL, maxOriginalTotalBytes: MAX_ORIGINAL_TOTAL },
     metrics: { queryMs, codeQueryMs, exportMs: performance.now() - started, originalReferenceCount: originalReadCount, originalBytes,
       queryInventoryReads: "not-measured-by-this-view; output-node-limit-is-not-an-inventory-read-limit" },
     interpretation: "A generated local evidence snapshot, not a live view, Session binding, recovery direction or action approval.",
@@ -140,7 +166,6 @@ export async function exportGraphExplorer({ root = ".", query = "", history = fa
   if (file && fs.existsSync(file)) fail("GRAPH_EXPLORER_OUTPUT_EXISTS");
   const snapshot = await buildGraphExplorerSnapshot({ root, query, history }), html = renderGraphExplorer(snapshot);
   const bytes = Buffer.byteLength(html);
-  if (bytes > MAX_HTML) fail("GRAPH_EXPLORER_EXPORT_BYTE_BOUND");
   if (!file) file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "lode-graph-explorer-")), "index.html");
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, html, { encoding: "utf8", flag: "wx", mode: 0o600 });

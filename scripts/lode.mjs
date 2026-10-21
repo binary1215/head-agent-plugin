@@ -83,6 +83,7 @@ export function parse(argv) {
     const item = rest[index];
     if (!item.startsWith("--")) throw new Error(`Unexpected argument: ${item}`);
     const key = item.slice(2);
+    if (command === "graph-explorer" && key === "history") { options.history = true; continue; }
     if (key === "details") {
       const value = rest[index + 1];
       options[key] = value === "false" ? false : true;
@@ -112,6 +113,7 @@ export function usage({ all = false, surface = "ordinary" } = {}) {
       `${cliDisplay} doctor <project>`,
       `${cliDisplay} graph-query <project> --query <text> [--view all|work|product] [--paths <path,...>] [--anchors <id,...>] [--depth <n>] [--max-nodes <n>] [--max-edges <n>] [--world-model <id>] [--details]`,
       `${cliDisplay} graph-index <project>`,
+      `${cliDisplay} graph-explorer <project> [--query <text-or-source>] [--history] [--output <new-file.html>]`,
       `${cliDisplay} session-create <project> [--purpose <text>] [--new-session <session-id>]`,
       `${cliDisplay} session-list <project>`,
       `${cliDisplay} project-direction-read <project>`,
@@ -270,6 +272,7 @@ export function usage({ all = false, surface = "ordinary" } = {}) {
     `${cliDisplay} resume <project> [--runtime claude,codex,opencode]`,
     `${cliDisplay} status <project>`,
     `${cliDisplay} graph-query <project> --query <text>  # bounded graph first; source fallback remains usable`,
+    `${cliDisplay} graph-explorer <project>  # create an offline read-only graph viewer`,
     `${cliDisplay} session-list <project>  # use --session <logical-session-id> on project commands when needed`,
     `${cliDisplay} checkpoint-diagnose <project>  # only when recovery needs attention`,
     `${cliDisplay} compact-status <project>`,
@@ -342,6 +345,9 @@ export function runCommand(argv = process.argv.slice(2), { observationRegistry =
   if (index >= 0 || sessionContext) {
     if (argv.lastIndexOf("--session") !== index) throw new Error("Only one logical Session route may be selected.");
     const routed = [...argv]; if (index >= 0) routed.splice(index, 2);
+    if (["init", "resume"].includes(parsed.command)) return runRoutedCommand(routed, {
+      observationRegistry, compactionLifecycleHost, workerJobHost, workerJobSupervisor, workerPreparationBackend, signal, onProcess,
+      projectSessionRoute: { sessionId: index >= 0 ? parsed.options.session : undefined, context: sessionContext } });
     const operation = () => runRoutedCommand(routed, { observationRegistry, compactionLifecycleHost, workerJobHost, workerJobSupervisor, workerPreparationBackend, signal, onProcess });
     if (index < 0 && !sessionCallRequiresBinding(parsed.command, "cli")) return operation();
     try { return withSessionCallContext({ root: parsed.root, sessionId: index >= 0 ? parsed.options.session : undefined, context: sessionContext }, operation); }
@@ -353,7 +359,7 @@ export function runCommand(argv = process.argv.slice(2), { observationRegistry =
   return runRoutedCommand(argv, { observationRegistry, compactionLifecycleHost, workerJobHost, workerJobSupervisor, workerPreparationBackend, signal, onProcess });
 }
 
-function runRoutedCommand(argv, { observationRegistry = null, compactionLifecycleHost = null, workerJobHost = null, workerJobSupervisor = null, workerPreparationBackend = null, signal, onProcess } = {}) {
+function runRoutedCommand(argv, { observationRegistry = null, compactionLifecycleHost = null, workerJobHost = null, workerJobSupervisor = null, workerPreparationBackend = null, signal, onProcess, projectSessionRoute = null } = {}) {
   const entry = commandEntry(argv);
   const { surface } = entry;
   const { command, root, options } = parse(entry.argv);
@@ -363,6 +369,7 @@ function runRoutedCommand(argv, { observationRegistry = null, compactionLifecycl
   if (command === "--version" || command === "version") return { name: ARTIFACT_COMPOSITION.pluginName, version: packageMetadata.version };
   if (command === "init" || command === "resume") return initializeOrResumeProject({
     root,
+    projectSessionRoute,
     pluginRoot,
     runtimes: options.runtime?.split(","),
     profile: options.profile || "core",
@@ -374,6 +381,8 @@ function runRoutedCommand(argv, { observationRegistry = null, compactionLifecycl
     paths: options.paths?.split(",") || [], anchorIds: options.anchors?.split(",") || [], depth: options.depth == null ? 1 : Number(options.depth),
     details: options.details === true || options.details === "true", maxNodes: options["max-nodes"] == null ? undefined : Number(options["max-nodes"]), maxEdges: options["max-edges"] == null ? undefined : Number(options["max-edges"]), worldModelId: options["world-model"] || "" }));
   if (command === "graph-index") return import("./lib/project-graph.mjs").then(({ indexProjectGraph }) => indexProjectGraph({ root }));
+  if (command === "graph-explorer") return import("./lib/graph-explorer.mjs").then(({ exportGraphExplorer }) => exportGraphExplorer({ root,
+    query: options.query || "", history: options.history === true, output: options.output || null }));
   if (command === "session-create") return createLodeSession({ root, sessionId: options["new-session"], purpose: options.purpose });
   if (command === "session-list") return listLodeSessions({ root });
   if (command === "project-direction-read") return readProjectDirection({ root });

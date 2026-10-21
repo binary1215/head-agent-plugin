@@ -125,3 +125,9 @@ Thumbs.db
 !test/product-operating-projection.test.mjs
 !test/terminal-graph-equivalence.test.mjs
 !test/opencode-installation-reconnect.test.mjs
+!test/graph-explorer-inventory.test.mjs
+!test/graph-explorer-scale.test.mjs
+!test/graph-explorer-browser.test.mjs
+!test/helpers/graph-explorer-dom-fixture.mjs
+!test/graph-explorer-codec.test.mjs
+!test/project-relocation.test.mjs

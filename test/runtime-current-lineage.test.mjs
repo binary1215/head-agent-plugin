@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { initializeProject, inspectProject } from "../scripts/lib/lode-core.mjs";
+import { initializeOrResumeProject } from "../scripts/lib/project-bootstrap.mjs";
 import { compileContext } from "../scripts/lib/context-compiler.mjs";
 import { createExecutionContract, createWholePlanSnapshot } from "../scripts/lib/execution-lineage.mjs";
 import { finishRun, getPendingReviewContext, reviewRun, startRun } from "../scripts/lib/run-lineage.mjs";
@@ -109,6 +110,17 @@ function assertRejectedUnchanged(f, code, input = f.input) {
     assert.deepEqual(snapshot(f.root), before);
   }
 }
+
+test("folder relocation preserves logical direction but cannot alias an old runtime authorization root", async t => {
+  const f = await fixture(t, { scopeKind: "session" });
+  const root = path.join(path.dirname(f.root), "relocated"); fs.cpSync(f.root, root, { recursive: true });
+  await initializeOrResumeProject({ root, pluginRoot });
+  const before = snapshot(root);
+  for (const operation of [verifyRuntimeInvocationCurrentLineage, prepareRuntimeInvocationExecution]) {
+    assert.throws(() => operation({ ...f.input, root }), { code: "RUNTIME_INVOCATION_PROJECT_DRIFT" });
+    assert.deepEqual(snapshot(root), before);
+  }
+});
 
 function withJsonChange(file, mutate, check) {
   const bytes = fs.readFileSync(file);
