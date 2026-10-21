@@ -173,3 +173,24 @@ to cited code/documents and shows bounded exact version comparisons, recorded
 reasons and missing evidence. Known original bodies are readable; raw JSON and
 unknown fields remain optional diagnostics. This does not make a citation proof
 of fulfillment or turn HEAD-authored work into a verbatim user message.
+
+## Compact controls and unavailable current paths
+
+On a narrow screen, evidence-display and selection tools start folded. Their
+controls and all exported metadata remain available. Camera-edge captions use
+display offsets and a leader, without changing node layout, pins, selection,
+recorded relationships or direction. This source/VM behavior is not an actual
+browser acceptance result; actual GUI verification remains separately pending.
+
+When the current path is not found, an exact cited digest can still locate
+bounded historical raw Git bytes locally. The excerpt is separate from an
+after-version: it does not manufacture an empty diff or establish a deletion.
+Permission, path, encoding and byte-limit failures do not trigger this fallback.
+Existing source and Git-command bounds still apply; missing local objects do not
+cause a network fetch.
+
+An optional rename candidate uses the most recent recorded path change, Git's
+exact-byte move observation and the cited digest. It is historical evidence, not
+verified logical continuity, current-path availability, fulfillment or cause.
+Content-changing or unrecorded moves are not guessed. Candidate lookup follows
+primary source reads and cannot consume their remaining command budget first.

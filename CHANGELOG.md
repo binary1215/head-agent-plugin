@@ -11,7 +11,14 @@ are made only for separately designated releases; missing intermediate tags are
 not backfilled. Marketplace publication does not prove local installation or
 Host/MCP reload.
 
-## 0.3.0-beta.57 — candidate, publication not yet verified
+## 0.3.0-beta.57 — published to Codex and Claude marketplaces
+
+Source: `e77c8e84ba82bbc70764110087d8485b2dbd7973`.
+CI [39610882032](https://github.com/binary1215/lode/actions/runs/39610882032)
+completed successfully. Canonical and compatibility Codex/Claude marketplace
+branches were verified against this source. No GitHub Release or tag was made
+for this intermediate beta, under the publication policy above. These are
+publication records, not proof that a particular Host has reloaded the package.
 
 - Use the existing controlled cleanup clock before invalid-transport requests
   start automatic shutdown. Keep all named cases and require exact native exit,

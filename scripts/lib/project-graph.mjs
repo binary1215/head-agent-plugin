@@ -27,6 +27,13 @@ const fail = (code, message = code) => { const error = new Error(message); error
 const reason = (error) => error.code || "PROJECT_GRAPH_LAYER_UNAVAILABLE";
 const clone = (value) => structuredClone(value);
 function boundedCache(cache, key, value, limit = 16) { if (cache.size >= limit) cache.delete(cache.keys().next().value); cache.set(key, value); return value; }
+// Request-local indexes retain Array.find's first-match semantics. They do not
+// cache bytes, validity or currentness, and are built only after the old checks.
+function firstBy(items, key) {
+  const index = new Map();
+  for (const item of items) { const value = key(item); if (!index.has(value)) index.set(value, item); }
+  return index;
+}
 const layerFor = (relative, storage) => sessionWorkPath(relative) ? "sessionWork" : relative.startsWith(relativeProjectArtifact(storage, "observations/source-bundles/")) ? "source-bundles"
   : relative.startsWith(relativeProjectArtifact(storage, "observations/")) ? "observations"
     : relative.startsWith(relativeProjectArtifact(storage, "onboarding/")) ? "onboarding"
@@ -105,8 +112,9 @@ async function verifiedLayer(inventory, layer, entries, model) {
   if (layerCache.has(key)) return { ...clone(layerCache.get(key)), reused: true };
   const nodes = [], edges = [], skipped = [], sources = [];
   const projectId = inventory.project.projectId, root = inventory.projectRoot, storage = inventory.storage;
+  const entriesByPath = firstBy(entries, item => item.path);
   const add = (document, relative, views = ["work"], extra = {}) => {
-    const entry = entries.find((item) => item.path === relative);
+    const entry = entriesByPath.get(relative);
     const node = nodeFromRecord(document, { layer, path: relative, digest: entry?.sha256 || projectGraphDigest(document) }, views, extra);
     nodes.push(node); return node;
   };
@@ -117,6 +125,7 @@ async function verifiedLayer(inventory, layer, entries, model) {
     if (read.document.projectRoot && !projectOwnsRecordedRoot(storage, read.document.projectRoot)) fail("PROJECT_GRAPH_CROSS_ROOT");
     return { ...read, path: entry.path };
   });
+  const recordsByIdentity = firstBy(records, item => recordIdentity(item.document));
   if (layer === "product") {
     if (model) {
       const origin = { layer, path: relativeProjectArtifact(storage, "context/product-model.json"), digest: entries[0]?.sha256 || model.productModelHash };
@@ -135,7 +144,7 @@ async function verifiedLayer(inventory, layer, entries, model) {
     const { loadObservationArtifacts } = await import("./observation-store.mjs");
     const verified = loadObservationArtifacts({ projectRoot: root, projectId, storage });
     for (const document of [...verified.descriptors, ...verified.observations, ...verified.derivedObservations, ...verified.receipts]) {
-      const record = records.find((item) => recordIdentity(item.document) === recordIdentity(document));
+      const record = recordsByIdentity.get(recordIdentity(document));
       const node = add(document, record.path, ["work", "product"], { reviewState: "observed-evidence", payload: safeObservationPayload(document) });
       if (document.descriptorId && node.nodeId !== document.descriptorId) edges.push(relation("CONFORMS_TO", node.nodeId, document.descriptorId, node.origin));
       for (const input of document.inputObservations || []) edges.push(relation("DERIVED_FROM", node.nodeId, input.observationId, node.origin));
@@ -176,7 +185,7 @@ async function verifiedLayer(inventory, layer, entries, model) {
     const { loadOnboardingGraphProjection } = await import("./onboarding-projection.mjs");
     const projected = loadOnboardingGraphProjection({ projectRoot: root, projectId, currentProductModelId: model.productModelId, storage });
     for (const document of [...projected.candidateSets, ...projected.reviewDecisions, ...projected.productModelRevisions]) {
-      const record = records.find((item) => recordIdentity(item.document) === recordIdentity(document));
+      const record = recordsByIdentity.get(recordIdentity(document));
       const node = add(document, record.path, ["work", "product"], { revisionId: document.productModelId || document.candidateSetId,
         reviewState: document.kind.includes("Review") ? `historical-${document.disposition}` : document.candidates ? "candidate" : "retained-product-revision" });
       for (const candidate of document.candidates || []) {
@@ -209,19 +218,21 @@ async function verifiedLayer(inventory, layer, entries, model) {
   } else if (layer === "policy") {
     const { verifyProductPolicyCandidate, verifyProductPolicyReviewDecision } = await import("./product-policy.mjs");
     const candidates = records.filter((record) => record.document.kind === "ProductPolicyCandidate").map((record) => verifyProductPolicyCandidate(record.document, projectId));
+    const candidatesById = firstBy(candidates, item => item.candidateId);
     const reviews = records.filter((record) => record.document.kind === "ReviewDecision").map((record) => {
-      const candidate = candidates.find((item) => item.candidateId === record.document.candidateId);
+      const candidate = candidatesById.get(record.document.candidateId);
       if (!candidate) fail("PROJECT_GRAPH_POLICY_LINEAGE_MISSING");
       return verifyProductPolicyReviewDecision(record.document, candidate, projectId);
     });
     if (new Set(reviews.map((review) => review.candidateId)).size !== reviews.length) fail("PRODUCT_POLICY_REVIEW_CONFLICT");
+    const reviewsByCandidate = firstBy(reviews, item => item.candidateId);
     for (const document of [...candidates, ...reviews]) {
-      const record = records.find((item) => recordIdentity(item.document) === recordIdentity(document));
-      const review = reviews.find((item) => item.candidateId === document.candidateId);
+      const record = recordsByIdentity.get(recordIdentity(document));
+      const review = reviewsByCandidate.get(document.candidateId);
       const node = add(document, record.path, ["work", "product"], { reviewState: document.reviewDecisionId ? `historical-${document.disposition}`
         : review?.disposition === "reject" ? "rejected" : review?.disposition === "accept" ? "accepted-candidate-evidence" : "candidate",
         revisionId: recordIdentity(document),
-        policyKey: document.policyKey || candidates.find((item) => item.candidateId === document.candidateId)?.policyKey,
+        policyKey: document.policyKey || candidatesById.get(document.candidateId)?.policyKey,
         baseProductModelId: document.baseProductModelId || document.previousProductModelId,
         applicationStatus: !review ? "awaiting-review" : review.disposition === "reject" ? "rejected"
           : document.resultingProductModelId === model?.productModelId ? "applied-current" : "accepted-historical-or-diverged" });
@@ -232,7 +243,7 @@ async function verifiedLayer(inventory, layer, entries, model) {
     const projected = layer === "releases" ? projection.loadReleaseObservationProjection({ projectRoot: root, projectId, storage })
       : projection.loadChangeSetProjection({ projectRoot: root, projectId, storage });
     for (const documents of Object.values(projected)) if (Array.isArray(documents)) for (const document of documents) {
-      const record = records.find((item) => recordIdentity(item.document) === recordIdentity(document));
+      const record = recordsByIdentity.get(recordIdentity(document));
       if (!record || !document.kind) continue;
       const node = add(document, record.path, ["work", "product"], { reviewState: document.candidates ? "candidate" : "observed-evidence",
         ...(document.kind === "ChangeSet" ? { changeEvidence: { before: document.before, after: document.after, changes: document.changes,
@@ -419,6 +430,11 @@ function rankedMatches(visible, options) {
   // Fold the query before alias generation: the spelling/case of a question
   // must not add several votes for one camel-case identifier.
   const queryTerms = [...searchTerms(foldSearch(options.query))], query = foldSearch(options.query.replaceAll("\\", "/"));
+  // Only a whole-query selector, not a token/backtick inside a natural
+  // question. Typography alone does not establish a code-navigation intent.
+  const selectorText = query.replace(/^`([^`]+)`$/, "$1");
+  const call = /^([\p{L}_$][\p{L}\p{N}_$]*(?:(?:\.|::)[\p{L}_$][\p{L}\p{N}_$]*)*)\s*\([^()]*\)$/u.exec(selectorText);
+  const identifierSelector = call ? call[1] : selectorText;
   const entries = candidates.map(node => {
     const text = searchText(node);
     return { node, text: foldSearch(text), terms: searchTerms(text) };
@@ -427,15 +443,20 @@ function rankedMatches(visible, options) {
   return entries.map(entry => {
     const exact = entry.node.nodeId === options.query || nodePaths(entry.node).some(relative => foldSearch(relative.replaceAll("\\", "/")) === query);
     const matched = queryTerms.filter(term => entry.terms.has(term));
+    // A literal declared identifier is a precise navigation hint, not a guessed
+    // task intent. Headings/documents still match and remain in the result set.
+    const identifier = ["Symbol", "SymbolRevision"].includes(entry.node.kind) && entry.node.symbolKind !== "heading"
+      && [entry.node.name, entry.node.qualifiedName].some(name => typeof name === "string" &&
+        foldSearch(name) === identifierSelector);
     // Rare explicit identifiers outrank common conversational words. All
     // matching evidence stays eligible: this is bounded lexical navigation,
     // not a semantic sufficiency decision or an authorization predicate.
     const weights = matched.map(term => 1 + Math.log1p(entries.length / frequency.get(term)));
     const specificity = weights.length ? Math.max(...weights) : 0;
     const score = weights.reduce((sum, weight) => sum + weight, 0);
-    return { node: entry.node, exact, matched: matched.length, specificity, score, phrase: entry.text.includes(query) };
+    return { node: entry.node, exact, identifier, matched: matched.length, specificity, score, phrase: entry.text.includes(query) };
   }).filter(entry => entry.exact || entry.matched).sort((a, b) => Number(b.exact) - Number(a.exact) ||
-    b.specificity - a.specificity || b.score - a.score || Number(b.phrase) - Number(a.phrase) || a.node.nodeId.localeCompare(b.node.nodeId)).map(entry => entry.node);
+    Number(b.identifier) - Number(a.identifier) || b.specificity - a.specificity || b.score - a.score || Number(b.phrase) - Number(a.phrase) || a.node.nodeId.localeCompare(b.node.nodeId)).map(entry => entry.node);
 }
 
 function viewTraversal(nodes, edges, options) {

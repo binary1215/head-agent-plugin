@@ -1,6 +1,44 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import vm from "node:vm";
 import test from "node:test";
 import { explorerDom } from "./helpers/graph-explorer-dom-fixture.mjs";
+
+test("narrow selection controls collapse without losing selection and camera captions stay inside their viewport", () => {
+  const snapshot = fixture(6000), before = JSON.stringify(snapshot), ui = explorerDom(snapshot, { narrow: true });
+  assert.equal(ui.ids.get("selection-tools").open, false); assert.equal(ui.ids.get("display-options").open, false);
+  const selected = ui.ids.get("selection-count").textContent;
+  ui.ids.get("selection-tools").open = true;
+  assert.equal(ui.ids.get("selection-count").textContent, selected);
+  assert.equal(explorerDom(snapshot).ids.get("selection-tools").open, true);
+  assert.equal(JSON.stringify(snapshot), before);
+  const source = fs.readFileSync(new URL("../scripts/graph-explorer/browser.js", import.meta.url), "utf8");
+  const start = source.indexOf("  function captionPlacement("), end = source.indexOf("\n  }\n", start) + 5;
+  assert(start >= 0 && end > start);
+  const place = vm.runInNewContext("(" + source.slice(start, end).trim() + ")");
+  for (const [point, extent, viewport] of [[{ x: 990, y: 690 }, { left: 100, right: 100 }, [0, 0, 1000, 700]],
+    [{ x: 388, y: 315 }, { left: 150, right: 150 }, [0, 0, 390, 320]]]) {
+    const original = structuredClone(point), result = place(point, extent, viewport);
+    assert(point.x + result.x - extent.left >= viewport[0]);
+    assert(point.x + result.x + extent.right <= viewport[0] + viewport[2]);
+    assert(point.y + result.y >= viewport[1]); assert(point.y + result.y + 17 <= viewport[1] + viewport[3]);
+    assert.deepEqual(point, original, "Caption adjustment must not move a layout/pin coordinate");
+  }
+});
+
+test("missing current source displays exact retained text without manufacturing an empty after-version", () => {
+  const snapshot = fixture(6000), digest = "a".repeat(64);
+  snapshot.graph.contextLineage = { events: [], recordedReasons: [], canonChanges: [], files: [{ path: "src/generic-0.mjs",
+    currentObservation: { reasonCode: "ENOENT", explanation: "Current path not found; deletion and rename remain unproven." }, associations: [],
+    renameEvidence: { candidates: [{ path: "src/moved.mjs", digest }] }, comparisons: [{ status: "unknown", after: null,
+      citedReference: { path: "src/generic-0.mjs", digest }, retainedOriginal: { path: "src/generic-0.mjs", digest,
+        text: "retained <script>not executable</script>", omittedLines: 12, textTruncated: false } }], unrecordedIntervals: "Unknown" }] };
+  const before = JSON.stringify(snapshot), ui = explorerDom(snapshot), body = ui.ids.get("context-lineage-body").textContent;
+  assert(body.includes("retained <script>not executable</script>")); assert(body.includes("not an after-version"));
+  assert(body.includes("Partial historical excerpt")); assert(body.includes("not confirmed continuity"));
+  assert(!body.includes("No byte differences")); assert.equal(ui.ids.get("show-code-diff").hidden, true);
+  assert.equal(JSON.stringify(snapshot), before);
+});
 
 function fixture(count = 60000) {
   const nodes = Array.from({ length: count }, (_, i) => ({ nodeId: `generic-${i}`, kind: "File", path: `src/generic-${i}.mjs`, name: `Generic ${i}`,

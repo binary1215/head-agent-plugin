@@ -777,12 +777,15 @@ function worldNodeDomains(node) {
   if (node.kind === "ExecutionLineageReference") return ["runtime"];
   return ["unknown"];
 }
-function worldRelationDomains(edge) {
-  if (new Set(["REALIZES", "IMPLEMENTS", "VERIFIED_BY", "IMPACTS"]).has(edge.type)) return ["code", "product"];
-  if (new Set(["AT_REVISION", "OBSERVED_ON", "DEPLOYS"]).has(edge.type)) return ["git"];
-  if (new Set(["CONTAINS", "GOVERNED_BY", "HAS_REVISION", "CURRENT_REVISION", "PARENT_OF", "DECLARES", "REFERENCES",
+const CODE_PRODUCT_RELATIONS = new Set(["REALIZES", "IMPLEMENTS", "VERIFIED_BY", "IMPACTS"]);
+const GIT_RELATIONS = new Set(["AT_REVISION", "OBSERVED_ON", "DEPLOYS"]);
+const NEUTRAL_RELATIONS = new Set(["CONTAINS", "GOVERNED_BY", "HAS_REVISION", "CURRENT_REVISION", "PARENT_OF", "DECLARES", "REFERENCES",
     "PROPOSES_FROM", "PROPOSES_TO", "SUPPORTED_BY", "REVIEWED_BY", "ACCEPTED_BY", "REJECTED_BY", "PROMOTED_FROM",
-    "PRODUCES", "CHANGES", "SUPERSEDES", "MATERIALIZED_AS", "OBSERVES", "EVIDENCED_BY", "CONFORMS_TO", "DERIVED_FROM", "HISTORICALLY_FOLLOWS"]).has(edge.type)) return [];
+    "PRODUCES", "CHANGES", "SUPERSEDES", "MATERIALIZED_AS", "OBSERVES", "EVIDENCED_BY", "CONFORMS_TO", "DERIVED_FROM", "HISTORICALLY_FOLLOWS"]);
+function worldRelationDomains(edge) {
+  if (CODE_PRODUCT_RELATIONS.has(edge.type)) return ["code", "product"];
+  if (GIT_RELATIONS.has(edge.type)) return ["git"];
+  if (NEUTRAL_RELATIONS.has(edge.type)) return [];
   return ["unknown"];
 }
 // Mask the original graph BEFORE traversal. Never manufacture a new snapshot
@@ -790,13 +793,13 @@ function worldRelationDomains(edge) {
 export function buildWorldTraversalEligibility(snapshot, domainFreshness) {
   const graph = snapshot.temporalProvenanceGraph;
   verifyTemporalProvenanceGraph(graph);
-  const nodes = new Map(graph.nodes.map(node => [node.nodeId, node]));
+  const nodeDomains = new Map(graph.nodes.map(node => [node.nodeId, worldNodeDomains(node)]));
   const eligible = (record, required) => required.every(domain => domain !== "unknown")
     && (record.freshness !== "current" || required.every(domain => domainFreshness?.[domain]?.status === "current"));
-  const nodeIds = graph.nodes.filter(node => eligible(node, worldNodeDomains(node))).map(node => node.nodeId);
+  const nodeIds = graph.nodes.filter(node => eligible(node, nodeDomains.get(node.nodeId))).map(node => node.nodeId);
   const allowed = new Set(nodeIds);
   const edgeIds = graph.edges.filter(edge => allowed.has(edge.from) && allowed.has(edge.to)
-    && eligible(edge, [...new Set([...worldNodeDomains(nodes.get(edge.from)), ...worldNodeDomains(nodes.get(edge.to)), ...worldRelationDomains(edge)])])).map(edge => edge.edgeId);
+    && eligible(edge, [...new Set([...nodeDomains.get(edge.from), ...nodeDomains.get(edge.to), ...worldRelationDomains(edge)])])).map(edge => edge.edgeId);
   return { graphSnapshotId: graph.graphSnapshotId, graphSnapshotHash: graph.graphSnapshotHash,
     nodeIds, edgeIds, domains: domainFreshness, authority: "read-only-domain-eligibility-not-graph-snapshot" };
 }

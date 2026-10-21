@@ -6,7 +6,8 @@ import { safeGraphFile } from "./discovery-index.mjs";
 import { MAX_REFERENCE_BYTES } from "./session-work-evidence-original.mjs";
 
 const sha = bytes => crypto.createHash("sha256").update(bytes).digest("hex");
-const decode = bytes => new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+// Preserve a valid BOM too: sha(UTF-8 text) must still identify the raw bytes.
+const decode = bytes => new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
 
 function currentBytes(root, relative) {
   const file = safeGraphFile(root, relative), fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
@@ -75,6 +76,31 @@ export function createContextSourceReader(root, projectId) {
         retained.set(cacheKey, version); return version;
       }
       return { status: "unavailable", path: relative, expectedDigest, reasonCode: gitCalls >= 24 ? "LOCAL_GIT_READ_BUDGET_REACHED" : "EXACT_HISTORICAL_BYTES_NOT_RETAINED_IN_BOUNDED_HISTORY" };
+    },
+    async renameCandidates(relative, expectedDigest) {
+      // Optional, after exact-source reads: never spend their budget first.
+      // R100 is Git's exact-byte move observation, not canonical identity.
+      const version = retained.get(JSON.stringify([relative, expectedDigest]));
+      const commit = histories.get(relative)?.[0];
+      if (version?.basis.kind !== "local-git-exact-blob" || !commit) return { candidates: [], status: "exact-cited-source-required" };
+      const bytes = await command(["diff-tree", "--root", "--no-commit-id", "--name-status", "-z", "-r", "-M100%", "--no-ext-diff", "--no-textconv", commit]);
+      if (!bytes) return { candidates: [], status: "bounded-local-rename-evidence-unavailable" };
+      const candidates = [];
+      try {
+        const fields = decode(bytes).split("\0");
+        for (let i = 0; i < fields.length && fields[i];) {
+          const status = fields[i++], from = fields[i++], to = /^R\d+$/.test(status) ? fields[i++] : null;
+          if (status !== "R100" || from !== `${prefix}${relative}` || !to?.startsWith(prefix)) continue;
+          const candidatePath = to.slice(prefix.length);
+          if (/^(?:\.git|\.head|\.lode)(?:\/|$)/i.test(candidatePath)) continue;
+          safeGraphFile(root, candidatePath);
+          const original = await command(["cat-file", "blob", `${commit}:${to}`]);
+          if (!original || sha(original) !== expectedDigest) continue;
+          candidates.push({ path: candidatePath, commit, digest: expectedDigest, evidence: "local-git-R100-and-exact-cited-digest",
+            interpretation: "Historical rename candidate only; current path, logical identity and cause are not established." });
+        }
+      } catch { return { candidates: [], status: "local-rename-evidence-unavailable" }; }
+      return { candidates, status: gitCalls >= 24 ? "partial-local-git-budget" : "observed-most-recent-path-change-only", renameEstablished: false };
     },
     diagnostics() { return { localGitCommands: gitCalls, maxLocalGitCommands: 24, maxPathHistoryCommits: 16, maxSourceBytes: MAX_REFERENCE_BYTES,
       writes: false, sourceScope: "requested-files-only", interpretation: "No ancestry, rename, Run ownership or rationale inferred from a commit." }; },

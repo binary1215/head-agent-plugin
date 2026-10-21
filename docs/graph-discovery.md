@@ -400,3 +400,12 @@ identities remain bound to the verified absolute root and actual Session owner. 
 Projects use `.lode/`; existing `.head/` records and exact selectors stay unchanged.
 These are existing path contracts, not workspace relocation or automatic repair.
 
+## Exact declaration selectors
+
+A whole query naming a declaration, a whole backtick-wrapped identifier, or a
+whole call expression can rank matching code declarations ahead of repeated
+document headings. Natural-language questions keep their existing lexical
+ordering, even when a word or backtick matches a function name. Documents remain
+eligible; no code-kind filter or semantic sufficiency judgment is introduced.
+Use exact paths or anchors when the question needs a more precise starting point.
+

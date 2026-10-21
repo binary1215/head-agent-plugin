@@ -39,17 +39,24 @@
   const shorten = (value, length) => Array.from(value).length > length ? Array.from(value).slice(0, length).join("") + "…" : value;
   const measure = document.createElement("canvas").getContext("2d");
   const measuredExtents = new WeakMap();
+  const textWidth = (value, size) => {
+    if (!measure) return Array.from(value).length * size;
+    measure.font = `${size}px system-ui, sans-serif`; return measure.measureText(value).width;
+  };
   function nodeExtent(node) {
     if (measuredExtents.has(node)) return measuredExtents.get(node);
     // Match the SVG's actual system font and include both label rows, the
     // selected circle, stroke and breathing room. No DOM text is executed.
-    const width = (value, size) => {
-      if (!measure) return Array.from(value).length * size;
-      measure.font = `${size}px system-ui, sans-serif`; return measure.measureText(value).width;
-    };
-    const half = Math.max(27, width(shorten(label(node), 23), 12) / 2, width(`${node.kind} · pinned`, 10) / 2) + 18;
+    const half = Math.max(27, textWidth(shorten(label(node), 23), 12) / 2, textWidth(`${node.kind} · pinned`, 10) / 2) + 18;
     const extent = { left: half, right: half, top: 45, bottom: 85 };
     measuredExtents.set(node, extent); return extent;
+  }
+  function captionPlacement(point, extent, viewport) {
+    const [left, top, width, height] = viewport;
+    const half = Math.min(Math.max(extent.left, extent.right), Math.max(0, width / 2 - 12));
+    const center = Math.max(left + half + 12, Math.min(left + width - half - 12, point.x));
+    const baseline = Math.max(top + 12, Math.min(top + height - 24, point.y + 49));
+    return { x: center - point.x, y: baseline - point.y, maxWidth: Math.max(1, width - 24) };
   }
   const newModel = graph => explorerModel.create(graph, node => isCode(node) ? "code" : "context", nodeExtent);
   let model = newModel(activeGraph);
@@ -118,11 +125,15 @@
     cameraFrame = requestAnimationFrame(() => { cameraFrame = null; if (mapMode === "overview") renderOverview(scopeCache.shown); else renderGraph(visibleMatches); });
   }
   function fit() {
-    const points = [...model.positions].filter(([id]) => inEvidenceScope(model.nodes.get(id)) && model.visible.has(id)).map(([, point]) => point);
+    const points = [...model.positions].filter(([id]) => inEvidenceScope(model.nodes.get(id)) && model.visible.has(id))
+      .map(([id, point]) => ({ point, extent: nodeExtent(model.nodes.get(id)) }));
     if (!points.length) box = [0, 0, 1000, 700];
     else {
       let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
-      for (const p of points) { left = Math.min(left, p.x - 170); top = Math.min(top, p.y - 85); right = Math.max(right, p.x + 170); bottom = Math.max(bottom, p.y + 85); }
+      for (const { point: p, extent: e } of points) {
+        left = Math.min(left, p.x - e.left); top = Math.min(top, p.y - e.top);
+        right = Math.max(right, p.x + e.right); bottom = Math.max(bottom, p.y + e.bottom);
+      }
       box = [left, top, Math.max(650, right - left), Math.max(480, bottom - top)];
     }
     setBox();
@@ -287,8 +298,15 @@
       group.append(svg("circle", { r: focused ? 27 : 22 }));
       group.setAttribute("aria-pressed", String(model.chosen.has(node.nodeId)));
       const glyph = svg("text", { y: 4, "text-anchor": "middle", class: "glyph" }); glyph.textContent = model.chosen.has(node.nodeId) ? "✓" : String(node.kind || "?").slice(0, 1);
-      const caption = svg("text", { y: 49, "text-anchor": "middle", class: "node-label" }); caption.textContent = shorten(label(node), 23);
-      const kind = svg("text", { y: 66, "text-anchor": "middle", class: "kind" }); kind.textContent = displayText(`${node.kind}${pinned ? " · pinned" : ""}`);
+      // Move captions only, never pin/layout/selection coordinates. A leader
+      // retains their association when camera edges require an offset.
+      const placement = captionPlacement(p, nodeExtent(node), box);
+      const caption = svg("text", { x: placement.x, y: placement.y, "text-anchor": "middle", class: "node-label" }); caption.textContent = shorten(label(node), 23);
+      const kind = svg("text", { x: placement.x, y: placement.y + 17, "text-anchor": "middle", class: "kind" }); kind.textContent = displayText(`${node.kind}${pinned ? " · pinned" : ""}`);
+      for (const [element, size] of [[caption, 12], [kind, 10]]) if (textWidth(element.textContent, size) > placement.maxWidth) {
+        element.setAttribute("textLength", placement.maxWidth); element.setAttribute("lengthAdjust", "spacingAndGlyphs");
+      }
+      if (placement.x || placement.y !== 49) group.append(svg("line", { x1: 0, y1: 25, x2: placement.x, y2: placement.y - 12, class: "caption-guide", "pointer-events": "none" }));
       const title = svg("title", {}); title.textContent = label(node); group.append(glyph, caption, kind, title);
       accessibleActivate(group, (keyboard, event) => selectNode(node, keyboard, event));
       group.addEventListener("keydown", event => {
@@ -578,11 +596,20 @@
       body.append(text("h3", file.path));
       body.append(text("p", `Selected references: ${owners.map(value => value.nodeId ? label(value) : relation(value)).join(" · ")}`, "hint"));
       if (file.currentObservation) body.append(text("p", file.currentObservation.explanation, "hint"));
+      for (const candidate of file.renameEvidence?.candidates || []) body.append(text("p", `Historical rename candidate — not confirmed continuity: ${candidate.path}. Current identity and cause remain unverified.`, "hint"));
+      if (file.renameEvidence) body.append(text("p", file.renameEvidence.status === "observed-most-recent-path-change-only"
+        ? "Move lookup checked only the most recent recorded path change; other moves remain unknown."
+        : "Move lookup is partial, unavailable or lacks an exact historical source basis; no absence or continuity established.", "hint"));
       const pairs = (file.comparisons || []).filter(pair => values.some(value => pairMatches(value, file, pair)));
       if (!pairs.length) body.append(text("p", "No exact source comparison for these selected references. Same path alone does not establish a revision pair; unavailable data is not an empty diff.", "hint"));
       body.append(text("p", "File-level context; not automatically the reason for each symbol."));
       for (const association of file.associations || []) if (selectedIds.has(association.nodeId)) relatedIds.add(association.nodeId);
       for (const pair of pairs) {
+        if (pair.retainedOriginal) {
+          const original = pair.retainedOriginal;
+          body.append(text("h4", "Exact cited historical source — current path unavailable, not an after-version"), text("pre", original.text));
+          if (original.omittedLines || original.textTruncated) body.append(text("p", `Partial historical excerpt: ${original.omittedLines} omitted lines; text truncated ${Boolean(original.textTruncated)}.`, "hint"));
+        }
         if (pair.recordedReviewDecisionId) relatedIds.add(pair.recordedReviewDecisionId);
         body.append(text("p", `${pair.status} · file bytes ${pair.fileBytes || "unknown"} · ${pair.scope}`));
         const scopeLabel = pair.scope === "recorded-changeset-snapshot-pair" ? "Recorded snapshot before / after — not request fulfillment"
@@ -590,7 +617,7 @@
             : "Cited revision / export-observed current — not live";
         body.append(text("h4", scopeLabel), text("p", `Linked selected records: ${values.filter(value => pairMatches(value, file, pair)).map(value => value.nodeId ? label(value) : relation(value)).join(" · ")}`, "hint"));
         for (const side of ["before", "after"]) body.append(text("p", `${side}: ${pair[side]?.revisionId || pair[side]?.digest || "Version bytes unavailable"} · time not retained in this comparison`, "comparison-basis"));
-        const provenance = text("details", ""); provenance.append(text("summary", "Exact comparison provenance"), text("pre", JSON.stringify({ scope: pair.scope, before: pair.before, after: pair.after, citedReference: pair.citedReference, changeSet: pair.changeSet, leftRecord: pair.leftRecord, rightRecord: pair.rightRecord, recordedResultPacketId: pair.recordedResultPacketId, recordedReviewDecisionId: pair.recordedReviewDecisionId }, null, 2))); body.append(provenance);
+        const provenance = text("details", ""); provenance.append(text("summary", "Exact comparison provenance"), text("pre", JSON.stringify({ scope: pair.scope, retainedOriginal: pair.retainedOriginal ? { ...pair.retainedOriginal, text: undefined } : undefined, renameEvidence: file.renameEvidence, before: pair.before, after: pair.after, citedReference: pair.citedReference, changeSet: pair.changeSet, leftRecord: pair.leftRecord, rightRecord: pair.rightRecord, recordedResultPacketId: pair.recordedResultPacketId, recordedReviewDecisionId: pair.recordedReviewDecisionId }, null, 2))); body.append(provenance);
         const list = text("ul", ""); list.className = "record-facts";
         for (const symbol of pair.symbols || []) list.append(text("li", `${symbol.after?.qualifiedName || symbol.before?.qualifiedName}: ${symbol.observation}${symbol.locationChanged ? " · line location changed" : ""}`));
         body.append(list);
@@ -783,7 +810,11 @@
   }
   bindMap($("graph"), false); bindMap($("overview"), true);
   if (typeof globalThis.addEventListener === "function") { globalThis.addEventListener("resize", redrawCamera); globalThis.addEventListener("keydown", event => { if (event.key === "Escape") { cancelGesture(); cancelWork(); render(); } }); }
-  if (typeof matchMedia === "function" && matchMedia("(max-width:650px)").matches) $("display-options").open = false;
+  if (typeof matchMedia === "function") {
+    const narrow = matchMedia("(max-width:650px)").matches;
+    $("selection-tools").open = !narrow;
+    if (narrow) $("display-options").open = false;
+  }
   populateRelationships();
   const first = matches().find(node => node.nodeId === activeGraph.initialNodeId) || matches()[0];
   if (first) { model.visit(first.nodeId); model.choose(first.nodeId); selected = { kind: "node", value: first }; focusCamera(); remember(`Start ${shorten(label(first), 24)}`); } render();

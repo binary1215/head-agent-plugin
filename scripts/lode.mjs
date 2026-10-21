@@ -323,7 +323,7 @@ function readJsonFile(file, label) {
 
 function evidenceNeedsInput(options) {
   if (!options["evidence-needs"]) return [];
-  const value = readJsonFile(options["evidence-needs"], "HEAD evidence needs");
+  const value = readJsonFile(options["evidence-needs"], "Lode evidence needs");
   return Array.isArray(value) ? value : value?.evidenceNeeds ?? value;
 }
 
@@ -549,11 +549,11 @@ function runRoutedCommand(argv, { observationRegistry = null, compactionLifecycl
   if (command === "change-set-vcs-attach") return attachVcsEvidence({ ...inputJson(options, "VCS evidence attachment"), root });
   if (command === "change-set-vcs-read") return readVcsEvidence({ root, vcsEvidenceId: options["vcs-evidence"] });
   if (command === "conformance-prepare") return prepareConformanceAssessment({ root, limit: options.limit == null ? 32 : Number(options.limit), projectionId: options.projection || "", cursor: options.cursor || "" });
-  if (command === "conformance-propose") return proposeConformanceFindings({ ...inputJson(options, "Conformance provider-HEAD proposal"), root });
+  if (command === "conformance-propose") return proposeConformanceFindings({ ...inputJson(options, "Conformance provider-Lode proposal"), root });
   if (command === "conformance-queue") return inspectConformanceQueue({ root, status: options.status || "all", riskHint: options["risk-hint"] || "", limit: options.limit == null ? 25 : Number(options.limit), projectionId: options.projection || "", cursor: options.cursor || "", canonAnchor: options["canon-kind"] != null || options["canon-key"] != null ? { entityKind: options["canon-kind"], entityKey: options["canon-key"] } : null });
   if (command === "conformance-read") return readConformanceFinding({ root, findingId: options.finding });
   if (command === "conformance-disposition") return recordConformanceDisposition({ ...inputJson(options, "Conformance user disposition"), root });
-  if (command === "conformance-resolution-propose") return proposeConformanceResolution({ ...inputJson(options, "Conformance provider-HEAD resolution"), root });
+  if (command === "conformance-resolution-propose") return proposeConformanceResolution({ ...inputJson(options, "Conformance provider-Lode resolution"), root });
   if (command === "product-policy-propose") return proposeProductPolicy({ ...inputJson(options, "Product Policy proposal"), root });
   if (command === "product-policy-review") return reviewProductPolicy({ ...inputJson(options, "Product Policy ReviewDecision"), root });
   if (command === "product-policy-status") return inspectProductPolicyStatus({ root, candidateId: options.candidate });
@@ -784,7 +784,7 @@ function runRoutedCommand(argv, { observationRegistry = null, compactionLifecycl
   if (command === "compaction-lifecycle-step") return processCompactionLifecycle({
     root,
     hostAdapter: compactionLifecycleHost,
-    direction: options.input ? inputJson(options, "HEAD compaction direction") : null,
+    direction: options.input ? inputJson(options, "Lode compaction direction") : null,
   });
   if (command === "lineage-plan") return createWholePlanSnapshot({ ...inputJson(options, "Whole plan"), root, persist: true });
   if (command === "lineage-next-plan") return createNextWholePlanSnapshot({ ...inputJson(options, "Next whole plan"), root, persist: true });

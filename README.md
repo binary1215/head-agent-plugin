@@ -335,6 +335,9 @@ verification rather than inferring capability from this summary.
 
 ## Documentation
 
+For changes and sensitive findings, see [Contributing](CONTRIBUTING.md) and
+[Security](SECURITY.md). Neither document grants deployment or publishing permission.
+
 Browse the [complete English documentation index](docs/README.md) or the
 [complete Korean documentation index](docs/ko/README.md). Every public English
 subsystem document has a Korean counterpart; code, command names, protocol

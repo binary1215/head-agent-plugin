@@ -146,9 +146,20 @@ export function formatTerminalGraph(value, { columns, diagnostics = false } = {}
     for (const file of context.files || []) {
       row(""); block("Recorded code context", file.path);
       if (file.currentObservation) block("Current source observation", file.currentObservation.explanation);
+      for (const candidate of file.renameEvidence?.candidates || []) block("Historical rename candidate (not confirmed continuity)",
+        `${candidate.path}; current path, logical identity and cause remain unverified.`);
+      if (file.renameEvidence) block("Historical move lookup scope", file.renameEvidence.status === "observed-most-recent-path-change-only"
+        ? "Only the most recent recorded path change was checked; other moves remain unknown."
+        : "Lookup is partial, unavailable or lacks an exact historical source basis; no absence or continuity established.");
       for (const pair of file.comparisons || []) {
         row(`  ${inline(pair.status)}; file bytes ${inline(pair.fileBytes || "unknown")}; ${inline(pair.scope)}`);
         if (pair.currentMatchesRecordedAfter === false) block("Version gap", `${pair.labels?.after || (pair.scope === "recorded-changeset-snapshot-pair" ? "Recorded after" : "Compared version")} differs from current; later changes remain separate.`);
+        if (pair.retainedOriginal) {
+          const original = pair.retainedOriginal;
+          block("Exact cited historical source (current path unavailable; not an after-version)", original.text);
+          block("Historical source location", original.path);
+          if (original.omittedLines || original.textTruncated) row(`  Partial historical excerpt: ${original.omittedLines} omitted lines; text truncated ${Boolean(original.textTruncated)}.`);
+        }
         for (const symbol of pair.symbols || []) block("Declaration observation (not behavior equivalence)", `${symbol.after?.qualifiedName || symbol.before?.qualifiedName}: ${symbol.observation}${symbol.locationChanged ? "; line location moved" : ""}`);
         if (pair.diff?.changed) for (const side of ["before", "after"]) {
           const excerpt = pair.diff[side];

@@ -9,13 +9,48 @@ import { createWholePlanSnapshot } from "../scripts/lib/execution-lineage.mjs";
 import { proposeProductPolicy } from "../scripts/lib/product-policy.mjs";
 import { updateProjectDirection, readProjectDirection } from "../scripts/lib/project-direction.mjs";
 import { queryProjectGraph } from "../scripts/lib/project-graph.mjs";
-import { buildWorldModel, readWorldModelForDiscovery } from "../scripts/lib/world-model.mjs";
+import { buildWorldModel, readWorldModelForDiscovery, inspectWorldDomainFreshness, buildWorldTraversalEligibility } from "../scripts/lib/world-model.mjs";
 import { InMemoryGraphProjectionAdapter, materializeGraphProjection } from "../scripts/lib/graph-projection-adapter.mjs";
 import { projectGraphDigest } from "../scripts/lib/discovery-index.mjs";
 import { runCommand } from "../scripts/head.mjs";
 import { dispatch } from "../scripts/mcp-server.mjs";
 
 const pluginRoot = path.resolve(import.meta.dirname, "..");
+
+test("literal code identifiers precede repeated document headings without excluding documents or reviving stale code", async t => {
+  const { root } = fixture(t);
+  fs.mkdirSync(path.join(root, "src"));
+  fs.writeFileSync(path.join(root, "src/delivery.mjs"), "export function resolveDelivery() { return 1; }\nexport function get() { return 2; }\nexport function CacheRelay() { return 3; }\n");
+  for (let i = 0; i < 8; i++) fs.writeFileSync(path.join(root, `delivery-${i}.md`), "# resolveDelivery implementation\nDesign reference.\n");
+  fs.writeFileSync(path.join(root, "onboarding.md"), "# How do I get onboarding done?\n");
+  const reasonPlan = createWholePlanSnapshot({ root, objective: "The reason we chose CacheRelay is preserving pending work", plan: ["Keep exact reasons"] }).artifact;
+  await buildWorldModel({ root });
+  for (const query of ["resolveDelivery", "`resolveDelivery`", "resolveDelivery()"]) {
+    const result = await queryProjectGraph({ root, query, depth: 0, maxNodes: 60 });
+    assert.equal(result.nodes[0].path, "src/delivery.mjs");
+    assert(result.nodes.some(node => node.path?.endsWith(".md")), "Matching documentation stays eligible");
+    safe(result);
+  }
+  const documents = await queryProjectGraph({ root, query: "implementation", depth: 0, maxNodes: 60 });
+  assert(documents.nodes[0].path.endsWith(".md"), "No unconditional code-kind preference");
+  for (const query of ["How do I get onboarding done?", "How do I `get` onboarding done?"]) {
+    const onboarding = await queryProjectGraph({ root, query, depth: 0, maxNodes: 60 });
+    assert.equal(onboarding.nodes[0].path, "onboarding.md", "A common word or its typography is not a code selector");
+  }
+  for (const query of ["What is the reason we chose CacheRelay?", "What is the reason we chose `CacheRelay`?"]) {
+    const reasons = await queryProjectGraph({ root, query, depth: 0, maxNodes: 60 });
+    assert.equal(reasons.nodes[0].nodeId, reasonPlan.wholePlanId, "Reason questions keep their original ranking");
+  }
+  const filtered = await queryProjectGraph({ root, query: "resolveDelivery", paths: ["delivery-0.md"], depth: 0, maxNodes: 60 });
+  assert(filtered.nodes.length > 0); assert(filtered.nodes.every(node => node.path === "delivery-0.md"));
+  fs.appendFileSync(path.join(root, "src/delivery.mjs"), "// Later source drift\n");
+  const stale = await queryProjectGraph({ root, query: "resolveDelivery implementation", depth: 0, maxNodes: 60 });
+  const observed = inspectWorldDomainFreshness({ root });
+  assert.equal(observed.freshness.domains.code.status, "stale");
+  const eligible = new Set(buildWorldTraversalEligibility(observed.snapshot, observed.freshness.domains).nodeIds);
+  for (const node of stale.nodes.filter(node => node.origin?.layer === "world")) assert(eligible.has(node.nodeId),
+    "Ranking cannot revive an excluded original; eligible historical evidence remains navigable");
+});
 function fixture(t) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "head-retrieval-")));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));

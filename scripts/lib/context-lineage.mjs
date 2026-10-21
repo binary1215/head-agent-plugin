@@ -102,9 +102,18 @@ export async function explainContextLineage({ root, project, storage, selection 
       if (a?.digest && b?.digest) compared.add(JSON.stringify([a.digest, b.digest]));
     }
     for (const { ref } of [...citations, ...references]) {
-      if (!validDigest(ref.digest) || current.text === undefined || compared.has(JSON.stringify([ref.digest, current.digest]))) continue;
+      if (!validDigest(ref.digest) || current.text === undefined && current.reasonCode !== "ENOENT"
+        || compared.has(JSON.stringify([ref.digest, current.digest]))) continue;
       const previous = await sources.read(relative, ref.digest), pair = JSON.stringify([ref.digest, current.digest]); compared.add(pair);
-      comparisons.push({ ...compareExactSourceVersions(previous.text !== undefined ? previous : null, current, project.projectId), scope: "cited-revision-versus-observed-current-bytes",
+      const retainedOriginal = current.text === undefined && previous.text !== undefined ? (() => {
+        const lines = previous.text.split("\n"), selected = lines.slice(0, 160).join("\n"), text = selected.slice(0, 32 * 1024);
+        const includedLines = text.split("\n").length;
+        return { path: relative, digest: previous.digest, basis: previous.basis, startLine: 1, endLine: includedLines,
+          text, omittedLines: Math.max(0, lines.length - includedLines), textTruncated: selected.length > 32 * 1024,
+          interpretation: "Exact cited historical bytes; no current after-version, deletion cause or rename continuity established." };
+      })() : null;
+      comparisons.push({ ...compareExactSourceVersions(previous.text !== undefined ? previous : null, current.text !== undefined ? current : null, project.projectId), scope: "cited-revision-versus-observed-current-bytes",
+        ...(retainedOriginal ? { retainedOriginal } : {}),
         citedReference: ref, ...(previous.status === "unavailable" ? { gap: previous } : {}) });
     }
     // Explicit work-chain links can expose two cited source versions even
@@ -132,6 +141,12 @@ export async function explainContextLineage({ root, project, storage, selection 
       } } : {}),
       associations, comparisons, recordedReasonScope: "Reasons belong to cited work/reviews, not automatically to this file or each symbol.",
       unrecordedIntervals: comparisons.length ? "Other unsaved changes and missing work remain unknown." : "No exact recorded before/after source pair was selected; continue from current source and available originals." });
+  }
+  // Optional candidate lookup follows all primary cited-byte reads. Running
+  // out of the existing Git budget cannot steal a later source comparison.
+  for (const file of files) if (file.currentObservation?.reasonCode === "ENOENT") {
+    const cited = file.comparisons.find(pair => pair.retainedOriginal)?.retainedOriginal;
+    if (cited) file.renameEvidence = await sources.renameCandidates(file.path, cited.digest);
   }
   for (const review of relevantReviews) {
     const beforeId = review.previousProductModelId || review.baseProductModelId, afterId = review.resultingProductModelId;

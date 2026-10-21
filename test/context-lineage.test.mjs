@@ -293,6 +293,12 @@ test("source reader refuses traversal, links, invalid UTF8 and absent old bytes 
   assert.equal((await reader.read("../outside", "a".repeat(64))).status, "unavailable");
   fs.writeFileSync(path.join(f.root, "bad.mjs"), Buffer.from([0xff, 0xfe]));
   assert.equal((await reader.read("bad.mjs", "a".repeat(64))).status, "unavailable");
+  const bomSource = "\ufeff" + oldSource, bomReader = createContextSourceReader(f.root, f.owner.project.projectId);
+  fs.writeFileSync(path.join(f.root, "bom.mjs"), bomSource);
+  const bom = await bomReader.read("bom.mjs", sha(bomSource));
+  assert.equal(bom.text, bomSource); assert.equal(sha(bom.text), bom.digest);
+  assert.equal(compareExactSourceVersions(bom, bom, f.owner.project.projectId).fileBytes, "unchanged");
+  assert.equal(bomReader.diagnostics().localGitCommands, 0);
   const missing = await reader.read("missing.mjs", "a".repeat(64)); assert.equal(missing.status, "unavailable"); assert.equal(reader.diagnostics().writes, false);
   fs.mkdirSync(path.join(f.base, "outside-source")); fs.writeFileSync(path.join(f.base, "outside-source/action.mjs"), oldSource);
   try { fs.symlinkSync(path.join(f.base, "outside-source"), path.join(f.root, "linked"), process.platform === "win32" ? "junction" : "dir");
@@ -302,6 +308,17 @@ test("source reader refuses traversal, links, invalid UTF8 and absent old bytes 
   const open = fs.openSync, denied = createContextSourceReader(f.root, f.owner.project.projectId);
   t.mock.method(fs, "openSync", function(file, ...args) { if (file === path.join(f.root, "denied.mjs")) throw Object.assign(new Error("Synthetic permission denial"), { code: "EACCES" }); return open.call(this, file, ...args); });
   assert.equal((await denied.read("denied.mjs", sha(oldSource))).reasonCode, "EACCES"); assert.equal(denied.diagnostics().localGitCommands, 0);
+});
+
+test("missing-path historical excerpts retain exact digest and report the actually included line range", async t => {
+  const f = fixture(t), source = "\ufeff" + Array.from({ length: 150 }, (_, i) => `// line ${i} ${"x".repeat(300)}`).join("\n");
+  await localGit(t, f, source);
+  f.save({ summary: "Bounded historical excerpt only", references: [{ kind: "source", path: "src/action.mjs", digest: sha(source) }] });
+  fs.unlinkSync(path.join(f.root, "src/action.mjs"));
+  const result = await graph(f.root), original = result.contextLineage.files[0].comparisons.find(pair => pair.retainedOriginal).retainedOriginal;
+  assert.equal(original.digest, sha(source)); assert.equal(original.text, source.slice(0, 32 * 1024));
+  assert.equal(original.endLine, original.text.split("\n").length); assert.equal(original.omittedLines, 150 - original.endLine);
+  assert.equal(original.textTruncated, true); assert.equal(result.contextLineage.files[0].currentObservation.deletionEstablished, false);
 });
 
 test("merge parents, literal paths, rename/delete and missing promisor blob never become Run ownership or invented source continuity", async t => {
@@ -314,7 +331,20 @@ test("merge parents, literal paths, rename/delete and missing promisor blob neve
   fs.writeFileSync(path.join(f.root, "src/a[1].mjs"), oldSource); await git(["add", "--", ":(literal)src/a[1].mjs"]); await git(["commit", "--quiet", "-m", "Literal source name"]);
   fs.writeFileSync(path.join(f.root, "src/a[1].mjs"), newSource);
   const literal = await createContextSourceReader(f.root, f.owner.project.projectId).read("src/a[1].mjs", sha(oldSource)); assert.equal(literal.digest, sha(oldSource)); assert(literal.basis.commitAttribution.includes("not-Run"));
+  f.save({ summary: "Retain exact cited source, not a deletion or rename judgment", references: [{ kind: "source", path: "src/action.mjs", digest: sha(oldSource) }] });
   await git(["mv", "--", "src/action.mjs", "src/renamed.mjs"]); await git(["commit", "--quiet", "-m", "Rename is not a verified logical bridge"]);
+  const stateBeforeRead = snapshot(f.base), missingContext = await graph(f.root), missingFile = missingContext.contextLineage.files.find(file => file.path === "src/action.mjs");
+  assert.deepEqual(snapshot(f.base), stateBeforeRead);
+  assert.equal(missingFile.currentObservation.reasonCode, "ENOENT");
+  assert.equal(missingFile.currentObservation.deletionEstablished, false); assert.equal(missingFile.currentObservation.renameEstablished, false);
+  const historical = missingFile.comparisons.find(pair => pair.retainedOriginal);
+  assert.equal(historical.retainedOriginal.text, oldSource); assert.equal(historical.retainedOriginal.digest, sha(oldSource));
+  assert.equal(historical.after, null); assert.equal(historical.diff, undefined); assert.equal(historical.status, "unknown");
+  assert(missingFile.renameEvidence.candidates.some(candidate => candidate.path === "src/renamed.mjs" && candidate.digest === sha(oldSource)));
+  assert.equal(missingFile.renameEvidence.renameEstablished, false);
+  const terminal = formatCliResult("graph-query", missingContext);
+  for (const line of oldSource.trim().split("\n")) assert(terminal.includes(line), "Terminal block indentation preserves every original line");
+  assert(terminal.includes("not an after-version")); assert(terminal.includes("not confirmed continuity"));
   const reader = createContextSourceReader(f.root, f.owner.project.projectId), removedPath = await reader.read("src/action.mjs", sha(oldSource)); assert.equal(removedPath.digest, sha(oldSource));
   const otherPath = await reader.read("src/renamed.mjs", sha(oldSource)); assert.equal(compareExactSourceVersions(removedPath, otherPath, f.owner.project.projectId).reasonCode, "SOURCE_PAIR_IDENTITY_MISMATCH");
   const blob = (await git(["hash-object", "--", "src/renamed.mjs"])).trim(), object = path.resolve(f.root, ".git/objects", blob.slice(0, 2), blob.slice(2));

@@ -325,6 +325,9 @@ claude plugin update head-agent-core@head-agent-plugin
 
 ## 문서
 
+변경 기여와 민감한 문제 신고는 [기여 안내](CONTRIBUTING.ko.md)와
+[보안 안내](SECURITY.ko.md)를 참고하세요. 이 문서들은 배포·게시 권한을 부여하지 않습니다.
+
 [전체 영문 문서 색인](docs/README.md)과 [전체 한국어 문서 색인](docs/ko/README.md)을
 제공합니다. 모든 공개 영문 하위 시스템 문서에는 한국어 대응본이 있으며, 코드,
 명령 이름, 프로토콜 식별자, 아티팩트 필드 이름은 두 언어에서 동일하게 유지합니다.
