@@ -38,19 +38,21 @@ const pluginRoot = path.resolve(import.meta.dirname, "..");
 const hash = (value) => crypto.createHash("sha256").update(value).digest("hex");
 console.log(JSON.stringify({ event: "owned-runtime-application-test", pid: process.pid, parentPid: process.ppid, command: process.execPath, args: process.argv.slice(1), cwd: process.cwd(), ports: [], liveProviderInvoked: false }));
 
-function fixedCapabilitySpawn(_command, args, options) {
+function fixedCapabilitySpawn(_command, args) {
   const key = args.join(" ");
   const output = key === "--version" ? "codex 1.2.3\n"
     : key === "--help" ? "exec\nmcp-server\napp-server\n"
       : key === "exec --help" ? "Run Codex non-interactively\n--json\n--output-schema\n--color\n--sandbox\n--skip-git-repo-check\n--cd\n--ephemeral\nresume\n"
         : "stdio://\ngenerate-json-schema\n--listen\n";
-  const childArgs = ["-e", "process.stdout.write(process.argv[1])", "--", output];
-  console.log(JSON.stringify({ event: "owned-capability-fixture-launch", parentPid: process.pid, command: process.execPath, args: childArgs, cwd: pluginRoot, ports: [] }));
-  const child = spawn(process.execPath, childArgs, { ...options, cwd: pluginRoot, windowsHide: true });
-  child.on("spawn", () => console.log(JSON.stringify({ event: "owned-capability-fixture-start", pid: child.pid, parentPid: process.pid, cwd: pluginRoot, ports: [] })));
-  child.on("close", (code) => {
-    console.log(JSON.stringify({ event: "owned-capability-fixture-exit", pid: child.pid, parentPid: process.pid, code, ports: [] }));
-    assert.throws(() => process.kill(child.pid, 0), { code: "ESRCH" });
+  // Discovery is modeled data in this record/application fixture, not process
+  // conformance. Keep actual child/stdio/termination coverage in runtime tests.
+  const child = new EventEmitter();
+  Object.assign(child, { pid: 1, stdout: new EventEmitter(), stderr: new EventEmitter(), exitCode: null, signalCode: null });
+  child.kill = () => { throw new Error("No actual process in discovery fixture"); };
+  queueMicrotask(() => {
+    child.stdout.emit("data", Buffer.from(output));
+    child.exitCode = 0;
+    child.emit("close", 0, null);
   });
   return child;
 }
