@@ -158,7 +158,17 @@ test("missing current citation is currently absent, not an inferred deletion, re
   assert.equal(recorded.currentObservation.status, "current-path-not-found");
   assert.equal(recorded.currentObservation.deletionEstablished, false); assert.equal(recorded.currentObservation.renameEstablished, false);
   assert.match(recorded.currentObservation.explanation, /does not establish deletion, rename/);
-  assert.equal(recorded.comparisons.length, 0); assert.equal(graph.contextLineage.sourceReads.localGitCommands, 0);
+  // An exact citation now permits a bounded local-history lookup. This non-Git
+  // fixture retains an explicit gap, never invented historical bytes or a diff.
+  assert.equal(recorded.comparisons.length, 1);
+  const comparison = recorded.comparisons[0];
+  assert.equal(comparison.status, "unknown"); assert.equal(comparison.reasonCode, "EXACT_SOURCE_PAIR_UNAVAILABLE");
+  assert.equal(comparison.before, null); assert.equal(comparison.after, null);
+  assert.equal(comparison.diff, undefined); assert.equal(comparison.retainedOriginal, undefined);
+  assert.deepEqual(comparison.symbols, []); assert.equal(comparison.citedReference.digest, sha(source));
+  assert.equal(comparison.gap.reasonCode, "HISTORICAL_BYTES_NOT_AVAILABLE_LOCALLY");
+  assert.equal(graph.contextLineage.sourceReads.localGitCommands, 1);
+  assert.equal(graph.contextLineage.sourceReads.writes, false);
   assert.match(formatCliResult("graph-query", graph).replace(/\s*\|\s*/g, " ").replace(/\s+/g, " "), /does not establish deletion, rename/);
   const snapshotView = await buildGraphExplorerSnapshot({ root: f.root, query: "src/action.mjs" });
   snapshotView.graph.initialNodeId = saved.evidence.evidenceId;
