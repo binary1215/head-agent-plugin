@@ -139,7 +139,7 @@ provider resume/stream과 Host별 pane/socket/TUI 변환은 Core 밖에 둡니�
 
 ## 파일 소유권
 
-`.lode/`는 플러그인이 관리하는 Canon입니다. 루트 `CLAUDE.md`, `.mcp.json`, `AGENTS.md` 및 `opencode.json`은 해당 런타임 프로젝션과 충돌하는 항목이 없을 때만 생성됩니다. 기존 파일은 프로젝트 소유로 유지되며, 생성된 대안은 `.lode/generated/` 아래에 기록되고 수동 통합 작업으로 보고됩니다.
+`.lode/`는 플러그인이 관리하는 Canon입니다. 루트 `CLAUDE.md`, `.mcp.json`, `AGENTS.md` 및 `opencode.json`은 해당 런타임 프로젝션과 충돌하는 항목이 없을 때만 생성됩니다. 기존 파일은 프로젝트 소유로 유지되며, 생성된 대안은 `.lode/generated/` 아래에 기록되고 수동 통합 작업으로 보고됩니다. Claude Code, Codex, OpenCode 실행 프로젝션은 `node`와 프로젝트 상대 `scripts/mcp-server.mjs` 또는 클라이언트 placeholder(`${CLAUDE_PLUGIN_ROOT}`, `${PLUGIN_ROOT}`, `{env:LODE_PLUGIN_ROOT}`)를 사용합니다. 절대 Node 바이너리나 설치 경로는 넣지 않습니다.
 
 관리되는 매니페스트는 SHA-256 다이제스트를 기록합니다. 관리 대상의 드리프트가 감지되면 정식 변경이 중단됩니다.
 

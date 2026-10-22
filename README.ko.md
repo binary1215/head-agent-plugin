@@ -195,11 +195,17 @@ Claude Code는 플러그인을 버전별 캐시에 복사하고 `${CLAUDE_PLUGIN
 만듭니다. 기존 파일은 보존하고 직접 통합할 때 쓸 생성 파일은 선택된 정본 루트의
 `.lode/generated/` 또는 기존 `.head/generated/`에 둡니다.
 
-OpenCode 로컬 설정은 각 PC의 Node 실행 파일과 Lode 설치 경로를 사용합니다.
+OpenCode 로컬 설정은 절대 Node 바이너리나 설치 경로 대신 `node`와
+`{env:LODE_PLUGIN_ROOT}`를 기록합니다. Claude Code는 `${CLAUDE_PLUGIN_ROOT}`를,
+Codex는 플러그인 상대 `.mcp.json`과 hook의 `${PLUGIN_ROOT}`를 사용합니다.
+패키지 플러그인 없이 OpenCode를 시작할 때는 `LODE_PLUGIN_ROOT`를 Lode 설치
+위치로 두세요. 플러그인이 있으면 그 placeholder를 메모리에서 해석합니다.
 설치 경로가 바뀌면 해당 PC에 Lode를 설치한 뒤 에이전트에게 기존 Project 재개를
 요청하세요. 같은 정본 Project 경로에서는 Project·Session ID와 런타임 구성을
-유지하며 관리되는 경로를 갱신합니다. 사용자 소유 `opencode.json`은 그대로 두고
-생성본만 갱신하므로, 필요한 설정 통합에 그 생성본을 사용할 수 있습니다.
+유지하며 호스트 설치 정체성을 갱신합니다. 공유 실행 파일은 이식 가능한 형태로
+남습니다. 사용자 소유 `opencode.json`은 그대로 두고, 생성본은 이식 가능한
+placeholder를 유지합니다. 설치가 옮겨지면 매니페스트의 호스트 설치 정체성만
+갱신되므로, 필요한 설정 통합에는 그 생성본을 사용할 수 있습니다.
 
 Project 폴더 전체를 이동하거나 복사했다면 새 경로에서 명시적으로 재개하세요.
 Lode는 보존된 소유 정보를 검증하고 Project·Session ID와 과거 기록을 유지합니다.
@@ -314,6 +320,7 @@ claude plugin update head-agent-core@head-agent-plugin
 | 배포 | 사용자 범위 설치, 네이티브 전달, 롤백, 안전한 제거 | 사용 가능 |
 | 배포 | 검증된 Git 기반 Codex 마켓플레이스 | 사용 가능 |
 | 배포 | 검증된 Git 기반 Claude Code 마켓플레이스 | 사용 가능 |
+| 배포 | Claude Code, Codex, OpenCode의 이식 가능한 MCP 실행 경로 | 사용 가능 |
 | 배포 | OpenAI 범용 플러그인 디렉터리 | 계획됨 |
 | 런타임 | 일반 공급자 세션 resume과 stream | 보류됨 |
 | 문서 | Obsidian 및 Notion 어댑터 | 보류됨 |

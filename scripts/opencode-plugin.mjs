@@ -9,6 +9,7 @@ import { startupProjection, MAX_CONTEXT_CHARACTERS } from "./lib/session-host-co
 // No client creation, daemon, auth/config edits or canonical HEAD mutation.
 const sanitize = name => name.replace(/[^a-zA-Z0-9_-]/gu, "_");
 const packagedServer = fileURLToPath(new URL("./mcp-server.mjs", import.meta.url));
+const portableOpenCodeScript = "{env:LODE_PLUGIN_ROOT}/scripts/mcp-server.mjs";
 const real = p => fs.realpathSync(path.resolve(p));
 const samePath = (a, b) => real(a) === real(b);
 const supportedEvents = new Map([["session.created", "start-observed"], ["session.status", "status-observed"],
@@ -62,6 +63,10 @@ export default {
             || !Array.isArray(item.command) || item.command.length !== 2 || typeof item.command[0] !== "string"
             || !/^(node|node\.exe)$/iu.test(path.basename(item.command[0])) || typeof item.command[1] !== "string") continue;
           try {
+            // Shared opencode.json keeps a host placeholder. Resolve it only in
+            // this process so the spawned server is this package and the file
+            // the user can commit does not gain a machine path.
+            if (item.command[1] === portableOpenCodeScript) item.command = ["node", packagedServer];
             if (!samePath(path.resolve(directory, item.command[1]), packagedServer)) continue;
             for (const tool of ["head_project_status", "head_tools_read", "head_tools_call"]) aliases.set(sanitize(name) + "_" + tool, tool);
           } catch { /* Unsupported config shape is not a user setup gate. */ }

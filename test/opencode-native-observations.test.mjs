@@ -34,6 +34,15 @@ async function fixture(t, overrides = {}) {
 // Pinned Plugin.trigger ignores the callback return; tests use the actual object.
 async function after(hooks, input, output) { await hooks["tool.execute.after"](input, output); return output; }
 
+test("portable OpenCode placeholder resolves to this package only in the loaded config object", async t => {
+  const f = await fixture(t);
+  const config = { mcp: { lode: { type: "local", command: ["node", "{env:LODE_PLUGIN_ROOT}/scripts/mcp-server.mjs"], enabled: true } } };
+  await f.hooks.config(config);
+  assert.equal(path.basename(config.mcp.lode.command[0]), "node");
+  assert.equal(fs.realpathSync(config.mcp.lode.command[1]), fs.realpathSync(path.join(pluginRoot, "scripts/mcp-server.mjs")));
+  assert.equal(fs.readFileSync(path.join(f.root, "opencode.json"), "utf8").includes(pluginRoot), false);
+});
+
 test("staged .js V1 default loader -> config/event -> shared writer -> raw MCP actual output text+structured", async t => {
   const f = await fixture(t, { map: { [caller.nativeSessionId]: { type: "busy" } } });
   const directory = path.join(f.base, ".opencode", "plugins"); fs.mkdirSync(directory, { recursive: true });

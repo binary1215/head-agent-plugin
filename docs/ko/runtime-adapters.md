@@ -60,6 +60,8 @@ bounded status map(O(A))만 사용하며 새 SDK·인증을 만들지 않습니�
 항목은 non-idle 항목 부재이지 종료가 아닙니다. Code-mode와 OpenCode 계보/P3 진입은
 이 경로에 포함되지 않습니다.
 
+생성되는 클라이언트 실행 줄은 이식 가능합니다. Claude Code `.mcp.json`은 설치가 프로젝트 밖이면 `node`와 `${CLAUDE_PLUGIN_ROOT}/scripts/mcp-server.mjs`를, 프로젝트 안이면 상대 `scripts/mcp-server.mjs`를 사용합니다. Codex 프로젝트 초기화는 MCP 경로를 쓰지 않습니다. 플러그인 `.mcp.json`은 `node`와 `scripts/mcp-server.mjs`, `cwd` `.`를 유지하고 hook은 `${PLUGIN_ROOT}`를 확장합니다. OpenCode `opencode.json`은 `node`와 `{env:LODE_PLUGIN_ROOT}/scripts/mcp-server.mjs`를 사용합니다. OpenCode 설정 치환과 플러그인 `config` hook이 그 placeholder를 이 패키지의 메모리 안 경로로 해석합니다. 이 공유 파일에는 절대 Node 바이너리나 설치 경로를 넣지 않습니다. `.lode/generated/manifest.json`의 `pluginRoot`는 설치 이동을 알아보기 위한 호스트 설치 정체성입니다. 기본 graph-explorer HTML은 이 기계에서 재생성할 수 있도록 로컬 `project.root`와 `regenerate.argv`를 유지하고, `--share`는 그 생성 경로를 뺍니다. 기본 HTML은 로컬 보고서이며 공유 산출물이 아닙니다.
+
 로컬 소스형·소유 OS helper 검증은 실제 설치 Host의 event 전달·모델 도구 선택·긴
 compaction UX·전체 활동 파악의 증거가 아닙니다. Codex 현재 대화/turn 상태는 필요할
 때 이미 노출된 Host 도구로 확인합니다. [runtime composition](../../skills/lode-agent-core/references/runtime-composition.md#native-observations-and-current-host-activity)을 참조하세요.

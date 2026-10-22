@@ -33,9 +33,10 @@ test('same canonical Project root reconnects a changed installation root without
  assert.deepEqual(after.project.runtimes,before.project.runtimes);
  assert.deepEqual(fs.readFileSync(path.join(project,directory,'project.json')),projectBytes);
  assert.deepEqual(fs.readFileSync(path.join(project,directory,'sessions/current.json')),sessionBytes);
- assert.equal(config.mcp.lode.command[0],process.execPath);
- assert.equal(config.mcp.lode.command[1],path.join(fs.realpathSync(nextPlugin),'scripts/mcp-server.mjs'));
- assert.notEqual(config.mcp.lode.command[1],oldCommand[1]);
+ assert.deepEqual(config.mcp.lode.command,['node','{env:LODE_PLUGIN_ROOT}/scripts/mcp-server.mjs']);
+ assert.deepEqual(config.mcp.lode.command,oldCommand);
+ assert.equal(after.installation.pluginRoot,fs.realpathSync(nextPlugin));
+ assert.notEqual(after.installation.pluginRoot,before.installation.pluginRoot);
  t.diagnostic(JSON.stringify({case:'plugin-root-only',projectIdentityPreserved:true,sessionBytesPreserved:true,hostLoaded:false}));
 });
 test('project-owned OpenCode configuration stays byte-identical while the generated suggestion reconnects',async t=>{
@@ -47,7 +48,7 @@ test('project-owned OpenCode configuration stays byte-identical while the genera
  await initializeOrResumeProject({root:project,pluginRoot:nextPlugin,profile:'core'});
  assert.equal(fs.readFileSync(file,'utf8'),original);
  const generated=read(path.join(project,before.storage.directory,'generated/opencode.json'));
- assert.equal(generated.mcp.lode.command[1],path.join(fs.realpathSync(nextPlugin),'scripts/mcp-server.mjs'));
+ assert.deepEqual(generated.mcp.lode.command,['node','{env:LODE_PLUGIN_ROOT}/scripts/mcp-server.mjs']);
  const after=inspectProject(project);
  assert.equal(after.project.projectId,before.project.projectId);assert.equal(after.state.sessionId,before.state.sessionId);
  t.diagnostic(JSON.stringify({case:'project-owned-config',originalPreserved:true,generatedReconnected:true,hostLoaded:false}));
@@ -65,7 +66,7 @@ test('copied Project remains unavailable to implicit readers; explicit resume re
  assert.equal(resumed.projectLocation.status,'relocated');assert.equal(current.status,'ready');
  assert.equal(current.project.projectId,original.project.projectId);assert.equal(current.state.sessionId,original.state.sessionId);
  assert.equal(current.project.projectRoot,fs.realpathSync(moved));assert.equal(current.installation.pluginRoot,fs.realpathSync(nextPlugin));
- assert.equal(read(path.join(moved,'opencode.json')).mcp.lode.command[1],path.join(fs.realpathSync(nextPlugin),'scripts/mcp-server.mjs'));
+ assert.deepEqual(read(path.join(moved,'opencode.json')).mcp.lode.command,['node','{env:LODE_PLUGIN_ROOT}/scripts/mcp-server.mjs']);
  const history=path.join(moved,current.storage.directory,'project-location/history',`${resumed.projectLocation.historicalProjectDigest}.json`);
  assert.equal(fs.readFileSync(history,'utf8'),oldProject);
  const changed=new Set([`${original.storage.directory}/project.json`,`${original.storage.directory}/generated/manifest.json`,`${original.storage.directory}/generated/opencode.json`,'opencode.json']);

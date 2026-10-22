@@ -9,6 +9,19 @@
 GitHub Release는 별도로 지정한 릴리스에만 만들며 과거 중간 태그를 소급 생성하지
 않습니다. 마켓플레이스 게시가 로컬 설치나 Host/MCP 재로드를 입증하지는 않습니다.
 
+## 0.3.0-beta.59 — 게시 결과는 별도 확인
+
+- Claude Code, Codex, OpenCode MCP 실행 줄을 이식 가능한 형태로 기록합니다.
+  공유 `.mcp.json`과 `opencode.json`은 `node`와 프로젝트 상대 스크립트 또는
+  클라이언트 placeholder(`${CLAUDE_PLUGIN_ROOT}`, `${PLUGIN_ROOT}`,
+  `{env:LODE_PLUGIN_ROOT}`)를 사용합니다. 절대 Node·설치 경로는 그 파일에
+  두지 않습니다. 추적 파일과 세 클라이언트 초기화 결과를 구체적인 개인 홈
+  경로에 대해 검사하고, 마켓플레이스 음성 픽스처만 허용 목록에 둡니다.
+  개인 Windows LSP 픽스처 경로를 바꿨습니다. 기본 graph-explorer HTML은
+  로컬 보고서이며 `--share`는 생성된 기계 경로를 계속 뺍니다.
+- 이 소스 기록은 게시 증거가 아닙니다. 이 베타에는 중간 태그나 GitHub
+  Release를 만들지 않습니다.
+
 ## 0.3.0-beta.58 — 게시 결과는 별도 확인
 
 - 좁은 화면에서 선택 도구를 접고 실제 측정한 노드·라벨 크기로 화면을 맞춥니다.

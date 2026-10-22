@@ -11,6 +11,19 @@ are made only for separately designated releases; missing intermediate tags are
 not backfilled. Marketplace publication does not prove local installation or
 Host/MCP reload.
 
+## 0.3.0-beta.59 — publication tracked separately
+
+- Write portable Claude Code, Codex, and OpenCode MCP launch lines. Shared
+  `.mcp.json` and `opencode.json` use `node` plus a project-relative script or
+  the client placeholder (`${CLAUDE_PLUGIN_ROOT}`, `${PLUGIN_ROOT}`,
+  `{env:LODE_PLUGIN_ROOT}`). Absolute Node and install paths stay out of those
+  files. Scan tracked files and three-client init output for concrete personal
+  home paths, with the marketplace negative fixture allowlisted. Replace the
+  personal Windows LSP fixture path. Default graph-explorer HTML remains a
+  local report; `--share` still omits generated machine paths.
+- This source entry is not publication proof. No intermediate tag or GitHub
+  Release is created for this beta.
+
 ## 0.3.0-beta.58 — publication tracked separately
 
 - Collapse selection tools on narrow screens and fit graph labels using measured
