@@ -24,7 +24,6 @@ import { sessionCallRequiresBinding } from "./lib/session-routing.mjs";
 import { createNativeSessionHostBridge } from "./lib/session-native-host.mjs";
 import { SESSION_HOST_REQUEST_HELPER } from "./lib/session-host-request.mjs";
 import { assessSubagentStateWrite, subagentWriteGuardEnabled } from "./lib/subagent-write-guard.mjs";
-import { consumeSubagentCallerSignal, recordedSubagentCaller } from "./lib/subagent-caller-signal.mjs";
 import fs from "node:fs";
 import { resolveProjectStorage, familyFormatForOriginal } from "./lib/project-storage-format.mjs";
 
@@ -2053,10 +2052,13 @@ function requestedToolName(request) {
 
 // Policy lives here, after the router unwrap. Adapters only supply caller.subagent.
 // Disabled mode does not read Codex observations or consume OpenCode tickets.
-function subagentStateWriteRejection(name, args, caller, environment) {
+async function subagentStateWriteRejection(name, args, caller, environment) {
   if (!subagentWriteGuardEnabled(environment)) return null;
   const selected = allTools.find(tool => semanticToolName(tool.name) === name);
   if (!selected || selected.annotations?.readOnlyHint === true) return null;
+  // Codex observations and OpenCode tickets stay optional. A cold catalog must
+  // not load them, and a disabled guard must not consume a ticket.
+  const { consumeSubagentCallerSignal, recordedSubagentCaller } = await import("./lib/subagent-caller-signal.mjs");
   let current = caller && typeof caller === "object" ? { ...caller } : null;
   if (current?.runtime === "codex" && current.subagent !== true && typeof args?.project_root === "string" && typeof current.nativeSessionId === "string"
     && recordedSubagentCaller({ root: args.project_root, runtime: "codex", nativeSessionId: current.nativeSessionId, environment })) {
@@ -2451,7 +2453,7 @@ async function dispatchRouted(request, { surface = "ordinary", graphDbTransport 
       args = args.arguments;
     }
     requireOperationSurface(name, surface);
-    const subagentRejection = subagentStateWriteRejection(name, args, caller, hostEnvironment);
+    const subagentRejection = await subagentStateWriteRejection(name, args, caller, hostEnvironment);
     if (subagentRejection) return failure(id, subagentRejection);
     const value = await (name === "head_run_start"
       ? (await import("./lib/run-lineage.mjs")).startRun({ root: args.project_root, executionContractId: args.execution_contract_id, startRequestId: args.start_request_id })

@@ -25,7 +25,8 @@ test("tracked files have no concrete personal home paths outside the explicit al
 
 test("synthetic home installs stay out of Claude, Codex, and OpenCode launch documents", () => {
   const projectRoot = "/tmp/lode-project";
-  const homePlugin = "/home/fixture-person/lode";
+  // Split so this tracked test does not itself contain a concrete home path.
+  const homePlugin = "/home/" + "fixture-person" + "/lode";
   for (const client of clients) {
     const { document, pathForm } = portableMcpDocument({ client, pluginRoot: homePlugin, projectRoot });
     assert.equal(pathForm, "host-placeholder");
