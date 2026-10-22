@@ -26,6 +26,13 @@ GitHub Release는 별도로 지정한 릴리스에만 만들며 과거 중간 �
   `_meta.subagent` 또는 `SubagentStart` 관측, OpenCode는 자식 세션
   `parentID` 티켓을 사용합니다. 어댑터는 쓰기 여부를 결정하지 않습니다.
   기본값은 꺼짐이라 서브에이전트가 canon과 checkpoint를 계속 기록할 수 있습니다.
+- 압축 또는 clear 뒤에 제한되고 가려진 로컬 사용자 prompt 참조를 복원합니다.
+  Claude Code와 Codex는 `UserPromptSubmit`의 `prompt`를 저장하고
+  `PreCompact`에서 고정한 뒤, 여유가 있으면 `SessionStart`의 `compact` 또는
+  `clear`에 덧붙입니다. OpenCode는 `message.part.updated`를 저장하고
+  `experimental.session.compacting`에서 고정한 뒤, `session.compacted` 또는
+  `clear` `command.executed` 이벤트 다음 system transform에 한 번 덧붙입니다.
+  텍스트에는 권한이 없습니다. checkpoint가 복구 원천으로 남습니다.
 - 이 소스 기록은 게시 증거가 아닙니다. 이 베타에는 중간 태그나 GitHub
   Release를 만들지 않습니다.
 

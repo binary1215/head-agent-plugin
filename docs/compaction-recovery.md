@@ -169,9 +169,24 @@ existing Codex delivery resource bound; Claude retains its 10,000-character
 bound. These are serialization bounds, not a claim of sufficient context.
 Omitted content keeps its existing disclosure and references for expansion.
 
-This delivery reads recorded originals only. It does not capture the latest
-unsaved conversation, create a checkpoint or compaction epoch, authorize an
-effect, or implement managed one-shot continuation. That managed lifecycle still
+Claude Code and Codex store a bounded local reference to recent user `prompt`
+text from `UserPromptSubmit`. The text stays outside project Canon. `PreCompact`
+freezes that reference and returns no hook decision. `SessionStart` sources
+`compact` and `clear` append it only when the existing character ceiling still
+has room. The reference is labeled non-authoritative. The checkpoint remains
+the recovery source.
+
+OpenCode stores user text from `message.part.updated`. It has no separate
+pre-compaction event that carries the prompt, so those message events are the
+capture point. `experimental.session.compacting` freezes the reference.
+`session.compacted` and a `command.executed` event whose name is `clear` mark
+it for one later `experimental.chat.system.transform`. That transform appends
+it when it fits and does not append it on ordinary turns. If the host does not
+emit `command.executed` for `/clear`, OpenCode has no `/clear` signal.
+
+This delivery reads recorded originals and that bounded prompt reference. It
+does not create a checkpoint or compaction epoch, authorize an effect, or
+implement managed one-shot continuation. That managed lifecycle still
 requires a trusted Host adapter with its existing exact evidence. Local SDK-stub,
 pinned-source consumer and generated-package tests do not prove an installed
 Host or live model run. Missing optional integration leaves ordinary work usable.

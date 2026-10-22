@@ -315,6 +315,7 @@ These labels describe the source distribution. They do not certify that a partic
 | Host lifecycle | provider-neutral compaction and at-most-once continuation contract, requiring a trusted Host adapter | Experimental |
 | Host context | packaged Claude Code and Codex SessionStart delivery, including compact | Available |
 | Host context | packaged OpenCode V1 per-model-request delivery, including summary and ordinary requests; not a post-compaction event | Available |
+| Host context | bounded non-authoritative user-prompt reference after compact and clear for Claude Code, Codex, and OpenCode | Available |
 | Runtime | Claude Code, Codex, and OpenCode one-shot Session/Run execution | Available |
 | Runtime evidence | deterministic three-runtime fixtures and local CLI capability probes | Available |
 | Runtime evidence | Claude Code live model-call conformance | Experimental |

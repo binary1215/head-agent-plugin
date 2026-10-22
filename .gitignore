@@ -135,3 +135,4 @@ Thumbs.db
 !test/graph-explorer-multiselect.test.mjs
 !test/path-purity.test.mjs
 !test/subagent-write-guard.test.mjs
+!test/user-prompt-reference.test.mjs

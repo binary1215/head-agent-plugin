@@ -28,6 +28,13 @@ Host/MCP reload.
   `_meta.subagent`, or a `SubagentStart` observation, and OpenCode uses a
   child session `parentID` ticket. Adapters do not decide the write. The
   default stays off, so a subagent can still record canon and checkpoints.
+- Restore a bounded, redacted, local user-prompt reference after compaction
+  or clear. Claude Code and Codex capture `prompt` on `UserPromptSubmit`,
+  freeze it on `PreCompact`, and append it from `SessionStart` `compact` or
+  `clear` when it fits. OpenCode captures `message.part.updated`, freezes it
+  in `experimental.session.compacting`, and appends it once on the next system
+  transform after `session.compacted` or a `clear` `command.executed` event.
+  The text is non-authoritative. The checkpoint remains the recovery source.
 - This source entry is not publication proof. No intermediate tag or GitHub
   Release is created for this beta.
 

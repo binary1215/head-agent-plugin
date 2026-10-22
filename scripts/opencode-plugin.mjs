@@ -7,6 +7,7 @@ import { startupProjection, MAX_CONTEXT_CHARACTERS } from "./lib/session-host-co
 import { resolveOperation } from "./lib/lode-operation-contract.mjs";
 import { publishSubagentCallerSignal } from "./lib/subagent-caller-signal.mjs";
 import { subagentWriteGuardEnabled } from "./lib/subagent-write-guard.mjs";
+import { appendUserPromptReference, captureUserPrompt, freezeUserPromptReference, takeUserPromptReference } from "./lib/user-prompt-reference.mjs";
 
 // Dependency-free OpenCode V1 server entry, source-shaped against v1.19.0.
 // No client creation, daemon, auth/config edits or canonical HEAD mutation.
@@ -32,6 +33,38 @@ export default {
   id: "head-agent-native-observations",
   async server({ client, project, directory }, { environment = process.env } = {}) {
     let aliases = new Map(), serverPrefixes = [], disposed = false, pending = 0, queue = Promise.resolve();
+    const userMessages = new Map();
+    function promptCaller(sessionID) {
+      return nativeId(sessionID) ? { root: directory, runtime: "opencode", nativeSessionId: sessionID, environment } : null;
+    }
+    function notePromptEvent(event) {
+      const type = event?.type;
+      if (type === "message.updated") {
+        const info = event.properties?.info;
+        if (info?.role === "user" && nativeId(info.id) && nativeId(info.sessionID)) {
+          userMessages.set(info.id, info.sessionID);
+          while (userMessages.size > 64) userMessages.delete(userMessages.keys().next().value);
+        }
+        return;
+      }
+      if (type === "message.part.updated") {
+        const part = event.properties?.part;
+        if (part?.type !== "text" || part.synthetic === true || typeof part.text !== "string") return;
+        if (!nativeId(part.messageID) || userMessages.get(part.messageID) !== part.sessionID) return;
+        const caller = promptCaller(part.sessionID);
+        if (caller) captureUserPrompt({ ...caller, text: part.text, messageId: part.messageID });
+        return;
+      }
+      if (type === "session.compacted") {
+        const caller = promptCaller(event.properties?.sessionID);
+        if (caller) freezeUserPromptReference(caller);
+        return;
+      }
+      if (type === "command.executed" && (event.properties?.name === "clear" || event.properties?.command === "clear")) {
+        const caller = promptCaller(event.properties?.sessionID);
+        if (caller) freezeUserPromptReference(caller);
+      }
+    }
     let contextSupported = true, deliveries = new WeakMap();
     const store = createNativeObservationStore({ environment });
     const caller = id => ({ runtime: "opencode", nativeSessionId: id, agentId: null });
@@ -99,6 +132,8 @@ export default {
             const adapter = createSessionHostAdapter({ runtime: "opencode", nativeSessionId: session.id, environment });
             text = startupProjection(adapter.enter({ root: directory }), directory, "opencode");
             if (text.length > MAX_CONTEXT_CHARACTERS.opencode) throw new Error("Context exceeds its delivery bound.");
+            const reference = takeUserPromptReference({ root: directory, runtime: "opencode", nativeSessionId: session.id, environment });
+            text = appendUserPromptReference(text, reference, MAX_CONTEXT_CHARACTERS.opencode);
           } catch (error) {
             const code = typeof error?.code === "string" && /^[A-Z0-9_]{1,128}$/.test(error.code)
               ? error.code : "HOST_CONTEXT_UNAVAILABLE";
@@ -118,6 +153,8 @@ export default {
         } catch { /* Unsupported optional delivery never blocks the Host request. */ }
       },
       async event({ event }) {
+        try { notePromptEvent(event); }
+        catch { /* Prompt reference capture cannot block the host event. */ }
         if (!supportedEvents.has(event?.type) || !nativeId(event.id)) return;
         const eventType = event.type, eventId = event.id;
         const id = event.properties?.sessionID || event.properties?.info?.id;
@@ -138,6 +175,22 @@ export default {
             requestId: null, source: null, reason: null, ...(status ? { nativeStatus: status } : {}) };
           await store.observe({ root: directory, caller: caller(id), observation, eventId });
         });
+      },
+      async "experimental.session.compacting"(input, output) {
+        // Freeze only. Do not replace the host compaction prompt or its context.
+        try {
+          const caller = promptCaller(input?.sessionID);
+          if (caller) freezeUserPromptReference(caller);
+        } catch { /* The host compaction continues without this reference. */ }
+        void output;
+      },
+      async "command.executed"(input) {
+        try {
+          const name = input?.name || input?.command;
+          if (name !== "clear") return;
+          const caller = promptCaller(input?.sessionID);
+          if (caller) freezeUserPromptReference(caller);
+        } catch { /* A missing clear signal does not block the command. */ }
       },
       async "tool.execute.before"(input, output) {
         try {
@@ -190,7 +243,7 @@ export default {
           output.structuredContent = next.structuredContent;
         } catch { /* Unsupported/malformed/optional API errors leave Core untouched. */ }
       },
-      async dispose() { disposed = true; aliases.clear(); serverPrefixes = []; deliveries = new WeakMap(); await queue; },
+      async dispose() { disposed = true; aliases.clear(); serverPrefixes = []; userMessages.clear(); deliveries = new WeakMap(); await queue; },
     };
   },
 };

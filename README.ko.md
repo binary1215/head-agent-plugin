@@ -306,6 +306,7 @@ claude plugin update head-agent-core@head-agent-plugin
 | Host lifecycle | 신뢰하는 Host 어댑터가 필요한 공급자 중립 compaction·최대 1회 continuation 계약 | 실험적 |
 | Host context | compact를 포함한 Claude Code·Codex 패키지의 SessionStart 맥락 전달 | 사용 가능 |
 | Host context | OpenCode V1 패키지의 요약·일반 모델 요청별 맥락 전달. 압축 직후 이벤트 아님 | 사용 가능 |
+| Host context | Claude Code, Codex, OpenCode에서 compact와 clear 뒤 권한 없는 제한된 사용자 prompt 참조 | 사용 가능 |
 | 런타임 | Claude Code, Codex, OpenCode 일회성 Session/Run 실행 | 사용 가능 |
 | 런타임 증거 | 세 런타임 결정론적 fixture 및 로컬 CLI 기능 probe | 사용 가능 |
 | 런타임 증거 | Claude Code 실제 모델 호출 적합성 | 실험적 |
