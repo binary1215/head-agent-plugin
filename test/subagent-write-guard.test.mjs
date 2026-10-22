@@ -128,7 +128,7 @@ test("Codex subagent meta and SubagentStart observations reject state writes whe
   quiet.dispose();
 });
 
-test("OpenCode child sessions publish a ticket and the MCP server rejects the write", async t => {
+test("OpenCode rejects the exact child call before MCP execution while reads and parents remain available", async t => {
   const { root, operational, environment, canon } = project(t);
   const child = "ses_child";
   const client = { session: {
@@ -141,29 +141,16 @@ test("OpenCode child sessions publish a ticket and the MCP server rejects the wr
   const bridge = createNativeSessionHostBridge({ environment: environment(true) });
   t.after(() => bridge.dispose());
   const before = canon();
-  await enforcedHooks["tool.execute.before"]({
+  await assert.rejects(enforcedHooks["tool.execute.before"]({
     tool: "my_head_lode_session_create", sessionID: child, callID: "call-child",
-    args: { project_root: root, purpose: "child session" },
-  }, {});
-  const blocked = await dispatch({
-    jsonrpc: "2.0", id: "opencode-child", method: "tools/call",
-    params: { name: "lode_session_create", arguments: { project_root: root, purpose: "child session" } },
-  }, { nativeSessionBridge: bridge });
-  assert.equal(rejected(blocked), true);
+  }, { args: { project_root: root, purpose: "child session" } }), { code: SUBAGENT_STATE_WRITE_REJECTED });
   assert.deepEqual(canon(), before);
-  await enforcedHooks["tool.execute.before"]({
+  await assert.rejects(enforcedHooks["tool.execute.before"]({
     tool: "my_head_head_tools_call", sessionID: child, callID: "call-router",
-    args: { name: "head_checkpoint_sync", arguments: { project_root: root, purpose: "routed child" } },
-  }, {});
-  const routed = await dispatch({
-    jsonrpc: "2.0", id: "opencode-routed", method: "tools/call",
-    params: { name: "head_tools_call", arguments: { name: "head_checkpoint_sync", arguments: { project_root: root, purpose: "routed child" } } },
-  }, { nativeSessionBridge: bridge });
-  assert.equal(rejected(routed), true);
+  }, { args: { name: "head_checkpoint_sync", arguments: { project_root: root, purpose: "routed child" } } }), { code: SUBAGENT_STATE_WRITE_REJECTED });
   await enforcedHooks["tool.execute.before"]({
     tool: "my_head_head_project_status", sessionID: child, callID: "call-read",
-    args: { project_root: root },
-  }, {});
+  }, { args: { project_root: root } });
   const read = await dispatch({
     jsonrpc: "2.0", id: "opencode-read", method: "tools/call",
     params: { name: "head_project_status", arguments: { project_root: root } },
@@ -179,8 +166,7 @@ test("OpenCode child sessions publish a ticket and the MCP server rejects the wr
   await parentHooks.config({ mcp: { my_head: { type: "local", command: ["node", path.join(pluginRoot, "scripts/mcp-server.mjs")] } } });
   await parentHooks["tool.execute.before"]({
     tool: "my_head_lode_session_create", sessionID: "ses_parent", callID: "call-parent",
-    args: { project_root: root, purpose: "parent session" },
-  }, {});
+  }, { args: { project_root: root, purpose: "parent session" } });
   const parent = await dispatch({
     jsonrpc: "2.0", id: "opencode-parent", method: "tools/call",
     params: { name: "lode_session_create", arguments: { project_root: root, purpose: "parent session" } },
@@ -194,10 +180,9 @@ test("OpenCode child sessions publish a ticket and the MCP server rejects the wr
   const beforeOff = fs.existsSync(signals) ? fs.readdirSync(signals).sort() : [];
   await offHooks["tool.execute.before"]({
     tool: "my_head_lode_session_create", sessionID: child, callID: "call-off",
-    args: { project_root: root, purpose: "guard off" },
-  }, {});
+  }, { args: { project_root: root, purpose: "guard off" } });
   const afterOff = fs.existsSync(signals) ? fs.readdirSync(signals).sort() : [];
-  assert.deepEqual(afterOff, beforeOff, "A disabled guard does not publish a caller ticket.");
+  assert.deepEqual(afterOff, beforeOff, "Neither enabled nor disabled guard publishes a cross-call ticket.");
   const quiet = createNativeSessionHostBridge({ environment: environment(false) });
   t.after(() => quiet.dispose());
   const allowed = await dispatch({
@@ -206,4 +191,32 @@ test("OpenCode child sessions publish a ticket and the MCP server rejects the wr
   }, { nativeSessionBridge: quiet });
   assert.equal(rejected(allowed), false);
   assert.equal(typeof allowed.result?.structuredContent?.sessionId, "string");
+});
+
+
+test('review regression: identical OpenCode parent and child calls cannot exchange guard identity', async t => {
+  const { root, operational, environment } = project(t);
+  const hooks = await plugin.server({ client: { session: {
+    async get({path:{id}}) { return {data:{id,projectID:'host-project',directory:root,...(id==='ses_parent'?{}:{parentID:'ses_parent'})}}; },
+  } }, project:{id:'host-project'},directory:root },{environment:environment(true)});
+  t.after(()=>hooks.dispose());
+  await hooks.config({mcp:{lode:{type:'local',command:['node',path.join(pluginRoot,'scripts/mcp-server.mjs')]}}});
+  const bridge=createNativeSessionHostBridge({environment:environment(true)});t.after(()=>bridge.dispose());
+  const args={project_root:root,purpose:'same request'};
+  const invoke=async(sessionID,callID)=>{
+    await hooks['tool.execute.before']({tool:'lode_lode_session_create',sessionID,callID},{args:{...args}});
+    return dispatch({jsonrpc:'2.0',id:callID,method:'tools/call',params:{name:'lode_session_create',arguments:args}},{nativeSessionBridge:bridge});
+  };
+  const results=await Promise.allSettled([invoke('ses_child1','child1'),invoke('ses_parent','parent'),invoke('ses_child2','child2')]);
+  for(const index of [0,2]){assert.equal(results[index].status,'rejected');assert.equal(results[index].reason.code,SUBAGENT_STATE_WRITE_REJECTED);}
+  assert.equal(results[1].status,'fulfilled');assert.equal(results[1].value.error,undefined);
+  assert.equal(typeof results[1].value.result?.structuredContent?.sessionId,'string');
+  for(const name of ['head_tools_call','head_tools_read'])await hooks['tool.execute.before']({
+    tool:`lode_${name}`,sessionID:'ses_child1',callID:`read-${name}`,
+  },{args:{name:'lode_project_status',arguments:{project_root:root}}});
+  await assert.rejects(hooks['tool.execute.before']({
+    tool:'lode_lode_session_create',sessionID:'ses_child2',callID:'output-is-actual',
+    args:{name:'lode_project_status',arguments:{project_root:root}},
+  },{args:{...args}}),{code:SUBAGENT_STATE_WRITE_REJECTED});
+  assert.equal(fs.existsSync(path.join(operational,'subagent-caller-signals')),false);
 });

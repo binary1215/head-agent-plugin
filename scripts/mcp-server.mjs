@@ -2050,23 +2050,19 @@ function requestedToolName(request) {
     ? semanticToolName(request.params?.arguments?.name) : semanticToolName(request.params?.name);
 }
 
-// Policy lives here, after the router unwrap. Adapters only supply caller.subagent.
-// Disabled mode does not read Codex observations or consume OpenCode tickets.
+// Use the shared policy after router unwrap. OpenCode applies it to the exact
+// Host before-hook; MCP uses its own caller and optional Codex observations.
+// Disabled mode does not read observations.
 async function subagentStateWriteRejection(name, args, caller, environment) {
   if (!subagentWriteGuardEnabled(environment)) return null;
   const selected = allTools.find(tool => semanticToolName(tool.name) === name);
   if (!selected || selected.annotations?.readOnlyHint === true) return null;
-  // Codex observations and OpenCode tickets stay optional. A cold catalog must
-  // not load them, and a disabled guard must not consume a ticket.
-  const { consumeSubagentCallerSignal, recordedSubagentCaller } = await import("./lib/subagent-caller-signal.mjs");
+  // A cold catalog or disabled guard must not load optional Codex observations.
+  const { recordedSubagentCaller } = await import("./lib/subagent-caller-signal.mjs");
   let current = caller && typeof caller === "object" ? { ...caller } : null;
   if (current?.runtime === "codex" && current.subagent !== true && typeof args?.project_root === "string" && typeof current.nativeSessionId === "string"
     && recordedSubagentCaller({ root: args.project_root, runtime: "codex", nativeSessionId: current.nativeSessionId, environment })) {
     current = { ...current, subagent: true };
-  }
-  if (current?.subagent !== true && typeof args?.project_root === "string") {
-    const ticket = consumeSubagentCallerSignal({ root: args.project_root, toolName: name, arguments: args, environment });
-    if (ticket?.subagent) current = { ...(current || {}), runtime: current?.runtime || ticket.runtime, subagent: true };
   }
   const decision = assessSubagentStateWrite({ caller: current, readOnly: false });
   return decision.allowed ? null : decision.message;

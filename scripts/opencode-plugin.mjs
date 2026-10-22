@@ -1,12 +1,15 @@
 import fs from "node:fs";
+import crypto from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createNativeObservationStore, nativeId, projectNativeObservations, appendNativeStatus } from "./lib/native-session-observations.mjs";
 import { createSessionHostAdapter } from "./lib/session-host-adapter.mjs";
 import { startupProjection, MAX_CONTEXT_CHARACTERS } from "./lib/session-host-context-projection.mjs";
 import { resolveOperation } from "./lib/lode-operation-contract.mjs";
-import { publishSubagentCallerSignal } from "./lib/subagent-caller-signal.mjs";
-import { subagentWriteGuardEnabled } from "./lib/subagent-write-guard.mjs";
+import { assessSubagentStateWrite, subagentWriteGuardEnabled } from "./lib/subagent-write-guard.mjs";
+import { resolveProjectStorage, assertProjectStorageUnchanged } from "./lib/project-storage-format.mjs";
+import { safeGraphFile } from "./lib/discovery-index.mjs";
+import { ARTIFACT_COMPOSITION } from "./lib/lode-artifact-composition.mjs";
 import { appendUserPromptReference, captureUserPrompt, freezeUserPromptReference, takeUserPromptReference } from "./lib/user-prompt-reference.mjs";
 
 // Dependency-free OpenCode V1 server entry, source-shaped against v1.19.0.
@@ -16,6 +19,27 @@ const packagedServer = fileURLToPath(new URL("./mcp-server.mjs", import.meta.url
 const portableOpenCodeScript = "{env:LODE_PLUGIN_ROOT}/scripts/mcp-server.mjs";
 const real = p => fs.realpathSync(path.resolve(p));
 const samePath = (a, b) => real(a) === real(b);
+function ownsPortableLaunch(directory, name, command) {
+  const storage = resolveProjectStorage(directory);
+  if (!storage) return false;
+  const project = JSON.parse(fs.readFileSync(storage.projectFile, "utf8"));
+  if (project.integrations?.opencode?.status !== "managed" || project.integrations.opencode.path !== "opencode.json") return false;
+  const manifest = JSON.parse(fs.readFileSync(safeGraphFile(storage.projectRoot, `${storage.directory}/generated/manifest.json`), "utf8"));
+  const packageRoot = path.dirname(path.dirname(packagedServer));
+  const pkg = JSON.parse(fs.readFileSync(path.join(packageRoot, "package.json"), "utf8"));
+  const plugin = JSON.parse(fs.readFileSync(path.join(packageRoot, ".codex-plugin/plugin.json"), "utf8"));
+  if (!samePath(manifest.pluginRoot, packageRoot) || manifest.packageVersion !== pkg.version || plugin.version !== pkg.version
+    || pkg.name !== ARTIFACT_COMPOSITION.packageName || plugin.name !== ARTIFACT_COMPOSITION.pluginName) return false;
+  const bytes = fs.readFileSync(safeGraphFile(storage.projectRoot, "opencode.json"));
+  const owned = manifest.managed?.filter(entry => entry.path === "opencode.json");
+  if (owned?.length !== 1 || crypto.createHash("sha256").update(bytes).digest("hex") !== owned[0].sha256) return false;
+  const original = JSON.parse(bytes.toString("utf8")).mcp;
+  const item = original && Object.hasOwn(original, name) ? original[name] : null;
+  if (item?.type !== "local" || item.command?.length !== 2 || item.command[0] !== command[0]
+    || item.command[1] !== portableOpenCodeScript) return false;
+  assertProjectStorageUnchanged(storage);
+  return true;
+}
 const supportedEvents = new Map([["session.created", "start-observed"], ["session.status", "status-observed"],
   ["session.idle", "idle-observed"], ["session.deleted", "caller-deleted-observed"], ["session.error", "error-observed"]]);
 const object = x => x !== null && typeof x === "object" && !Array.isArray(x);
@@ -100,10 +124,11 @@ export default {
             || !Array.isArray(item.command) || item.command.length !== 2 || typeof item.command[0] !== "string"
             || !/^(node|node\.exe)$/iu.test(path.basename(item.command[0])) || typeof item.command[1] !== "string") continue;
           try {
-            // Shared opencode.json keeps a host placeholder. Resolve it only in
-            // this process so the spawned server is this package and the file
-            // the user can commit does not gain a machine path.
-            if (item.command[1] === portableOpenCodeScript) item.command = ["node", packagedServer];
+            // OpenCode substitutes env before config hooks; an unset root is
+            // already /scripts/..., not the literal placeholder. Repair only
+            // the exact owned original and current package, in memory.
+            if ([portableOpenCodeScript, "/scripts/mcp-server.mjs"].includes(item.command[1])
+              && ownsPortableLaunch(directory, name, item.command)) item.command = ["node", packagedServer];
             if (!samePath(path.resolve(directory, item.command[1]), packagedServer)) continue;
             serverPrefixes.push(sanitize(name) + "_");
             for (const tool of ["head_project_status", "head_tools_read", "head_tools_call"]) aliases.set(sanitize(name) + "_" + tool, tool);
@@ -193,9 +218,10 @@ export default {
         } catch { /* A missing clear signal does not block the command. */ }
       },
       async "tool.execute.before"(input, output) {
+        let decision;
         try {
-          // The plugin only publishes a child-session signal. Core accepts or
-          // rejects the write. Default-off enforcement publishes nothing.
+          // Apply the shared policy to this actual Host call. No argument-keyed
+          // ticket can leak a child's identity into a parent or sibling call.
           if (disposed || !subagentWriteGuardEnabled(environment)) return;
           const aliased = aliases.get(input?.tool);
           const prefixed = serverPrefixes.find(prefix => typeof input?.tool === "string" && input.tool.startsWith(prefix));
@@ -203,7 +229,7 @@ export default {
           if (!tool || !nativeId(input?.sessionID)) return;
           const session = await exactSession(input.sessionID);
           if (typeof session?.parentID !== "string" || !session.parentID) return;
-          const raw = object(output?.args) ? output.args : object(input?.args) ? input.args : null;
+          const raw = object(output?.args) ? output.args : null;
           if (!raw) return;
           const resolved = resolveOperation(tool);
           const routed = ["head_tools_read", "head_tools_call"].includes(resolved?.semanticName || tool);
@@ -211,8 +237,14 @@ export default {
           const args = routed ? raw.arguments : raw;
           const semantic = resolveOperation(inner)?.semanticName;
           if (!semantic || !object(args)) return;
-          publishSubagentCallerSignal({ root: directory, toolName: semantic, arguments: args, environment, subagent: true });
-        } catch { /* A missing signal never blocks the Host tool. */ }
+          const { catalogTools } = await import("./mcp-server.mjs");
+          const selected = catalogTools.find(item => resolveOperation(item.name)?.semanticName === semantic);
+          if (!selected) return;
+          decision = assessSubagentStateWrite({ caller: { subagent: true }, readOnly: selected.annotations?.readOnlyHint === true });
+        } catch { /* Unavailable optional Host evidence does not gate independent work. */ }
+        // The real Host awaits this hook before execute. Never swallow the
+        // intentional policy rejection together with optional lookup failures.
+        if (decision?.allowed === false) throw Object.assign(new Error(decision.message), { code: decision.code });
       },
       async "tool.execute.after"(input, output) {
         try {

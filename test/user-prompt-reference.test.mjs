@@ -175,3 +175,21 @@ test("OpenCode reinjects once after compaction or clear and ignores synthetic pa
   assert.equal(cleared.system.join("\n").includes("after opencode clear"), true);
   assert.deepEqual(tree(path.join(root, ".lode")), canon);
 });
+
+
+test('review regression: prompt references are Project scoped and survive explicit Project relocation', async t => {
+  const {base,root,environment}=fixture(t),other=path.join(base,'other-project');fs.mkdirSync(other);
+  initializeProject({root:other,pluginRoot,runtimes:['claude']});
+  const caller={runtime:'claude',nativeSessionId:'shared-native-session',environment};
+  assert.notEqual(JSON.parse(fs.readFileSync(path.join(root,'.lode/project.json'))).projectId,JSON.parse(fs.readFileSync(path.join(other,'.lode/project.json'))).projectId);
+  captureUserPrompt({...caller,root,text:'Project A reference'});freezeUserPromptReference({...caller,root});
+  assert.equal(takeUserPromptReference({...caller,root:other,force:true}),'');
+  assert.match(takeUserPromptReference({...caller,root}),/Project A reference/);
+  captureUserPrompt({...caller,root,text:'same Project after move'});freezeUserPromptReference({...caller,root});
+  const moved=path.join(base,'moved-project');fs.cpSync(root,moved,{recursive:true});
+  assert.equal(takeUserPromptReference({...caller,root:moved,force:true}),'','Unverified copies have no Project authority.');
+  const {initializeOrResumeProject}=await import('../scripts/lib/project-bootstrap.mjs');
+  await initializeOrResumeProject({root:moved,pluginRoot,profile:'core'});
+  assert.match(takeUserPromptReference({...caller,root:moved}),/same Project after move/);
+  assert.equal(takeUserPromptReference({...caller,root,force:true}),'','Same Project reference is consumed once.');
+});

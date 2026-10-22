@@ -33,7 +33,7 @@ function callerFile(root, runtime, nativeSessionId, agentId, environment, create
   const storage = resolveProjectStorage(projectRoot);
   if (!storage) return null;
   const operational = resolveRuntimeOperationalStateRoot({ projectRoot, storage, environment, create });
-  const digest = crypto.createHash("sha256").update(JSON.stringify([runtime, nativeSessionId, agentId || null])).digest("hex");
+  const digest = crypto.createHash("sha256").update(JSON.stringify([storage.projectId, runtime, nativeSessionId, agentId || null])).digest("hex");
   const directory = path.join(operational, "user-prompt-reference");
   if (!fs.existsSync(directory)) {
     if (!create) return null;

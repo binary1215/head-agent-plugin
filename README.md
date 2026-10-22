@@ -206,7 +206,9 @@ OpenCode's local configuration names `node` and `{env:LODE_PLUGIN_ROOT}` rather 
 an absolute Node binary or install path. Claude Code uses `${CLAUDE_PLUGIN_ROOT}`;
 Codex uses the plugin-relative `.mcp.json` and `${PLUGIN_ROOT}` in hooks. Set
 `LODE_PLUGIN_ROOT` to the Lode install when OpenCode is started without the
-packaged plugin, which otherwise resolves that placeholder in memory. If the
+packaged plugin. The packaged plugin can repair an empty env-expanded path in
+memory only when the original managed configuration hash and current package
+identity match; it does not take over a user-owned or edited configuration. If the
 installation path changes, install Lode on that PC and ask the agent to resume
 the existing Project. At the same canonical Project path, this preserves Project
 and Session IDs and the selected runtimes while updating the host installation

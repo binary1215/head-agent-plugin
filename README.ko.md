@@ -199,7 +199,9 @@ OpenCode 로컬 설정은 절대 Node 바이너리나 설치 경로 대신 `node
 `{env:LODE_PLUGIN_ROOT}`를 기록합니다. Claude Code는 `${CLAUDE_PLUGIN_ROOT}`를,
 Codex는 플러그인 상대 `.mcp.json`과 hook의 `${PLUGIN_ROOT}`를 사용합니다.
 패키지 플러그인 없이 OpenCode를 시작할 때는 `LODE_PLUGIN_ROOT`를 Lode 설치
-위치로 두세요. 플러그인이 있으면 그 placeholder를 메모리에서 해석합니다.
+위치로 두세요. 패키지 플러그인은 관리 원본 설정의 hash와 현재 패키지 신원이
+일치할 때만 빈 환경변수로 치환된 경로를 메모리에서 복구합니다. 사용자 소유이거나
+수정된 설정을 가로채지는 않습니다.
 설치 경로가 바뀌면 해당 PC에 Lode를 설치한 뒤 에이전트에게 기존 Project 재개를
 요청하세요. 같은 정본 Project 경로에서는 Project·Session ID와 런타임 구성을
 유지하며 호스트 설치 정체성을 갱신합니다. 공유 실행 파일은 이식 가능한 형태로

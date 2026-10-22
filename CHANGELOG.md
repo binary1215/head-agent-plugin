@@ -26,7 +26,8 @@ Host/MCP reload.
   tools from a subagent caller with `SUBAGENT_STATE_WRITE_REJECTED`. Claude
   uses the existing child `agent_id`, Codex uses `_meta.agent_id`,
   `_meta.subagent`, or a `SubagentStart` observation, and OpenCode uses a
-  child session `parentID` ticket. Adapters do not decide the write. The
+  child session `parentID` in the exact pre-execution hook. OpenCode applies the
+  same catalog read-only hint and shared policy without cross-call tickets. The
   default stays off, so a subagent can still record canon and checkpoints.
 - Restore a bounded, redacted, local user-prompt reference after compaction
   or clear. Claude Code and Codex capture `prompt` on `UserPromptSubmit`,
@@ -34,7 +35,13 @@ Host/MCP reload.
   `clear` when it fits. OpenCode captures `message.part.updated`, freezes it
   in `experimental.session.compacting`, and appends it once on the next system
   transform after `session.compacted` or a `clear` `command.executed` event.
-  The text is non-authoritative. The checkpoint remains the recovery source.
+  References are scoped by verified Project identity and caller, preserving
+  explicit same-Project relocation without leaking between Projects. The text
+  is non-authoritative. The checkpoint remains the recovery source.
+- Resolve OpenCode's empty env-expanded launch path only from a hash-verified
+  managed original bound to the current package. Keep user-owned, edited and
+  unrelated commands unchanged. Verify actual selected installation paths
+  after synthetic distribution upgrade and rollback, not a releaseId substring.
 - This source entry is not publication proof. No intermediate tag or GitHub
   Release is created for this beta.
 

@@ -74,3 +74,38 @@ test('copied Project remains unavailable to implicit readers; explicit resume re
  assert.deepEqual(bytes(project),sourceBefore);
  t.diagnostic(JSON.stringify({case:'explicit-project-root-move',implicitInspection:'not_initialized',implicitConvergenceCode:'NOT_INITIALIZED',projectAndSessionPreserved:true,sourceUnchanged:true,historicalOriginalPreserved:true,installationReconnected:true,hostLoaded:false}));
 });
+
+
+test('review regression: OpenCode config resolves a managed launch after host environment substitution', async t => {
+ const {project}=fixture(t);
+ await initializeOrResumeProject({root:project,pluginRoot:sourceRoot,profile:'core',runtimes:['opencode']});
+ const {default:plugin}=await import('../scripts/opencode-plugin.mjs');
+ const hooks=await plugin.server({client:{},project:{id:'host-project'},directory:project});
+ t.after(()=>hooks.dispose());
+ const file=path.join(project,'opencode.json'),original=fs.readFileSync(file,'utf8');
+ // OpenCode v1.19.0 substitutes env references before JSON parsing and plugin.config.
+ const parsed=()=>JSON.parse(original.replace(/\{env:LODE_PLUGIN_ROOT\}/g,''));
+ const config=parsed();await hooks.config(config);
+ assert.deepEqual(config.mcp.lode.command,['node',path.join(sourceRoot,'scripts/mcp-server.mjs')]);
+ assert.equal(fs.readFileSync(file,'utf8'),original,'Resolution must stay in memory.');
+ const unrelated={mcp:{custom:{type:'local',command:['node','/scripts/mcp-server.mjs']}}};
+ const before=structuredClone(unrelated);await hooks.config(unrelated);assert.deepEqual(unrelated,before);
+ const wrongSlot={mcp:{other:parsed().mcp.lode}},wrongSlotBefore=structuredClone(wrongSlot);
+ await hooks.config(wrongSlot);assert.deepEqual(wrongSlot,wrongSlotBefore,'A managed file does not own another merged server slot.');
+ const envOverride=parsed();envOverride.mcp.lode.command[1]='/other-install/scripts/mcp-server.mjs';
+ const envOverrideBefore=structuredClone(envOverride);await hooks.config(envOverride);assert.deepEqual(envOverride,envOverrideBefore);
+ fs.writeFileSync(file,original+'\nuser-edit');
+ const changed=parsed(),changedBefore=structuredClone(changed);await hooks.config(changed);
+ assert.deepEqual(changed,changedBefore,'A user-modified config must not be repaired as managed.');
+ fs.writeFileSync(file,original);
+ const manifestFile=path.join(project,'.lode/generated/manifest.json'),manifest=read(manifestFile);
+ fs.writeFileSync(manifestFile,JSON.stringify({...manifest,pluginRoot:path.join(project,'another-package')}));
+ const stale=parsed(),staleBefore=structuredClone(stale);await hooks.config(stale);assert.deepEqual(stale,staleBefore);
+ fs.writeFileSync(manifestFile,JSON.stringify({...manifest,packageVersion:'wrong-package-version'}));
+ const wrongVersion=parsed(),wrongVersionBefore=structuredClone(wrongVersion);await hooks.config(wrongVersion);assert.deepEqual(wrongVersion,wrongVersionBefore);
+ fs.writeFileSync(manifestFile,JSON.stringify(manifest));
+ const projectFile=path.join(project,'.lode/project.json'),projectBytes=fs.readFileSync(projectFile,'utf8');
+ const projectRecord=JSON.parse(projectBytes);projectRecord.integrations.opencode.status='manual';
+ fs.writeFileSync(projectFile,JSON.stringify(projectRecord));
+ const manual=parsed(),manualBefore=structuredClone(manual);await hooks.config(manual);assert.deepEqual(manual,manualBefore);
+});

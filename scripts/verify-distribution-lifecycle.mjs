@@ -4,7 +4,7 @@ import crypto from "node:crypto";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   installDistribution,
   inspectDistribution,
@@ -73,6 +73,23 @@ function runNode(args) {
   const result = spawnSync(process.execPath, args, { encoding: "utf8", shell: false, windowsHide: true });
   assert.equal(result.status, 0, result.stderr || result.error?.message || result.stdout);
   return JSON.parse(result.stdout);
+}
+
+async function verifyOpenCodeInstallation(expectedRoot) {
+  const storage = resolveProjectStorage(projectRoot);
+  const manifest = JSON.parse(fs.readFileSync(path.join(projectRoot, storage.directory, "generated/manifest.json"), "utf8"));
+  assert.equal(fs.realpathSync(manifest.pluginRoot), fs.realpathSync(expectedRoot));
+  assert.equal(manifest.packageVersion, JSON.parse(fs.readFileSync(path.join(expectedRoot, "package.json"), "utf8")).version);
+  const file = path.join(projectRoot, "opencode.json"), original = fs.readFileSync(file, "utf8");
+  // Model the pinned Host's env-before-JSON order with the optional env unset.
+  const config = JSON.parse(original.replace(/\{env:LODE_PLUGIN_ROOT\}/g, ""));
+  const { default: plugin } = await import(pathToFileURL(path.join(expectedRoot, "scripts/opencode-plugin.mjs")).href);
+  const hooks = await plugin.server({ client: {}, project: { id: "synthetic-distribution-host" }, directory: projectRoot },
+    { environment: { HEAD_AGENT_OPERATIONAL_STATE_ROOT: path.join(scratchRoot, "operational") } });
+  try { await hooks.config(config); } finally { await hooks.dispose(); }
+  assert.deepEqual(config.mcp.lode.command, ["node", path.join(expectedRoot, "scripts/mcp-server.mjs")]);
+  assert.equal(fs.readFileSync(file, "utf8"), original, "Runtime resolution must not rewrite the portable shared file.");
+  assert.equal(original.includes(expectedRoot), false);
 }
 
 function runGlobal(args, identity = "lode", directory = binDirectory) {
@@ -309,7 +326,7 @@ try {
   assert.equal(fs.existsSync(path.join(upgradedReleaseRoot, "docs/.custom-source/keep.md")), true);
   assert.equal(upgraded.project.installationAction, "converged");
   assert.equal(upgraded.project.project.projectId, projectBeforeResume.projectId);
-  assert.equal(fs.readFileSync(path.join(projectRoot, "opencode.json"), "utf8").includes(upgraded.releaseId), true);
+  await verifyOpenCodeInstallation(upgradedReleaseRoot);
   assert.equal(inspectDistribution({ installRoot, binDirectory }).rollbackReleaseId, installed.releaseId);
 
   const rolledBack = rollbackDistribution({ installRoot, binDirectory });
@@ -319,7 +336,7 @@ try {
   const resumedAfterRollback = runGlobal(["resume", projectRoot, "--runtime", "claude,codex,opencode", "--profile", "product"]);
   assert.equal(resumedAfterRollback.installationAction, "converged");
   assert.equal(resumedAfterRollback.project.projectId, projectBeforeResume.projectId);
-  assert.equal(fs.readFileSync(path.join(projectRoot, "opencode.json"), "utf8").includes(installed.releaseId), true);
+  await verifyOpenCodeInstallation(installedReleaseRoot);
 
   const uninstalled = uninstallDistribution({ installRoot, binDirectory, purge: false });
   assert.equal(uninstalled.status, "uninstalled");
