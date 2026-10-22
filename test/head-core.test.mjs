@@ -277,11 +277,12 @@ test("initializes Claude, Codex, and OpenCode projections and verifies managed c
   assert.match(generatedInstructions, /distinguish mechanical coverage from semantic sufficiency/u);
   const claudeMcp = JSON.parse(fs.readFileSync(path.join(root, ".mcp.json"), "utf8"));
   assert.deepEqual(Object.keys(claudeMcp.mcpServers), ["lode"]);
-  assert.equal(claudeMcp.mcpServers.lode.command, process.execPath);
-  assert.match(claudeMcp.mcpServers.lode.args[0], /mcp-server\.mjs$/);
+  assert.equal(claudeMcp.mcpServers.lode.command, "node");
+  assert.equal(claudeMcp.mcpServers.lode.args[0], "${CLAUDE_PLUGIN_ROOT}/scripts/mcp-server.mjs");
+  assert.equal(claudeMcp.mcpServers.lode.cwd, "${CLAUDE_PLUGIN_ROOT}");
   const opencode = JSON.parse(fs.readFileSync(path.join(root, "opencode.json"), "utf8"));
   assert.deepEqual(Object.keys(opencode.mcp), ["lode"]);
-  assert.equal(opencode.mcp.lode.command[0], process.execPath);
+  assert.deepEqual(opencode.mcp.lode.command, ["node", "{env:LODE_PLUGIN_ROOT}/scripts/mcp-server.mjs"]);
   const inspected = inspectProject(root);
   assert.equal(inspected.status, "ready");
   assert.equal(inspected.project.runtimes.join(","), "claude,codex,opencode");

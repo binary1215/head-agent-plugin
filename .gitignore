@@ -133,3 +133,6 @@ Thumbs.db
 !test/project-relocation.test.mjs
 !test/post-beta54-ux.test.mjs
 !test/graph-explorer-multiselect.test.mjs
+!test/path-purity.test.mjs
+!test/subagent-write-guard.test.mjs
+!test/user-prompt-reference.test.mjs

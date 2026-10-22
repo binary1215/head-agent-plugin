@@ -468,6 +468,22 @@ denial, deny/retry normal workflow, permission bypass or global MCP selector is
 introduced. Correct explicit requests and independent Project work remain
 available after optional binding loss.
 
+An optional state-write policy is decided in the MCP server, not in a Hook
+denial. It stays off unless the process environment is
+`LODE_SUBAGENT_WRITE_GUARD=enforce`. While off, a subagent may still record
+canon, checkpoints, and lineage; that preserves the previous design and can
+bypass the parent review gate. While enforced, a caller with `caller.subagent`
+is rejected for every catalog tool whose `readOnlyHint` is not true. The error
+is `SUBAGENT_STATE_WRITE_REJECTED`. Read tools stay available. Claude passes the
+existing PreToolUse child `agent_id` through the Session-tool and generic-router
+correlation; direct tools outside that matcher are not a separate caller.
+Codex passes `_meta.agent_id` or `_meta.subagent`, and a `SubagentStart`
+observation counts when its native id is the request `params._meta.threadId`.
+OpenCode passes a child session `parentID` as a short-lived ticket from the
+plugin. The plugin does not reject the tool. Set the same environment on the
+OpenCode process so the plugin can publish the ticket and the MCP server can
+enforce it.
+
 ### Which operations retain a selection?
 
 Only the existing successful `lode_project_initialize_or_resume` selection is

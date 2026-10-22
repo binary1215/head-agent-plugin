@@ -59,7 +59,7 @@ if (providedRoot) {
     assert.equal(JSON.parse(fs.readFileSync(path.join(snapshotRoot, "plugins", built.pluginName, ".claude-plugin", "plugin.json"), "utf8")).license, "MIT");
     assert.equal(JSON.parse(fs.readFileSync(path.join(snapshotRoot, "plugins", built.pluginName, ".claude-plugin", "plugin.json"), "utf8")).hooks, "./hooks/claude.json");
     const startupHooks = JSON.parse(fs.readFileSync(path.join(snapshotRoot, "plugins", built.pluginName, "hooks", "claude.json"), "utf8"));
-    assert.deepEqual(Object.keys(startupHooks.hooks), ["SessionStart", "UserPromptSubmit", "Stop", "SubagentStart", "SubagentStop", "SessionEnd", "PreToolUse"]);
+    assert.deepEqual(Object.keys(startupHooks.hooks), ["SessionStart", "UserPromptSubmit", "PreCompact", "Stop", "SubagentStart", "SubagentStop", "SessionEnd", "PreToolUse"]);
     assert.match(startupHooks.hooks.SessionStart[0].hooks[0].command, /session-host-hook\.mjs/);
     assert.deepEqual(startupHooks.hooks.PreToolUse.map(group => group.hooks[0].server), [ARTIFACT_COMPOSITION.serverName, `plugin:${ARTIFACT_COMPOSITION.pluginName}:${ARTIFACT_COMPOSITION.serverName}`]);
     assert.ok(startupHooks.hooks.PreToolUse.every(group => group.hooks[0].tool === publicToolName("head_session_host_request_prepare")));

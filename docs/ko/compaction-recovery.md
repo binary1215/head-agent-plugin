@@ -152,12 +152,28 @@ Code-mode/V2는 지원 주장에 포함하지 않습니다. 사용자·요약 pr
 Claude의 10,000문자 경계는 유지합니다. 이는 직렬화 용량 경계이고 맥락이
 충분하다는 판정은 아닙니다. 빠진 내용은 기존 누락 안내와 원문 참조로 확인합니다.
 
-이 전달은 기록된 원문만 읽습니다. 저장되지 않은 최신 대화를 보존하거나,
-checkpoint·압축 epoch를 만들거나, 실행을 승인하거나, 관리형 일회성
-continuation을 구현하지 않습니다. 관리형 lifecycle에는 기존의 정확한 증거를
-제공하는 신뢰된 Host adapter가 여전히 필요합니다. 로컬 SDK stub·고정 소스
-소비 경로·생성 패키지 시험은 설치된 Host나 실제 모델 실행의 증거가 아닙니다.
-선택적 연동이 없어도 일반 작업은 계속할 수 있습니다.
+Claude Code와 Codex는 `UserPromptSubmit`의 최근 사용자 `prompt` 텍스트를
+제한된 로컬 참조로 저장합니다. 텍스트는 project Canon 밖에 있습니다.
+`PreCompact`는 그 참조를 고정하고 hook 결정을 반환하지 않습니다.
+`SessionStart`의 `compact`와 `clear`는 기존 문자 상한에 여유가 있을 때만
+이를 덧붙입니다. 참조는 권한이 없다고 표시됩니다. checkpoint가 복구 원천으로
+남습니다.
+
+OpenCode는 `message.part.updated`의 사용자 텍스트를 저장합니다. prompt를
+담는 별도의 pre-compaction 이벤트는 없으므로 그 메시지 이벤트가 캡처
+지점입니다. `experimental.session.compacting`이 참조를 고정합니다.
+`session.compacted`와 이름이 `clear`인 `command.executed` 이벤트는 이후
+`experimental.chat.system.transform` 한 번을 위해 표시합니다. 그 transform은
+여유가 있을 때 한 번 덧붙이며 일반 turn에서는 덧붙이지 않습니다. 호스트가
+`/clear`에 대해 `command.executed`를 보내지 않으면 OpenCode에는 `/clear`
+신호가 없습니다.
+
+이 전달은 기록된 원문과 그 제한된 prompt 참조를 읽습니다. checkpoint·압축
+epoch를 만들거나, 실행을 승인하거나, 관리형 일회성 continuation을 구현하지
+않습니다. 관리형 lifecycle에는 기존의 정확한 증거를 제공하는 신뢰된 Host
+adapter가 여전히 필요합니다. 로컬 SDK stub·고정 소스 소비 경로·생성 패키지
+시험은 설치된 Host나 실제 모델 실행의 증거가 아닙니다. 선택적 연동이 없어도
+일반 작업은 계속할 수 있습니다.
 
 ```text
 lode-agent compact-prepare <project> --input <recovery.json>

@@ -9,6 +9,40 @@
 GitHub Release는 별도로 지정한 릴리스에만 만들며 과거 중간 태그를 소급 생성하지
 않습니다. 마켓플레이스 게시가 로컬 설치나 Host/MCP 재로드를 입증하지는 않습니다.
 
+## 0.3.0-beta.59 — 게시 결과는 별도 확인
+
+- Claude Code, Codex, OpenCode MCP 실행 줄을 이식 가능한 형태로 기록합니다.
+  공유 `.mcp.json`과 `opencode.json`은 `node`와 프로젝트 상대 스크립트 또는
+  클라이언트 placeholder(`${CLAUDE_PLUGIN_ROOT}`, `${PLUGIN_ROOT}`,
+  `{env:LODE_PLUGIN_ROOT}`)를 사용합니다. 절대 Node·설치 경로는 그 파일에
+  두지 않습니다. 추적 파일과 세 클라이언트 초기화 결과를 구체적인 개인 홈
+  경로에 대해 검사하고, 마켓플레이스 음성 픽스처만 허용 목록에 둡니다.
+  개인 Windows LSP 픽스처 경로를 바꿨습니다. 기본 graph-explorer HTML은
+  로컬 보고서이며 `--share`는 생성된 기계 경로를 계속 뺍니다.
+- 선택적 MCP 서브에이전트 상태 쓰기 가드를 추가합니다.
+  `LODE_SUBAGENT_WRITE_GUARD=enforce`가 아니면 꺼져 있습니다. 강제하면
+  서브에이전트 caller의 비읽기 전용 Lode 도구를 `SUBAGENT_STATE_WRITE_REJECTED`로
+  거절합니다. Claude는 기존 child `agent_id`, Codex는 `_meta.agent_id`,
+  `_meta.subagent` 또는 `SubagentStart` 관측, OpenCode는 자식 세션
+  `parentID`를 정확한 호출 직전 hook에서 확인합니다. OpenCode도 같은 도구의
+  read-only hint와 공통 정책을 적용하며 호출 사이에 공유하는 티켓은 만들지 않습니다.
+  기본값은 꺼짐이라 서브에이전트가 canon과 checkpoint를 계속 기록할 수 있습니다.
+- 압축 또는 clear 뒤에 제한되고 가려진 로컬 사용자 prompt 참조를 복원합니다.
+  Claude Code와 Codex는 `UserPromptSubmit`의 `prompt`를 저장하고
+  `PreCompact`에서 고정한 뒤, 여유가 있으면 `SessionStart`의 `compact` 또는
+  `clear`에 덧붙입니다. OpenCode는 `message.part.updated`를 저장하고
+  `experimental.session.compacting`에서 고정한 뒤, `session.compacted` 또는
+  `clear` `command.executed` 이벤트 다음 system transform에 한 번 덧붙입니다.
+  검증된 Project 신원과 caller로 참조를 격리하여 명시적인 동일 Project 이동을
+  유지하고 다른 Project에는 전달하지 않습니다. 텍스트에는 권한이 없습니다.
+  checkpoint가 복구 원천으로 남습니다.
+- OpenCode가 환경변수를 빈 값으로 치환한 경로는 현재 패키지와 연결된 관리 원본의
+  hash·소유권을 확인한 경우에만 메모리에서 복구합니다. 사용자 소유·수정·무관한
+  명령은 보존합니다. 합성 배포 업그레이드·롤백 검증은 releaseId 문자열 대신
+  실제 선택된 설치 경로를 확인합니다.
+- 이 소스 기록은 게시 증거가 아닙니다. 이 베타에는 중간 태그나 GitHub
+  Release를 만들지 않습니다.
+
 ## 0.3.0-beta.58 — 게시 결과는 별도 확인
 
 - 좁은 화면에서 선택 도구를 접고 실제 측정한 노드·라벨 크기로 화면을 맞춥니다.

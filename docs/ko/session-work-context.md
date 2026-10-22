@@ -408,6 +408,20 @@ Codex tool Hook는 child에도 부모 session ID를 제공하므로 그 필드�
 selector를 넣지 않습니다. 선택적 연결 유실 후에도 정확한 명시 요청과 독립 Project
 작업은 가능합니다.
 
+선택적 상태 쓰기 정책은 Hook 거절이 아니라 MCP 서버에서 결정합니다. 프로세스
+환경이 `LODE_SUBAGENT_WRITE_GUARD=enforce`가 아니면 꺼져 있습니다. 꺼진 동안
+서브에이전트는 canon, checkpoint, lineage를 계속 기록할 수 있습니다. 이전
+설계를 유지하지만 부모 검토 관문을 우회할 수 있습니다. 강제하는 동안
+`caller.subagent`가 설정된 caller는 `readOnlyHint`가 true가 아닌 모든 카탈로그
+도구에서 거절됩니다. 오류는 `SUBAGENT_STATE_WRITE_REJECTED`입니다. 읽기 도구는
+계속 사용할 수 있습니다. Claude는 기존 PreToolUse child `agent_id`를 Session
+도구와 일반 라우터 연결로 전달하며, 그 matcher 밖의 직접 도구는 별도 caller가
+아닙니다. Codex는 `_meta.agent_id` 또는 `_meta.subagent`를 전달하고, native id가
+요청의 `params._meta.threadId`와 같은 `SubagentStart` 관측도 해당합니다.
+OpenCode는 플러그인의 짧은 수명 티켓으로 자식 세션 `parentID`를 전달합니다.
+플러그인은 도구를 거절하지 않습니다. 플러그인이 티켓을 게시하고 MCP 서버가
+강제하려면 OpenCode 프로세스에 같은 환경을 설정합니다.
+
 ### 어떤 작업이 선택을 유지하나?
 
 기존 `lode_project_initialize_or_resume`의 성공한 선택만 보존합니다. 첫 초기화는

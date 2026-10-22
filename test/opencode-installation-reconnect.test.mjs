@@ -33,9 +33,10 @@ test('same canonical Project root reconnects a changed installation root without
  assert.deepEqual(after.project.runtimes,before.project.runtimes);
  assert.deepEqual(fs.readFileSync(path.join(project,directory,'project.json')),projectBytes);
  assert.deepEqual(fs.readFileSync(path.join(project,directory,'sessions/current.json')),sessionBytes);
- assert.equal(config.mcp.lode.command[0],process.execPath);
- assert.equal(config.mcp.lode.command[1],path.join(fs.realpathSync(nextPlugin),'scripts/mcp-server.mjs'));
- assert.notEqual(config.mcp.lode.command[1],oldCommand[1]);
+ assert.deepEqual(config.mcp.lode.command,['node','{env:LODE_PLUGIN_ROOT}/scripts/mcp-server.mjs']);
+ assert.deepEqual(config.mcp.lode.command,oldCommand);
+ assert.equal(after.installation.pluginRoot,fs.realpathSync(nextPlugin));
+ assert.notEqual(after.installation.pluginRoot,before.installation.pluginRoot);
  t.diagnostic(JSON.stringify({case:'plugin-root-only',projectIdentityPreserved:true,sessionBytesPreserved:true,hostLoaded:false}));
 });
 test('project-owned OpenCode configuration stays byte-identical while the generated suggestion reconnects',async t=>{
@@ -47,7 +48,7 @@ test('project-owned OpenCode configuration stays byte-identical while the genera
  await initializeOrResumeProject({root:project,pluginRoot:nextPlugin,profile:'core'});
  assert.equal(fs.readFileSync(file,'utf8'),original);
  const generated=read(path.join(project,before.storage.directory,'generated/opencode.json'));
- assert.equal(generated.mcp.lode.command[1],path.join(fs.realpathSync(nextPlugin),'scripts/mcp-server.mjs'));
+ assert.deepEqual(generated.mcp.lode.command,['node','{env:LODE_PLUGIN_ROOT}/scripts/mcp-server.mjs']);
  const after=inspectProject(project);
  assert.equal(after.project.projectId,before.project.projectId);assert.equal(after.state.sessionId,before.state.sessionId);
  t.diagnostic(JSON.stringify({case:'project-owned-config',originalPreserved:true,generatedReconnected:true,hostLoaded:false}));
@@ -65,11 +66,46 @@ test('copied Project remains unavailable to implicit readers; explicit resume re
  assert.equal(resumed.projectLocation.status,'relocated');assert.equal(current.status,'ready');
  assert.equal(current.project.projectId,original.project.projectId);assert.equal(current.state.sessionId,original.state.sessionId);
  assert.equal(current.project.projectRoot,fs.realpathSync(moved));assert.equal(current.installation.pluginRoot,fs.realpathSync(nextPlugin));
- assert.equal(read(path.join(moved,'opencode.json')).mcp.lode.command[1],path.join(fs.realpathSync(nextPlugin),'scripts/mcp-server.mjs'));
+ assert.deepEqual(read(path.join(moved,'opencode.json')).mcp.lode.command,['node','{env:LODE_PLUGIN_ROOT}/scripts/mcp-server.mjs']);
  const history=path.join(moved,current.storage.directory,'project-location/history',`${resumed.projectLocation.historicalProjectDigest}.json`);
  assert.equal(fs.readFileSync(history,'utf8'),oldProject);
  const changed=new Set([`${original.storage.directory}/project.json`,`${original.storage.directory}/generated/manifest.json`,`${original.storage.directory}/generated/opencode.json`,'opencode.json']);
  const after=new Map(bytes(moved));for(const [relative,content]of movedBefore)if(!changed.has(relative.replaceAll('\\','/')))assert.equal(after.get(relative),content,relative);
  assert.deepEqual(bytes(project),sourceBefore);
  t.diagnostic(JSON.stringify({case:'explicit-project-root-move',implicitInspection:'not_initialized',implicitConvergenceCode:'NOT_INITIALIZED',projectAndSessionPreserved:true,sourceUnchanged:true,historicalOriginalPreserved:true,installationReconnected:true,hostLoaded:false}));
+});
+
+
+test('review regression: OpenCode config resolves a managed launch after host environment substitution', async t => {
+ const {project}=fixture(t);
+ await initializeOrResumeProject({root:project,pluginRoot:sourceRoot,profile:'core',runtimes:['opencode']});
+ const {default:plugin}=await import('../scripts/opencode-plugin.mjs');
+ const hooks=await plugin.server({client:{},project:{id:'host-project'},directory:project});
+ t.after(()=>hooks.dispose());
+ const file=path.join(project,'opencode.json'),original=fs.readFileSync(file,'utf8');
+ // OpenCode v1.19.0 substitutes env references before JSON parsing and plugin.config.
+ const parsed=()=>JSON.parse(original.replace(/\{env:LODE_PLUGIN_ROOT\}/g,''));
+ const config=parsed();await hooks.config(config);
+ assert.deepEqual(config.mcp.lode.command,['node',path.join(sourceRoot,'scripts/mcp-server.mjs')]);
+ assert.equal(fs.readFileSync(file,'utf8'),original,'Resolution must stay in memory.');
+ const unrelated={mcp:{custom:{type:'local',command:['node','/scripts/mcp-server.mjs']}}};
+ const before=structuredClone(unrelated);await hooks.config(unrelated);assert.deepEqual(unrelated,before);
+ const wrongSlot={mcp:{other:parsed().mcp.lode}},wrongSlotBefore=structuredClone(wrongSlot);
+ await hooks.config(wrongSlot);assert.deepEqual(wrongSlot,wrongSlotBefore,'A managed file does not own another merged server slot.');
+ const envOverride=parsed();envOverride.mcp.lode.command[1]='/other-install/scripts/mcp-server.mjs';
+ const envOverrideBefore=structuredClone(envOverride);await hooks.config(envOverride);assert.deepEqual(envOverride,envOverrideBefore);
+ fs.writeFileSync(file,original+'\nuser-edit');
+ const changed=parsed(),changedBefore=structuredClone(changed);await hooks.config(changed);
+ assert.deepEqual(changed,changedBefore,'A user-modified config must not be repaired as managed.');
+ fs.writeFileSync(file,original);
+ const manifestFile=path.join(project,'.lode/generated/manifest.json'),manifest=read(manifestFile);
+ fs.writeFileSync(manifestFile,JSON.stringify({...manifest,pluginRoot:path.join(project,'another-package')}));
+ const stale=parsed(),staleBefore=structuredClone(stale);await hooks.config(stale);assert.deepEqual(stale,staleBefore);
+ fs.writeFileSync(manifestFile,JSON.stringify({...manifest,packageVersion:'wrong-package-version'}));
+ const wrongVersion=parsed(),wrongVersionBefore=structuredClone(wrongVersion);await hooks.config(wrongVersion);assert.deepEqual(wrongVersion,wrongVersionBefore);
+ fs.writeFileSync(manifestFile,JSON.stringify(manifest));
+ const projectFile=path.join(project,'.lode/project.json'),projectBytes=fs.readFileSync(projectFile,'utf8');
+ const projectRecord=JSON.parse(projectBytes);projectRecord.integrations.opencode.status='manual';
+ fs.writeFileSync(projectFile,JSON.stringify(projectRecord));
+ const manual=parsed(),manualBefore=structuredClone(manual);await hooks.config(manual);assert.deepEqual(manual,manualBefore);
 });

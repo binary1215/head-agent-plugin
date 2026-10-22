@@ -11,6 +11,40 @@ are made only for separately designated releases; missing intermediate tags are
 not backfilled. Marketplace publication does not prove local installation or
 Host/MCP reload.
 
+## 0.3.0-beta.59 — publication tracked separately
+
+- Write portable Claude Code, Codex, and OpenCode MCP launch lines. Shared
+  `.mcp.json` and `opencode.json` use `node` plus a project-relative script or
+  the client placeholder (`${CLAUDE_PLUGIN_ROOT}`, `${PLUGIN_ROOT}`,
+  `{env:LODE_PLUGIN_ROOT}`). Absolute Node and install paths stay out of those
+  files. Scan tracked files and three-client init output for concrete personal
+  home paths, with the marketplace negative fixture allowlisted. Replace the
+  personal Windows LSP fixture path. Default graph-explorer HTML remains a
+  local report; `--share` still omits generated machine paths.
+- Add an optional MCP subagent state-write guard. It is off unless
+  `LODE_SUBAGENT_WRITE_GUARD=enforce`. Enforcement rejects non-read-only Lode
+  tools from a subagent caller with `SUBAGENT_STATE_WRITE_REJECTED`. Claude
+  uses the existing child `agent_id`, Codex uses `_meta.agent_id`,
+  `_meta.subagent`, or a `SubagentStart` observation, and OpenCode uses a
+  child session `parentID` in the exact pre-execution hook. OpenCode applies the
+  same catalog read-only hint and shared policy without cross-call tickets. The
+  default stays off, so a subagent can still record canon and checkpoints.
+- Restore a bounded, redacted, local user-prompt reference after compaction
+  or clear. Claude Code and Codex capture `prompt` on `UserPromptSubmit`,
+  freeze it on `PreCompact`, and append it from `SessionStart` `compact` or
+  `clear` when it fits. OpenCode captures `message.part.updated`, freezes it
+  in `experimental.session.compacting`, and appends it once on the next system
+  transform after `session.compacted` or a `clear` `command.executed` event.
+  References are scoped by verified Project identity and caller, preserving
+  explicit same-Project relocation without leaking between Projects. The text
+  is non-authoritative. The checkpoint remains the recovery source.
+- Resolve OpenCode's empty env-expanded launch path only from a hash-verified
+  managed original bound to the current package. Keep user-owned, edited and
+  unrelated commands unchanged. Verify actual selected installation paths
+  after synthetic distribution upgrade and rollback, not a releaseId substring.
+- This source entry is not publication proof. No intermediate tag or GitHub
+  Release is created for this beta.
+
 ## 0.3.0-beta.58 — publication tracked separately
 
 - Collapse selection tools on narrow screens and fit graph labels using measured

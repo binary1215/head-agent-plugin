@@ -184,13 +184,13 @@ for (const [runtime, limit] of [["codex", 32768], ["claude", 10000]]) {
 
 test("Codex numeric zero is paired with a finite local complete-output cap and the unchanged handler", () => {
   const doc = JSON.parse(fs.readFileSync(path.join(pluginRoot, "hooks/codex.json")));
-  assert.deepEqual(Object.keys(doc.hooks), ["SessionStart", "UserPromptSubmit", "Stop", "SubagentStart", "SubagentStop", "SessionEnd"]);
+  assert.deepEqual(Object.keys(doc.hooks), ["SessionStart", "UserPromptSubmit", "PreCompact", "Stop", "SubagentStart", "SubagentStop", "SessionEnd"]);
   assert.equal(doc.hooks.SessionStart.length, 1);
   const group = doc.hooks.SessionStart[0], handler = group.hooks[0];
   assert.equal(group.matcher, "startup|resume|clear|compact|fork"); assert.equal(group.hooks.length, 1);
   assert.equal(handler.command, 'node "${PLUGIN_ROOT}/scripts/session-host-hook.mjs" --runtime codex');
   assert.equal(handler.timeout, 10); assert.equal(handler.additionalContextLimit, 0);
-  for (const event of ["UserPromptSubmit", "Stop", "SubagentStart", "SubagentStop", "SessionEnd"]) {
+  for (const event of ["UserPromptSubmit", "PreCompact", "Stop", "SubagentStart", "SubagentStop", "SessionEnd"]) {
     assert.equal(doc.hooks[event][0].hooks[0].command, 'node "${PLUGIN_ROOT}/scripts/session-host-hook.mjs" --runtime codex --observe-only');
     assert.equal(Object.hasOwn(doc.hooks[event][0].hooks[0], "additionalContextLimit"), false);
   }

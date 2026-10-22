@@ -177,7 +177,7 @@ See [runtime adapters](runtime-adapters.md).
 
 ## File ownership
 
-`.lode/` is plugin-managed canon. Root `CLAUDE.md`, `.mcp.json`, `AGENTS.md`, and `opencode.json` are created only when the corresponding runtime projection has no collision. Existing files remain project-owned; generated alternatives are written under `.lode/generated/` and reported as manual integration work.
+`.lode/` is plugin-managed canon. Root `CLAUDE.md`, `.mcp.json`, `AGENTS.md`, and `opencode.json` are created only when the corresponding runtime projection has no collision. Existing files remain project-owned; generated alternatives are written under `.lode/generated/` and reported as manual integration work. Claude Code, Codex, and OpenCode launch projections use `node` with a project-relative `scripts/mcp-server.mjs` or a client placeholder (`${CLAUDE_PLUGIN_ROOT}`, `${PLUGIN_ROOT}`, `{env:LODE_PLUGIN_ROOT}`). They do not embed an absolute Node binary or install path.
 
 The managed manifest records SHA-256 digests. Canonical mutation stops when managed drift is detected.
 

@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { resolveProjectStorage, assertProjectStorageUnchanged, formatForVerifiedOwner, relativeProjectArtifact } from "./project-storage-format.mjs";
 import { ARTIFACT_COMPOSITION } from "./lode-artifact-composition.mjs";
+import { portableMcpDocument } from "./portable-client-command.mjs";
 import { sessionStatePath, defaultSessionStatePath } from "./session-routing.mjs";
 import { atomicWriteArtifact } from "./artifact-storage.mjs";
 import { noteProjectGraphChange } from "./discovery-index.mjs";
@@ -123,28 +124,20 @@ function roleInstruction(role) {
   return `# ${role[0].toUpperCase()}${role.slice(1)} role\n\n${bodies[role]}\n`;
 }
 
-function opencodeProjection(pluginRoot, storage) {
+function opencodeProjection(pluginRoot, storage, projectRoot) {
   return {
     $schema: "https://opencode.ai/config.json",
     instructions: [relativeProjectArtifact(storage, "generated", `${formatForVerifiedOwner(storage).dialect}-instructions.md`), relativeProjectArtifact(storage, "instructions/project.md")],
     mcp: {
-      [ARTIFACT_COMPOSITION.serverName]: {
-        type: "local",
-        command: [process.execPath, path.join(pluginRoot, "scripts", "mcp-server.mjs")],
-        enabled: true,
-      },
+      [ARTIFACT_COMPOSITION.serverName]: portableMcpDocument({ client: "opencode", pluginRoot, projectRoot }).document,
     },
   };
 }
 
-function claudeMcpProjection(pluginRoot) {
+function claudeMcpProjection(pluginRoot, projectRoot) {
   return {
     mcpServers: {
-      [ARTIFACT_COMPOSITION.serverName]: {
-        command: process.execPath,
-        args: [path.join(pluginRoot, "scripts", "mcp-server.mjs")],
-        env: {},
-      },
+      [ARTIFACT_COMPOSITION.serverName]: portableMcpDocument({ client: "claude", pluginRoot, projectRoot }).document,
     },
   };
 }
@@ -222,8 +215,8 @@ function projectFiles(root, pluginRoot, runtimes, integrations, storage) {
     [relativeProjectArtifact(storage, "project.json"), json(project)],
     [relativeProjectArtifact(storage, "instructions/project.md"), "# Project-specific Lode context\n\nRecord project identity, canonical sources, repository boundaries, and fixed constraints here.\n"],
     [relativeProjectArtifact(storage, "generated/lode-instructions.md"), lodeInstructions()],
-    [relativeProjectArtifact(storage, "generated/claude.mcp.json"), json(claudeMcpProjection(pluginRoot))],
-    [relativeProjectArtifact(storage, "generated/opencode.json"), json(opencodeProjection(pluginRoot, storage))],
+    [relativeProjectArtifact(storage, "generated/claude.mcp.json"), json(claudeMcpProjection(pluginRoot, root))],
+    [relativeProjectArtifact(storage, "generated/opencode.json"), json(opencodeProjection(pluginRoot, storage, root))],
     [relativeProjectArtifact(storage, "roles/lode.md"), roleInstruction(format.roleField)],
     [relativeProjectArtifact(storage, "roles/developer.md"), roleInstruction("developer")],
     [relativeProjectArtifact(storage, "roles/coder.md"), roleInstruction("coder")],
@@ -249,10 +242,10 @@ function projectFiles(root, pluginRoot, runtimes, integrations, storage) {
   ]);
   if (integrations.claude?.status === "managed") {
     files.set("CLAUDE.md", lodeInstructions());
-    files.set(".mcp.json", json(claudeMcpProjection(pluginRoot)));
+    files.set(".mcp.json", json(claudeMcpProjection(pluginRoot, root)));
   }
   if (integrations.codex?.status === "managed") files.set("AGENTS.md", lodeInstructions());
-  if (integrations.opencode?.status === "managed") files.set("opencode.json", json(opencodeProjection(pluginRoot, storage)));
+  if (integrations.opencode?.status === "managed") files.set("opencode.json", json(opencodeProjection(pluginRoot, storage, root)));
   return { files, project };
 }
 
@@ -370,12 +363,12 @@ export function convergeProjectInstallation({ root = ".", pluginRoot, runtimes =
     if (inspected.project.integrations.codex?.status === "managed") addReplacement("AGENTS.md", lodeInstructions());
   }
   if (inspected.project.runtimes.includes("claude")) {
-    const projection = json(claudeMcpProjection(canonicalPluginRoot));
+    const projection = json(claudeMcpProjection(canonicalPluginRoot, projectRoot));
     addReplacement(relativeProjectArtifact(storage, "generated", "claude.mcp.json"), projection);
     if (inspected.project.integrations.claude?.status === "managed") addReplacement(".mcp.json", projection);
   }
   if (inspected.project.runtimes.includes("opencode")) {
-    const projection = json(opencodeProjection(canonicalPluginRoot, storage));
+    const projection = json(opencodeProjection(canonicalPluginRoot, storage, projectRoot));
     addReplacement(relativeProjectArtifact(storage, "generated", "opencode.json"), projection);
     if (inspected.project.integrations.opencode?.status === "managed") addReplacement("opencode.json", projection);
   }
@@ -612,6 +605,9 @@ export function coreContract() {
     "host-bound-workspace-process-proof",
     "bounded-runtime-one-shot-interrupt",
     "bounded-runtime-one-shot-close",
+    "portable-client-mcp-launch",
+    "optional-subagent-state-write-guard",
+    "bounded-user-prompt-reference-after-compact-clear",
   ];
   contract.deferredCapabilities = [
     ...contract.deferredCapabilities,

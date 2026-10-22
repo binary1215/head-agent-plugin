@@ -202,10 +202,17 @@ request the same initialization through the bundled Skill. Lode creates
 files are preserved and generated manual-integration projections remain under
 the selected root's `.lode/generated/` or existing `.head/generated/` directory.
 
-OpenCode's local configuration uses that PC's Node executable and Lode installation
-path. If the installation path changes, install Lode on that PC and ask the agent
-to resume the existing Project. At the same canonical Project path, this preserves
-Project and Session IDs and the selected runtimes while updating managed paths.
+OpenCode's local configuration names `node` and `{env:LODE_PLUGIN_ROOT}` rather than
+an absolute Node binary or install path. Claude Code uses `${CLAUDE_PLUGIN_ROOT}`;
+Codex uses the plugin-relative `.mcp.json` and `${PLUGIN_ROOT}` in hooks. Set
+`LODE_PLUGIN_ROOT` to the Lode install when OpenCode is started without the
+packaged plugin. The packaged plugin can repair an empty env-expanded path in
+memory only when the original managed configuration hash and current package
+identity match; it does not take over a user-owned or edited configuration. If the
+installation path changes, install Lode on that PC and ask the agent to resume
+the existing Project. At the same canonical Project path, this preserves Project
+and Session IDs and the selected runtimes while updating the host installation
+identity. The shared launch files stay portable.
 A project-owned `opencode.json` stays unchanged; the generated copy remains
 available for manual integration.
 
@@ -305,10 +312,12 @@ These labels describe the source distribution. They do not certify that a partic
 | Project | initialization, Source Scope, review-gated Product Canon | Available |
 | Knowledge | graph-first bounded discovery with source fallback, World Model, incremental refresh, optional Context Capsules | Available |
 | Sessions | request-local logical Sessions and current common direction with exact-basis updates | Available |
+| Sessions | optional subagent state-write guard, off unless `LODE_SUBAGENT_WRITE_GUARD=enforce` | Experimental |
 | Lineage | Runs, ResultPackets, Fresh Lode review, P2 Session and conversation-entry recovery | Available |
 | Host lifecycle | provider-neutral compaction and at-most-once continuation contract, requiring a trusted Host adapter | Experimental |
 | Host context | packaged Claude Code and Codex SessionStart delivery, including compact | Available |
 | Host context | packaged OpenCode V1 per-model-request delivery, including summary and ordinary requests; not a post-compaction event | Available |
+| Host context | bounded non-authoritative user-prompt reference after compact and clear for Claude Code, Codex, and OpenCode | Available |
 | Runtime | Claude Code, Codex, and OpenCode one-shot Session/Run execution | Available |
 | Runtime evidence | deterministic three-runtime fixtures and local CLI capability probes | Available |
 | Runtime evidence | Claude Code live model-call conformance | Experimental |
@@ -324,6 +333,7 @@ These labels describe the source distribution. They do not certify that a partic
 | Distribution | user-scoped install, native delivery, rollback, safe removal | Available |
 | Distribution | verified Git-backed Codex marketplace | Available |
 | Distribution | verified Git-backed Claude Code marketplace | Available |
+| Distribution | portable Claude Code, Codex, and OpenCode MCP launch paths | Available |
 | Distribution | OpenAI universal plugin directory | Planned |
 | Runtime | general provider-session resume and streaming | Deferred |
 | Documents | Obsidian and Notion adapters | Deferred |

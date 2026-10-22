@@ -195,11 +195,19 @@ Claude Code는 플러그인을 버전별 캐시에 복사하고 `${CLAUDE_PLUGIN
 만듭니다. 기존 파일은 보존하고 직접 통합할 때 쓸 생성 파일은 선택된 정본 루트의
 `.lode/generated/` 또는 기존 `.head/generated/`에 둡니다.
 
-OpenCode 로컬 설정은 각 PC의 Node 실행 파일과 Lode 설치 경로를 사용합니다.
+OpenCode 로컬 설정은 절대 Node 바이너리나 설치 경로 대신 `node`와
+`{env:LODE_PLUGIN_ROOT}`를 기록합니다. Claude Code는 `${CLAUDE_PLUGIN_ROOT}`를,
+Codex는 플러그인 상대 `.mcp.json`과 hook의 `${PLUGIN_ROOT}`를 사용합니다.
+패키지 플러그인 없이 OpenCode를 시작할 때는 `LODE_PLUGIN_ROOT`를 Lode 설치
+위치로 두세요. 패키지 플러그인은 관리 원본 설정의 hash와 현재 패키지 신원이
+일치할 때만 빈 환경변수로 치환된 경로를 메모리에서 복구합니다. 사용자 소유이거나
+수정된 설정을 가로채지는 않습니다.
 설치 경로가 바뀌면 해당 PC에 Lode를 설치한 뒤 에이전트에게 기존 Project 재개를
 요청하세요. 같은 정본 Project 경로에서는 Project·Session ID와 런타임 구성을
-유지하며 관리되는 경로를 갱신합니다. 사용자 소유 `opencode.json`은 그대로 두고
-생성본만 갱신하므로, 필요한 설정 통합에 그 생성본을 사용할 수 있습니다.
+유지하며 호스트 설치 정체성을 갱신합니다. 공유 실행 파일은 이식 가능한 형태로
+남습니다. 사용자 소유 `opencode.json`은 그대로 두고, 생성본은 이식 가능한
+placeholder를 유지합니다. 설치가 옮겨지면 매니페스트의 호스트 설치 정체성만
+갱신되므로, 필요한 설정 통합에는 그 생성본을 사용할 수 있습니다.
 
 Project 폴더 전체를 이동하거나 복사했다면 새 경로에서 명시적으로 재개하세요.
 Lode는 보존된 소유 정보를 검증하고 Project·Session ID와 과거 기록을 유지합니다.
@@ -295,10 +303,12 @@ claude plugin update head-agent-core@head-agent-plugin
 | 프로젝트 | 초기화, Source Scope, 검토를 거치는 Product Canon | 사용 가능 |
 | 지식 | 원본 fallback을 갖는 제한된 그래프 우선 탐색, World Model, 증분 갱신, 선택적 Context Capsule | 사용 가능 |
 | Session | 독립 논리 Session 라우팅, 공통 현재 방향과 정확한 기준의 갱신 | 사용 가능 |
+| Session | 선택적 서브에이전트 상태 쓰기 가드, `LODE_SUBAGENT_WRITE_GUARD=enforce`가 아니면 꺼짐 | 실험적 |
 | 계보 | Run, ResultPacket, Fresh Lode 검토, P2 Session 및 대화 진입 복구 | 사용 가능 |
 | Host lifecycle | 신뢰하는 Host 어댑터가 필요한 공급자 중립 compaction·최대 1회 continuation 계약 | 실험적 |
 | Host context | compact를 포함한 Claude Code·Codex 패키지의 SessionStart 맥락 전달 | 사용 가능 |
 | Host context | OpenCode V1 패키지의 요약·일반 모델 요청별 맥락 전달. 압축 직후 이벤트 아님 | 사용 가능 |
+| Host context | Claude Code, Codex, OpenCode에서 compact와 clear 뒤 권한 없는 제한된 사용자 prompt 참조 | 사용 가능 |
 | 런타임 | Claude Code, Codex, OpenCode 일회성 Session/Run 실행 | 사용 가능 |
 | 런타임 증거 | 세 런타임 결정론적 fixture 및 로컬 CLI 기능 probe | 사용 가능 |
 | 런타임 증거 | Claude Code 실제 모델 호출 적합성 | 실험적 |
@@ -314,6 +324,7 @@ claude plugin update head-agent-core@head-agent-plugin
 | 배포 | 사용자 범위 설치, 네이티브 전달, 롤백, 안전한 제거 | 사용 가능 |
 | 배포 | 검증된 Git 기반 Codex 마켓플레이스 | 사용 가능 |
 | 배포 | 검증된 Git 기반 Claude Code 마켓플레이스 | 사용 가능 |
+| 배포 | Claude Code, Codex, OpenCode의 이식 가능한 MCP 실행 경로 | 사용 가능 |
 | 배포 | OpenAI 범용 플러그인 디렉터리 | 계획됨 |
 | 런타임 | 일반 공급자 세션 resume과 stream | 보류됨 |
 | 문서 | Obsidian 및 Notion 어댑터 | 보류됨 |

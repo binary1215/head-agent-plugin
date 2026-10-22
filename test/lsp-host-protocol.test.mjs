@@ -33,23 +33,23 @@ const sources = [
 ];
 
 test("RQ-V03 pinned Windows fixture URI and finite admission reject aliases", () => {
-  const native = "C:\\Users\\ccolt\\Documents\\Codex\\fixture-a\\target.ts";
-  const pinned = "file:///c%3A/Users/ccolt/Documents/Codex/fixture-a/target.ts";
-  const nodeClient = "file:///C:/Users/ccolt/Documents/Codex/fixture-a/target.ts";
+  const native = "C:\\lode-fixture\\profile\\Documents\\Codex\\fixture-a\\target.ts";
+  const pinned = "file:///c%3A/lode-fixture/profile/Documents/Codex/fixture-a/target.ts";
+  const nodeClient = "file:///C:/lode-fixture/profile/Documents/Codex/fixture-a/target.ts";
   assert.equal(serializePinnedTlsWindowsFixtureUri(native), pinned);
   const admitted = { relativePath: "target.ts", languageId: "typescript", allowedUris: [pinned, nodeClient] };
   assert.equal(admittedRealDocumentFromUri(pinned, [admitted]), admitted);
   assert.equal(admittedRealDocumentFromUri(nodeClient, [admitted]), admitted);
   for (const invalid of [
-    "c:\\Users\\ccolt\\target.ts", "C:/Users/ccolt/target.ts", "C:\\Users\\two words\\target.ts",
-    "C:\\Users\\한글\\target.ts", "C:\\Users\\..\\target.ts", "C:\\Users\\CON\\target.ts",
-    "\\\\server\\share\\target.ts", "\\\\?\\C:\\Users\\ccolt\\target.ts",
+    "c:\\lode-fixture\\target.ts", "C:/lode-fixture/target.ts", "C:\\lode-fixture\\two words\\target.ts",
+    "C:\\lode-fixture\\한글\\target.ts", "C:\\lode-fixture\\..\\target.ts", "C:\\lode-fixture\\CON\\target.ts",
+    "\\\\server\\share\\target.ts", "\\\\?\\C:\\lode-fixture\\target.ts",
   ]) assert.throws(() => serializePinnedTlsWindowsFixtureUri(invalid), { code: "unsupported-profile" });
   for (const alias of [
-    "file:///c:/Users/ccolt/Documents/Codex/fixture-a/target.ts",
+    "file:///c:/lode-fixture/profile/Documents/Codex/fixture-a/target.ts",
     `${pinned}?query=1`, `${pinned}#fragment`,
-    "file://user@/c%3A/Users/ccolt/Documents/Codex/fixture-a/target.ts",
-    "file:///c%3A/Users/ccolt/Documents/Codex/fixture-a/../target.ts",
+    "file://user@/c%3A/lode-fixture/profile/Documents/Codex/fixture-a/target.ts",
+    "file:///c%3A/lode-fixture/profile/Documents/Codex/fixture-a/../target.ts",
   ]) assert.throws(() => admittedRealDocumentFromUri(alias, [admitted]), { code: "uri-outside-snapshot" });
   assert.equal(LSP_HOST_REAL_LIMITS.requestTimeoutMs, 10_000);
   assert.equal(LSP_HOST_REAL_LIMITS.totalTimeoutMs, 40_000);
