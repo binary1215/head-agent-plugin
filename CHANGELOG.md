@@ -21,6 +21,13 @@ Host/MCP reload.
   home paths, with the marketplace negative fixture allowlisted. Replace the
   personal Windows LSP fixture path. Default graph-explorer HTML remains a
   local report; `--share` still omits generated machine paths.
+- Add an optional MCP subagent state-write guard. It is off unless
+  `LODE_SUBAGENT_WRITE_GUARD=enforce`. Enforcement rejects non-read-only Lode
+  tools from a subagent caller with `SUBAGENT_STATE_WRITE_REJECTED`. Claude
+  uses the existing child `agent_id`, Codex uses `_meta.agent_id`,
+  `_meta.subagent`, or a `SubagentStart` observation, and OpenCode uses a
+  child session `parentID` ticket. Adapters do not decide the write. The
+  default stays off, so a subagent can still record canon and checkpoints.
 - This source entry is not publication proof. No intermediate tag or GitHub
   Release is created for this beta.
 

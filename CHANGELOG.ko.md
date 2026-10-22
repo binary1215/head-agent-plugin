@@ -19,6 +19,13 @@ GitHub Release는 별도로 지정한 릴리스에만 만들며 과거 중간 �
   경로에 대해 검사하고, 마켓플레이스 음성 픽스처만 허용 목록에 둡니다.
   개인 Windows LSP 픽스처 경로를 바꿨습니다. 기본 graph-explorer HTML은
   로컬 보고서이며 `--share`는 생성된 기계 경로를 계속 뺍니다.
+- 선택적 MCP 서브에이전트 상태 쓰기 가드를 추가합니다.
+  `LODE_SUBAGENT_WRITE_GUARD=enforce`가 아니면 꺼져 있습니다. 강제하면
+  서브에이전트 caller의 비읽기 전용 Lode 도구를 `SUBAGENT_STATE_WRITE_REJECTED`로
+  거절합니다. Claude는 기존 child `agent_id`, Codex는 `_meta.agent_id`,
+  `_meta.subagent` 또는 `SubagentStart` 관측, OpenCode는 자식 세션
+  `parentID` 티켓을 사용합니다. 어댑터는 쓰기 여부를 결정하지 않습니다.
+  기본값은 꺼짐이라 서브에이전트가 canon과 checkpoint를 계속 기록할 수 있습니다.
 - 이 소스 기록은 게시 증거가 아닙니다. 이 베타에는 중간 태그나 GitHub
   Release를 만들지 않습니다.
 

@@ -16,6 +16,26 @@ const missingCaller = () => { throw Object.assign(new Error("Native caller metad
 export function createNativeSessionHostBridge({ environment = process.env, runtime = null, requestRegistry = createSessionHostRequestRegistry() } = {}) {
   let transportRuntime = runtime, observedNativeMetadata = false, observedClaudeHook = false;
   const adapters = new Map();
+  // Caller bit for a router call whose inner tool does not use the Session
+  // registry. The registry shape stays unchanged. Entries are not P5 state.
+  const subagentToolUses = [];
+  function noteSubagentToolUse(id) {
+    const now = Date.now();
+    while (subagentToolUses.length && (subagentToolUses[0].at <= now - 600_000 || subagentToolUses.length >= 1024)) subagentToolUses.shift();
+    if (!subagentToolUses.some(entry => entry.id === id)) subagentToolUses.push({ id, at: now });
+  }
+  function takeSubagentToolUse(id) {
+    const index = subagentToolUses.findIndex(entry => entry.id === id && entry.at > Date.now() - 600_000);
+    if (index < 0) return false;
+    subagentToolUses.splice(index, 1);
+    return true;
+  }
+  function visibleCaller(caller) {
+    if (!caller) return null;
+    if (caller.status === "signal-only") return { runtime: "claude", nativeSessionId: null, agentId: null, subagent: true };
+    if (caller.status !== "known") return null;
+    return { runtime: caller.runtime, nativeSessionId: caller.nativeSessionId, agentId: caller.agentId ?? null, subagent: caller.subagent === true };
+  }
   function callerFor(request) {
     if (transportRuntime === "claude") {
       const meta = request.params?._meta;
@@ -25,15 +45,22 @@ export function createNativeSessionHostBridge({ environment = process.env, runti
       if (!hasId || !validCaller(meta["claudecode/toolUseId"])) return { status: "unavailable" };
       try {
         const claim = requestRegistry.claim({ key: meta["claudecode/toolUseId"], name: request.params.name, arguments: request.params.arguments });
-        return { status: "known", ...claim.caller, release: claim.release };
-      } catch { return { status: "unavailable" }; }
+        // agentId stays inside the stored registry caller. subagent is derived.
+        return { status: "known", ...claim.caller, subagent: Boolean(claim.caller.agentId), release: claim.release };
+      } catch {
+        if (takeSubagentToolUse(meta["claudecode/toolUseId"])) return { status: "signal-only", runtime: "claude", subagent: true };
+        return { status: "unavailable" };
+      }
     }
     if (transportRuntime !== "codex") return { status: "legacy" };
     const meta = request.params?._meta;
     if (meta && typeof meta === "object" && Object.hasOwn(meta, "threadId")) {
       if (!validCaller(meta.threadId)) return { status: "unavailable" };
       observedNativeMetadata = true;
-      return { status: "known", runtime: "codex", nativeSessionId: meta.threadId };
+      // Do not put a Codex agent id on the Session adapter key. Tool hooks
+      // still expose the parent session, so only the write-guard bit changes.
+      const hinted = [meta.agentId, meta.agent_id].find(validCaller) || null;
+      return { status: "known", runtime: "codex", nativeSessionId: meta.threadId, subagent: Boolean(hinted) || meta.subagent === true };
     }
     // This remembers only the transport capability, NEVER the last caller.
     return { status: observedNativeMetadata ? "unavailable" : "legacy" };
@@ -68,7 +95,12 @@ export function createNativeSessionHostBridge({ environment = process.env, runti
       const name = semanticToolName(routed ? original.name : match[1]);
       if (helperName(name)) throw Object.assign(new Error(), { code: "NATIVE_HOOK_RECURSION" });
       // Router Project-only no-op: no registry, Session/P5 read or graph work.
-      if (!sessionCallRequiresBinding(name)) return reply(request);
+      if (!sessionCallRequiresBinding(name)) {
+        // Remember only that this tool use came from a child. No registry,
+        // Session, or P5 read, matching the independent-router no-op.
+        if (value.native_agent_id) noteSubagentToolUse(value.tool_use_id);
+        return reply(request);
+      }
       requestRegistry.prepare({ key: value.tool_use_id, name: match[1], arguments: original,
         caller: { runtime: "claude", nativeSessionId: value.native_session_id, agentId: value.native_agent_id || null } });
       return reply(request);
@@ -79,26 +111,27 @@ export function createNativeSessionHostBridge({ environment = process.env, runti
       const routed = routerName(request.params?.name);
       const args = routed ? outer?.arguments : outer;
       const name = semanticToolName(routed ? outer?.name : request.params?.name);
+      const route = extra => ({ caller: visibleCaller(caller), hostEnvironment: environment, ...extra });
       if (helperName(name)) return reply(request, Object.assign(new Error(), { code: "NATIVE_HOOK_DIRECT_INGRESS_REQUIRED" }));
-      if (typeof args?.project_root !== "string" || !args.project_root) return handler(request, {});
-      if (caller.status === "legacy") return handler(request, {});
-      if (!sessionCallRequiresBinding(name) && !Object.hasOwn(args, "session_id")) return handler(request, {});
+      if (typeof args?.project_root !== "string" || !args.project_root) return handler(request, route());
+      if (caller.status === "legacy") return handler(request, route());
+      if (!sessionCallRequiresBinding(name) && !Object.hasOwn(args, "session_id")) return handler(request, route());
       if (caller.status !== "known") {
         // Creating a new Project has no existing Session to guess or lose.
         // Keep that original Core setup usable, but never claim native linkage.
         if (name === "head_project_initialize_or_resume" && !Object.hasOwn(args, "session_id")
           && !hasProjectMarker(args.project_root)) {
-          const response = await handler(request, {});
+          const response = await handler(request, route());
           if (response?.result) response.result._meta = { ...response.result._meta,
             headSessionBinding: { status: "unavailable", reasonCode: "NATIVE_SESSION_CALLER_UNAVAILABLE",
               retained: false, persisted: false, recoveryAuthority: false, executionReplayAllowed: false } };
           return response;
         }
-        return handler(request, { resolveSessionContext: missingCaller });
+        return handler(request, route({ resolveSessionContext: missingCaller }));
       }
       let adapter;
       try { adapter = await adapterFor(caller); }
-      catch (error) { return handler(request, { resolveSessionContext: () => { throw error; } }); }
+      catch (error) { return handler(request, route({ resolveSessionContext: () => { throw error; } })); }
       const initialized = hasProjectMarker(args.project_root);
       const selecting = name === "head_project_initialize_or_resume" && semanticToolName(request.params?.name) !== "head_tools_read"
         && (args.profile === undefined || ["core", "product"].includes(args.profile));
@@ -127,7 +160,7 @@ export function createNativeSessionHostBridge({ environment = process.env, runti
         try { nativeRelatedReader = (await import("./native-session-observations.mjs")).readRelatedNativeWorkContext; }
         catch { /* Optional context cannot replace primary Core errors. */ }
       }
-      try { response = await handler(request, { resolveSessionContext, onValidatedSessionSelection, readRelatedNativeContext }); }
+      try { response = await handler(request, route({ resolveSessionContext, onValidatedSessionSelection, readRelatedNativeContext })); }
       catch (error) {
         if (prepared) adapter.settleSelection({ ticket: prepared.ticket, outcome: "uncertain" });
         throw error;
@@ -179,12 +212,15 @@ export function createNativeSessionHostBridge({ environment = process.env, runti
       const routed = routerName(request.params?.name);
       const targetName = routed ? request.params?.arguments?.name : request.params?.name;
       if (helperName(targetName)) return reply(request, Object.assign(new Error(), { code: "NATIVE_HOOK_DIRECT_INGRESS_REQUIRED" }));
-      if (!sessionCallRequiresBinding(targetName)) return handler(request, {});
       const caller = callerFor(request);
-      try { return await dispatchProjectRequest(request, handler, caller); }
-      finally { caller.release?.(); }
+      try {
+        // Non-binding tools keep their previous result. The visible caller is
+        // only a write-guard signal and does not select a Session.
+        if (!sessionCallRequiresBinding(targetName)) return handler(request, { caller: visibleCaller(caller), hostEnvironment: environment });
+        return await dispatchProjectRequest(request, handler, caller);
+      } finally { caller.release?.(); }
     },
     requestStatus: () => requestRegistry.describe(),
-    dispose() { requestRegistry.dispose(); adapters.clear(); },
+    dispose() { requestRegistry.dispose(); adapters.clear(); subagentToolUses.length = 0; },
   });
 }

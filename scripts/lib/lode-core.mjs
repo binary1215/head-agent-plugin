@@ -606,6 +606,7 @@ export function coreContract() {
     "bounded-runtime-one-shot-interrupt",
     "bounded-runtime-one-shot-close",
     "portable-client-mcp-launch",
+    "optional-subagent-state-write-guard",
   ];
   contract.deferredCapabilities = [
     ...contract.deferredCapabilities,

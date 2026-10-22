@@ -23,6 +23,8 @@ import { formatMcpToolContent } from "./lib/cli-presentation.mjs";
 import { sessionCallRequiresBinding } from "./lib/session-routing.mjs";
 import { createNativeSessionHostBridge } from "./lib/session-native-host.mjs";
 import { SESSION_HOST_REQUEST_HELPER } from "./lib/session-host-request.mjs";
+import { assessSubagentStateWrite, subagentWriteGuardEnabled } from "./lib/subagent-write-guard.mjs";
+import { consumeSubagentCallerSignal, recordedSubagentCaller } from "./lib/subagent-caller-signal.mjs";
 import fs from "node:fs";
 import { resolveProjectStorage, familyFormatForOriginal } from "./lib/project-storage-format.mjs";
 
@@ -2049,6 +2051,25 @@ function requestedToolName(request) {
     ? semanticToolName(request.params?.arguments?.name) : semanticToolName(request.params?.name);
 }
 
+// Policy lives here, after the router unwrap. Adapters only supply caller.subagent.
+// Disabled mode does not read Codex observations or consume OpenCode tickets.
+function subagentStateWriteRejection(name, args, caller, environment) {
+  if (!subagentWriteGuardEnabled(environment)) return null;
+  const selected = allTools.find(tool => semanticToolName(tool.name) === name);
+  if (!selected || selected.annotations?.readOnlyHint === true) return null;
+  let current = caller && typeof caller === "object" ? { ...caller } : null;
+  if (current?.runtime === "codex" && current.subagent !== true && typeof args?.project_root === "string" && typeof current.nativeSessionId === "string"
+    && recordedSubagentCaller({ root: args.project_root, runtime: "codex", nativeSessionId: current.nativeSessionId, environment })) {
+    current = { ...current, subagent: true };
+  }
+  if (current?.subagent !== true && typeof args?.project_root === "string") {
+    const ticket = consumeSubagentCallerSignal({ root: args.project_root, toolName: name, arguments: args, environment });
+    if (ticket?.subagent) current = { ...(current || {}), runtime: current?.runtime || ticket.runtime, subagent: true };
+  }
+  const decision = assessSubagentStateWrite({ caller: current, readOnly: false });
+  return decision.allowed ? null : decision.message;
+}
+
 const success = (id, result) => ({ jsonrpc: "2.0", id, result });
 const failure = (id, message) => ({ jsonrpc: "2.0", id, error: { code: -32000, message } });
 export const WORLD_MODEL_STATUS_MCP_MAX_BYTES = 4 * 1024 * 1024;
@@ -2402,7 +2423,7 @@ async function dispatchSessionRequest(request, options = {}) {
   return dispatchRouted(request, options);
 }
 
-async function dispatchRouted(request, { surface = "ordinary", graphDbTransport = null, coordinationWorkspaceHost = null, observationRegistry = null, conformanceTriggerRegistry = null, compactionLifecycleHost = null, workerJobHost = null, workerJobSupervisor = null, workerPreparationBackend = null, signal, onProcess, onValidatedSessionSelection = null, readRelatedNativeContext = null, projectSessionRoute = null, projectLocationProjection = null } = {}) {
+async function dispatchRouted(request, { surface = "ordinary", graphDbTransport = null, coordinationWorkspaceHost = null, observationRegistry = null, conformanceTriggerRegistry = null, compactionLifecycleHost = null, workerJobHost = null, workerJobSupervisor = null, workerPreparationBackend = null, signal, onProcess, onValidatedSessionSelection = null, readRelatedNativeContext = null, projectSessionRoute = null, projectLocationProjection = null, caller = null, hostEnvironment = process.env } = {}) {
   requireSurface(surface);
   const id = request.id ?? null;
     if (request.method === "initialize") {
@@ -2430,6 +2451,8 @@ async function dispatchRouted(request, { surface = "ordinary", graphDbTransport 
       args = args.arguments;
     }
     requireOperationSurface(name, surface);
+    const subagentRejection = subagentStateWriteRejection(name, args, caller, hostEnvironment);
+    if (subagentRejection) return failure(id, subagentRejection);
     const value = await (name === "head_run_start"
       ? (await import("./lib/run-lineage.mjs")).startRun({ root: args.project_root, executionContractId: args.execution_contract_id, startRequestId: args.start_request_id })
       : name === "head_core_contract"

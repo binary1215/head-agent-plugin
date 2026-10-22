@@ -4,6 +4,9 @@ import { fileURLToPath } from "node:url";
 import { createNativeObservationStore, nativeId, projectNativeObservations, appendNativeStatus } from "./lib/native-session-observations.mjs";
 import { createSessionHostAdapter } from "./lib/session-host-adapter.mjs";
 import { startupProjection, MAX_CONTEXT_CHARACTERS } from "./lib/session-host-context-projection.mjs";
+import { resolveOperation } from "./lib/lode-operation-contract.mjs";
+import { publishSubagentCallerSignal } from "./lib/subagent-caller-signal.mjs";
+import { subagentWriteGuardEnabled } from "./lib/subagent-write-guard.mjs";
 
 // Dependency-free OpenCode V1 server entry, source-shaped against v1.19.0.
 // No client creation, daemon, auth/config edits or canonical HEAD mutation.
@@ -28,7 +31,7 @@ async function bounded(call) {
 export default {
   id: "head-agent-native-observations",
   async server({ client, project, directory }, { environment = process.env } = {}) {
-    let aliases = new Map(), disposed = false, pending = 0, queue = Promise.resolve();
+    let aliases = new Map(), serverPrefixes = [], disposed = false, pending = 0, queue = Promise.resolve();
     let contextSupported = true, deliveries = new WeakMap();
     const store = createNativeObservationStore({ environment });
     const caller = id => ({ runtime: "opencode", nativeSessionId: id, agentId: null });
@@ -52,6 +55,7 @@ export default {
     return {
       async config(config) {
         aliases = new Map();
+        serverPrefixes = [];
         contextSupported = config?.experimental?.code_mode !== true;
         if (disposed || config?.experimental?.code_mode === true) return;
         const entries = Object.entries(config?.mcp || {}), counts = new Map();
@@ -68,6 +72,7 @@ export default {
             // the user can commit does not gain a machine path.
             if (item.command[1] === portableOpenCodeScript) item.command = ["node", packagedServer];
             if (!samePath(path.resolve(directory, item.command[1]), packagedServer)) continue;
+            serverPrefixes.push(sanitize(name) + "_");
             for (const tool of ["head_project_status", "head_tools_read", "head_tools_call"]) aliases.set(sanitize(name) + "_" + tool, tool);
           } catch { /* Unsupported config shape is not a user setup gate. */ }
         }
@@ -134,6 +139,28 @@ export default {
           await store.observe({ root: directory, caller: caller(id), observation, eventId });
         });
       },
+      async "tool.execute.before"(input, output) {
+        try {
+          // The plugin only publishes a child-session signal. Core accepts or
+          // rejects the write. Default-off enforcement publishes nothing.
+          if (disposed || !subagentWriteGuardEnabled(environment)) return;
+          const aliased = aliases.get(input?.tool);
+          const prefixed = serverPrefixes.find(prefix => typeof input?.tool === "string" && input.tool.startsWith(prefix));
+          const tool = aliased || (prefixed ? input.tool.slice(prefixed.length) : null);
+          if (!tool || !nativeId(input?.sessionID)) return;
+          const session = await exactSession(input.sessionID);
+          if (typeof session?.parentID !== "string" || !session.parentID) return;
+          const raw = object(output?.args) ? output.args : object(input?.args) ? input.args : null;
+          if (!raw) return;
+          const resolved = resolveOperation(tool);
+          const routed = ["head_tools_read", "head_tools_call"].includes(resolved?.semanticName || tool);
+          const inner = routed ? raw.name : tool;
+          const args = routed ? raw.arguments : raw;
+          const semantic = resolveOperation(inner)?.semanticName;
+          if (!semantic || !object(args)) return;
+          publishSubagentCallerSignal({ root: directory, toolName: semantic, arguments: args, environment, subagent: true });
+        } catch { /* A missing signal never blocks the Host tool. */ }
+      },
       async "tool.execute.after"(input, output) {
         try {
           const tool = aliases.get(input?.tool), routed = ["head_tools_read", "head_tools_call"].includes(tool);
@@ -163,7 +190,7 @@ export default {
           output.structuredContent = next.structuredContent;
         } catch { /* Unsupported/malformed/optional API errors leave Core untouched. */ }
       },
-      async dispose() { disposed = true; aliases.clear(); deliveries = new WeakMap(); await queue; },
+      async dispose() { disposed = true; aliases.clear(); serverPrefixes = []; deliveries = new WeakMap(); await queue; },
     };
   },
 };

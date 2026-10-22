@@ -310,6 +310,7 @@ These labels describe the source distribution. They do not certify that a partic
 | Project | initialization, Source Scope, review-gated Product Canon | Available |
 | Knowledge | graph-first bounded discovery with source fallback, World Model, incremental refresh, optional Context Capsules | Available |
 | Sessions | request-local logical Sessions and current common direction with exact-basis updates | Available |
+| Sessions | optional subagent state-write guard, off unless `LODE_SUBAGENT_WRITE_GUARD=enforce` | Experimental |
 | Lineage | Runs, ResultPackets, Fresh Lode review, P2 Session and conversation-entry recovery | Available |
 | Host lifecycle | provider-neutral compaction and at-most-once continuation contract, requiring a trusted Host adapter | Experimental |
 | Host context | packaged Claude Code and Codex SessionStart delivery, including compact | Available |
