@@ -13,6 +13,20 @@ test("overview viewport geometry preserves crossing, parallel and self edges, ex
   assert.equal(graph.edges.length, 4); overview.move("a", 500, 350);
   assert.deepEqual([...overview.window([0, 0, 1000, 700]).edges].map(edge => edge.id).sort(), ["cross", "reverse", "self"]);
   assert.deepEqual([...overview.window([0, 0, 1000, 700]).nodes], ["a"]);
+  const whole = [-2000, -2000, 5000, 4000]; overview.window(whole);
+  const get = overview.points.get.bind(overview.points); let reads = 0;
+  overview.points.get = id => { reads++; return get(id); };
+  const all = overview.window(whole); assert.equal(all.nodes.length, 4); assert.equal(all.edges.length, 4);
+  assert.equal(reads, 0, "A cached whole-bounds view must not redo every node/edge clipping lookup");
+});
+
+test("bulk placement yields on occupied candidate attempts before even the first new record completes", async () => {
+  const factory = vm.runInNewContext(source + "\nexplorerModel"), ids = Array.from({ length: 1026 }, (_, i) => `crowded-${i}`);
+  const model = factory.create({ nodes: ids.map(nodeId => ({ nodeId })), edges: [] });
+  model.choose(ids[0]); await model.placeBatch(ids.slice(1, -1));
+  const before = JSON.stringify([...model.positions]); let stop = false, yields = 0;
+  const applied = await model.placeBatch([ids.at(-1)], { cancelled: () => stop, yieldWork: async () => { stop = true; yields++; } });
+  assert.equal(applied, false); assert(yields > 0); assert.equal(JSON.stringify([...model.positions]), before);
 });
 
 test("first-screen placement budgets do not limit expansion evidence or later explicit placement", async () => {

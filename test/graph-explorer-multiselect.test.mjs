@@ -24,6 +24,30 @@ const cards = vm.runInNewContext(fs.readFileSync(new URL("../scripts/graph-explo
 const descendants = element => [element, ...element.children.flatMap(descendants)];
 const readingCard = (ui, id) => ui.ids.get("selection-cards").children.find(item => item.getAttribute("data-record") === `node:${id}`);
 
+test("fit explored uses explicit subset Canvas detail when cards would be unreadable, stays cancellable and returns to focused cards", async () => {
+  const count = 1200, graph = { nodes: nodes("A", ...Array.from({ length: count }, (_, i) => `N${i}`), ...Array.from({ length: count }, (_, i) => `M${i}`), "unexplored"),
+    edges: Array.from({ length: count }, (_, i) => [edge("A", `N${i}`), edge(`N${i}`, `M${i}`)]).flat() };
+  const data = input(graph), unchanged = JSON.stringify(data), ui = explorerDom(data, { cardMeasure: element => element.children[1].hidden ? 48 : 160 });
+  await ui.settle(); ui.event("expand"); await ui.settle(); const position = nodeElement(ui, "A").getAttribute("transform"), before = camera(ui), svgCount = ui.stats.svg;
+  ui.event("reset"); assert.equal(ui.ids.get("cancel-work").disabled, false); ui.event("cancel-work"); await ui.settle();
+  assert.equal(camera(ui), before); assert.equal(ui.ids.get("overview").hidden, true);
+  ui.event("reset"); await ui.settle(); assert.equal(ui.ids.get("overview").hidden, false);
+  assert.match(ui.ids.get("status").textContent, /Explored evidence overview/);
+  assert.equal(ui.ids.get("expand").disabled, false, "Fit completion must not leave ordinary exploration gated");
+  assert.equal(ui.stats.svg, svgCount, "Whole fit must not allocate a foreignObject/SVG graph for every explored record");
+  assert.equal(nodeElement(ui, "A").getAttribute("transform"), position);
+  assert.equal(ui.ids.get("records").children.length, 100, "Complete metadata still uses pages, not a cap");
+  ui.event("overview", "pointerdown", { clientX: 0, clientY: 0, pointerId: 8, shiftKey: true });
+  ui.event("overview", "pointermove", { clientX: 1000, clientY: 700, pointerId: 8, shiftKey: true });
+  ui.event("overview", "pointerup", { clientX: 1000, clientY: 700, pointerId: 8, shiftKey: true }); await ui.settle();
+  assert.equal(selectionCount(ui), count * 2 + 1, "Explored Canvas hit/rectangle scope must not select unexposed inventory");
+  ui.event("focus"); assert.equal(ui.ids.get("overview").hidden, true); assert.equal(ui.ids.get("graph").hidden, false);
+  ui.event(recordButton(ui, "A")); ui.event("focus");
+  assert.equal(nodeElement(ui, "A").getAttribute("transform"), position);
+  ui.event("reset"); ui.event("overview-button"); await ui.settle(); assert.match(ui.ids.get("status").textContent, /^All evidence overview/);
+  assert.equal(JSON.stringify(data), unchanged);
+});
+
 test("supported summary-free work writer content reaches expanded map and reading cards without false missing-body claims", async t => {
   const f = workFixture(t), cases = [["observedWork", "Observed work", "Synthetic recorded observation <not HTML>"],
     ["suggestedFollowUp", "Suggested follow-up (historical; not permission)", "Synthetic follow-up is not approval"],

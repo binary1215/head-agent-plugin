@@ -57,20 +57,32 @@ const explorerModel = (() => {
       const stepX = space.maxLeft + space.maxRight + 18, stepY = space.maxTop + space.maxBottom + 18;
       const primaryStep = Math.max(horizontal ? 240 : 210, horizontal ? stepX : stepY), secondaryStep = horizontal ? stepY : stepX;
       let band = 1, slot = 0;
-      return id => {
+      const attempt = id => {
         // One monotone cursor per expansion fan; occupied slots are not
         // rescanned for every neighbor. There is no evidence/count cutoff.
-        for (;;) {
           const lanes = Math.max(1, Math.floor(band * primaryStep / (2 * secondaryStep)));
-          if (slot >= 2 * lanes) { band++; slot = 0; continue; }
+          if (slot >= 2 * lanes) { band++; slot = 0; return false; }
           const lane = (Math.floor(slot / 2) + .5) * (slot % 2 ? 1 : -1);
           slot++;
           const primary = band * primaryStep, secondary = lane * secondaryStep;
           const point = horizontal ? { x: center.x + sign * primary, y: center.y + secondary }
             : { x: center.x + secondary, y: center.y + sign * primary };
-          if (free(id, point, space)) { put(id, point, space); return; }
-        }
+          if (free(id, point, space)) { put(id, point, space); return true; }
+          return false;
       };
+      const place = id => { while (!attempt(id)) {} }; place.attempt = attempt; return place;
+    }
+    const clock = () => globalThis.performance?.now() ?? Date.now();
+    async function cooperativePlace(place, id, control, cancelled, yieldWork) {
+      for (;;) {
+        const done = place.attempt(id);
+        // A crowded fan may try many candidates before completing one node.
+        // Scheduling bounds computation, never evidence or placement eligibility.
+        if (++control.attempts % 256 === 0 || clock() - control.at >= 8) {
+          await yieldWork(); control.at = clock(); if (cancelled()) return false;
+        }
+        if (done) return !cancelled();
+      }
     }
     function expand(id, { placeNeighbors = true } = {}) {
       if (!nodes.has(id)) return;
@@ -165,12 +177,12 @@ const explorerModel = (() => {
       const additions = [...ids].filter(id => nodes.has(id) && !positions.has(id));
       for (let i = 0; i < additions.length; i++) { extent(additions[i], space); if (i % 32 === 31) { await yieldWork(); if (cancelled() || basis !== geometryVersion) return false; } }
       const center = positions.get(focusId) || { x: 500, y: 350 }, fans = new Map();
+      const control = { attempts: 0, at: clock() }, stopped = () => cancelled() || basis !== geometryVersion;
       for (let i = 0; i < additions.length; i++) {
         const id = additions[i], horizontal = axisFor(nodes.get(id)) === "code";
         const anchor = anchorFor(id, space.positions), key = `${horizontal}:${anchor || ""}`;
         if (!fans.has(key)) fans.set(key, placer(space.positions.get(anchor) || center, horizontal, 1, space));
-        fans.get(key)(id);
-        if (i % 256 === 255) { await yieldWork(); if (cancelled()) return false; }
+        if (!await cooperativePlace(fans.get(key), id, control, stopped, yieldWork)) return false;
       }
       if (yieldBeforeCommit) { await yieldWork(); if (cancelled() || basis !== geometryVersion) return false; }
       return !cancelled() && commit(space, basis);
@@ -188,6 +200,7 @@ const explorerModel = (() => {
       // visible, never silently corrected; full reading cards remain available.
       for (const [id, point] of positions) if (pinned.has(id) || !affected.has(id)) put(id, point, space);
       count = 0;
+      const control = { attempts: 0, at: clock() }, stopped = () => cancelled() || basis !== geometryVersion;
       for (const [id, point] of positions) if (affected.has(id) && !pinned.has(id)) {
         let preferred = null;
         if (area) {
@@ -200,7 +213,8 @@ const explorerModel = (() => {
             preferred = candidates.find(candidate => free(id, candidate, space));
           }
         }
-        if (preferred) put(id, preferred, space); else if (free(id, point, space)) put(id, point, space); else placer(point, axisFor(nodes.get(id)) === "code", 1, space)(id);
+        if (preferred) put(id, preferred, space); else if (free(id, point, space)) put(id, point, space);
+        else if (!await cooperativePlace(placer(point, axisFor(nodes.get(id)) === "code", 1, space), id, control, stopped, yieldWork)) return false;
         if (++count % 256 === 0) { await yieldWork(); if (cancelled() || basis !== geometryVersion) return false; }
       }
       if (yieldBeforeCommit) { await yieldWork(); if (cancelled() || basis !== geometryVersion) return false; }
@@ -289,7 +303,7 @@ const explorerModel = (() => {
   }
   function overview(graph, axisFor = () => "context") {
     const points = new Map(), cells = new Map(), groups = [[], []];
-    let edgeCells = null, wideEdges = null;
+    let geometry = null, bounds = null;
     for (const node of graph.nodes) groups[axisFor(node) === "code" ? 0 : 1].push(node);
     const both = groups.every(group => group.length);
     for (let groupIndex = 0; groupIndex < groups.length; groupIndex++) {
@@ -302,6 +316,7 @@ const explorerModel = (() => {
         if (!cells.has(key)) cells.set(key, []); cells.get(key).push(node.nodeId);
       });
     }
+    const nodeIds = [...points.keys()], edgesWithEndpoints = graph.edges.filter(edge => points.has(edge.from) && points.has(edge.to));
     function hit(x, y, included, radius = 8) {
       let best = null, distance = radius;
       const cellX = Math.floor(x / 8), cellY = Math.floor(y / 8);
@@ -321,43 +336,38 @@ const explorerModel = (() => {
       const group = cells.get(oldKey); if (group) { const index = group.indexOf(id); if (index >= 0) group.splice(index, 1); if (!group.length) cells.delete(oldKey); }
       points.set(id, { x, y }); const key = `${Math.floor(x / 8)},${Math.floor(y / 8)}`;
       if (!cells.has(key)) cells.set(key, []); cells.get(key).push(id);
-      edgeCells = null;
+      geometry = null; bounds = null;
     }
     function window(box) {
-      // Cached geometry only. Every original edge stays in the inventory;
-      // very long segments use an overflow list rather than unbounded tiles.
-      if (!edgeCells) {
-        edgeCells = new Map(); wideEdges = [];
-        for (const edge of graph.edges) {
-          const a = points.get(edge.from), b = points.get(edge.to); if (!a || !b) continue;
-          const left = Math.floor(Math.min(a.x, b.x) / 64), right = Math.floor(Math.max(a.x, b.x) / 64), top = Math.floor(Math.min(a.y, b.y) / 64), bottom = Math.floor(Math.max(a.y, b.y) / 64);
-          if ((right - left + 1) * (bottom - top + 1) > 64) { wideEdges.push(edge); continue; }
-          for (let x = left; x <= right; x++) for (let y = top; y <= bottom; y++) {
-            const key = `${x},${y}`; if (!edgeCells.has(key)) edgeCells.set(key, []); edgeCells.get(key).push(edge);
-          }
-        }
-      }
       const [x, y, width, height] = box, right = x + width, bottom = y + height;
-      const query = (index, step) => {
-        const result = new Set(), leftCell = Math.floor(x / step), rightCell = Math.floor(right / step), topCell = Math.floor(y / step), bottomCell = Math.floor(bottom / step);
-        if ((rightCell - leftCell + 1) * (bottomCell - topCell + 1) > index.size * 2) {
-          for (const group of index.values()) for (const value of group) result.add(value);
-        } else for (let cx = leftCell; cx <= rightCell; cx++) for (let cy = topCell; cy <= bottomCell; cy++) for (const value of index.get(`${cx},${cy}`) || []) result.add(value);
-        return result;
-      };
-      const nodes = [...query(cells, 8)].filter(id => { const p = points.get(id); return p.x >= x && p.x <= right && p.y >= y && p.y <= bottom; });
-      const candidates = query(edgeCells, 64); for (const edge of wideEdges) candidates.add(edge);
-      const edges = [...candidates].filter(edge => {
+      if (!bounds) {
+        bounds = { left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity };
+        for (const p of points.values()) { bounds.left = Math.min(bounds.left, p.x); bounds.right = Math.max(bounds.right, p.x); bounds.top = Math.min(bounds.top, p.y); bounds.bottom = Math.max(bounds.bottom, p.y); }
+      }
+      // Whole view: drawing already visits every included item. Do not build
+      // duplicate edge tiles/Sets or repeat clipping before that same full draw.
+      if (x <= bounds.left && right >= bounds.right && y <= bounds.top && bottom >= bounds.bottom) return { nodes: nodeIds, edges: edgesWithEndpoints };
+      if (!geometry) geometry = edgesWithEndpoints.map(edge => {
         const a = points.get(edge.from), b = points.get(edge.to);
-        // Liang–Barsky clipping retains segments crossing the viewport even
-        // when both endpoints are outside. It never creates a relationship.
-        let from = 0, to = 1;
-        for (const [p, q] of [[a.x - b.x, a.x - x], [b.x - a.x, right - a.x], [a.y - b.y, a.y - y], [b.y - a.y, bottom - a.y]]) {
-          if (!p) { if (q < 0) return false; continue; }
-          const t = q / p; if (p < 0) from = Math.max(from, t); else to = Math.min(to, t); if (from > to) return false;
-        }
-        return true;
+        return { edge, a, b, left: Math.min(a.x, b.x), right: Math.max(a.x, b.x), top: Math.min(a.y, b.y), bottom: Math.max(a.y, b.y) };
       });
+      const nodes = []; for (const [id, p] of points) if (p.x >= x && p.x <= right && p.y >= y && p.y <= bottom) nodes.push(id);
+      const edges = [];
+      for (const segment of geometry) {
+        const { edge, a, b } = segment;
+        if (segment.right < x || segment.left > right || segment.bottom < y || segment.top > bottom) continue;
+        if (a.x >= x && a.x <= right && a.y >= y && a.y <= bottom || b.x >= x && b.x <= right && b.y >= y && b.y <= bottom) { edges.push(edge); continue; }
+        // Liang–Barsky clipping retains segments crossing the viewport even
+        // with both ends outside, without allocating four tuple arrays per edge.
+        let from = 0, to = 1;
+        for (let side = 0; side < 4; side++) {
+          const p = side === 0 ? a.x - b.x : side === 1 ? b.x - a.x : side === 2 ? a.y - b.y : b.y - a.y;
+          const q = side === 0 ? a.x - x : side === 1 ? right - a.x : side === 2 ? a.y - y : bottom - a.y;
+          if (!p) { if (q < 0) { from = 2; to = 1; break; } continue; }
+          const t = q / p; if (p < 0) from = Math.max(from, t); else to = Math.min(to, t); if (from > to) break;
+        }
+        if (from <= to) edges.push(edge);
+      }
       return { nodes, edges };
     }
     return { points, hit, move, window };

@@ -74,6 +74,14 @@ camera transform for drawing, pointer hits and rectangle selection, including
 resized viewports; choosing a Canvas point does not exit the overview.
 Node distance is not a relevance score.
 
+When the explored set exceeds readable screen capacity, Explored map uses the
+existing Canvas overview for that explored subset instead of creating thousands
+of tiny card elements. The status distinguishes it from All evidence, which still
+shows the whole inventory. Prior card coordinates and pins are untouched; select
+a record and use Focus selection to return to readable cards. This is display
+detail, not a record/relationship cap. Bulk placement also yields during crowded
+candidate searches, and a cancelled/superseded fit cannot later replace your view.
+
 Current evidence is the default. Include historical / non-current evidence
 reveals retained records and exact relationships with their original state.
 This switch cannot make them current or authorize an effect.

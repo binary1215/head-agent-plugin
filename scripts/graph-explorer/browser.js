@@ -14,6 +14,7 @@
   const layerStates = new Map();
   let contextSelection = null;
   let mapMode = "focus", listPage = 0, relationPage = 0, relationSelection = null, foundIds = new Set(), visibleMatches = [], cameraFrame = null;
+  const canvasMode = () => mapMode === "overview" || mapMode === "explored-overview";
   const overviewStates = new WeakMap(), PAGE_SIZE = 100;
   let chosenEdges = new Set(), edgeVersion = 0, cardPage = 0, viewHistory = [], viewCursor = -1;
   let scopeCache = null, cardsCache = null, comparisonsCache = null, connectionResult = null, connectionKey = null;
@@ -163,8 +164,8 @@
   }
   function geometryChanged() {
     const basis = metrics().key;
-    if (busy || jobKind || drag || mapMode === "overview" || metricFrame !== null || suppressedMetrics.get(model) === basis || modelMetrics.get(model) === basis) return;
-    metricFrame = requestAnimationFrame(() => { metricFrame = null; if (!busy && !jobKind && !drag && mapMode !== "overview") resizeCards().catch(calculationFailed); });
+    if (busy || jobKind || drag || canvasMode() || metricFrame !== null || suppressedMetrics.get(model) === basis || modelMetrics.get(model) === basis) return;
+    metricFrame = requestAnimationFrame(() => { metricFrame = null; if (!busy && !jobKind && !drag && !canvasMode()) resizeCards().catch(calculationFailed); });
   }
   const deferredInitial = () => Boolean(document.body && typeof getComputedStyle === "function");
   function screenCapacity() {
@@ -306,7 +307,7 @@
   }
   function redrawCamera() {
     if (cameraFrame !== null) return;
-    cameraFrame = requestAnimationFrame(() => { cameraFrame = null; if (mapMode === "overview") renderOverview(scopeCache.shown); else renderGraph(visibleMatches); });
+    cameraFrame = requestAnimationFrame(() => { cameraFrame = null; if (canvasMode()) renderOverview(scopeCache.shown); else renderGraph(visibleMatches); });
   }
   function fit() {
     const points = [...model.positions].filter(([id]) => inEvidenceScope(model.nodes.get(id)) && model.visible.has(id))
@@ -326,6 +327,9 @@
     if (!overviewStates.has(activeGraph)) overviewStates.set(activeGraph, explorerModel.overview(activeGraph, node => isCode(node) ? "code" : "context"));
     return overviewStates.get(activeGraph);
   }
+  function overviewIncluded() {
+    return mapMode === "explored-overview" ? new Set([...model.visible].filter(id => scopeCache.shownIds.has(id))) : scopeCache.shownIds;
+  }
   function renderOverview(found) {
     const canvas = $("overview"), ctx = canvas.getContext("2d"), overview = overviewModel();
     if (!ctx) { $("status").textContent = "Canvas unavailable; every record remains reachable in the complete searchable list."; return; }
@@ -334,16 +338,16 @@
     ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.setTransform(dpr * camera.scale, 0, 0, dpr * camera.scale, dpr * (camera.left - box[0] * camera.scale), dpr * (camera.top - box[1] * camera.scale));
     ctx.strokeStyle = "#627b9e"; ctx.globalAlpha = .22; ctx.beginPath();
-    let edges = 0;
+    let edges = 0; const included = overviewIncluded();
     const window = overview.window(box);
     for (const edge of window.edges) {
-      if (!scopeCache.shownIds.has(edge.from) || !scopeCache.shownIds.has(edge.to) || !edgeInScope(edge)) continue;
+      if (!included.has(edge.from) || !included.has(edge.to) || !edgeInScope(edge)) continue;
       const a = overview.points.get(edge.from), b = overview.points.get(edge.to);
       if (a && b) { ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); edges++; }
     }
     ctx.stroke(); ctx.globalAlpha = 1;
     for (const id of window.nodes) {
-      if (!scopeCache.shownIds.has(id)) continue;
+      if (!included.has(id)) continue;
       const node = model.nodes.get(id);
       const point = overview.points.get(node.nodeId); if (!point) continue;
       if (point.x < box[0] || point.x > box[0] + box[2] || point.y < box[1] || point.y > box[1] + box[3]) continue;
@@ -355,7 +359,7 @@
     ctx.strokeStyle = "#96e4c0"; ctx.lineWidth = 2 / camera.scale; ctx.beginPath();
     const highlighted = new Set([...(connectionResult?.edges || []), ...chosenEdges]);
     for (const id of model.chosen) for (const edge of model.links(id)) if (model.chosen.has(edge.from) && model.chosen.has(edge.to)) highlighted.add(edge);
-    for (const edge of highlighted) if (scopeCache.shownIds.has(edge.from) && scopeCache.shownIds.has(edge.to) && edgeInScope(edge)) {
+    for (const edge of highlighted) if (included.has(edge.from) && included.has(edge.to) && edgeInScope(edge)) {
       const a = overview.points.get(edge.from), b = overview.points.get(edge.to); if (a && b) {
         ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
         const length = Math.hypot(b.x - a.x, b.y - a.y), size = 5 / camera.scale;
@@ -364,7 +368,7 @@
         }
       }
     } ctx.stroke();
-    $("status").textContent = `All evidence overview: ${found.length} filtered records, ${edges} shown / ${activeGraph.edges.length} exported relationships, ${activeGraph.nodes.length} total exported records. Search highlights ${visibleMatches.length} matches; selection stays in this view. Read directed relationship types in the selected cards/detail list.`;
+    $("status").textContent = `${mapMode === "explored-overview" ? "Explored evidence" : "All evidence"} overview: ${included.size} filtered records, ${edges} shown / ${activeGraph.edges.length} exported relationships, ${activeGraph.nodes.length} total exported records. Search highlights ${visibleMatches.length} matches; selection stays in this view. Read directed relationship types in the selected cards/detail list.${mapMode === "explored-overview" ? " Explored subset only, using overview coordinates; prior card coordinates/pins retained. Focus selection returns to cards; All evidence shows the whole inventory." : ""}`;
   }
   function zoom(factor) {
     if (jobKind === "fit") cancelWork();
@@ -375,7 +379,7 @@
   function selectNode(node, keyboard = false, event = {}) {
     if (!node) return;
     const before = model.selectionVersion, previous = selected?.value;
-    if (!model.choose(node.nodeId, { toggle: Boolean(event.ctrlKey || event.metaKey || event.key === " " || event.toggle), only: event.only === true, position: mapMode !== "overview" })) return;
+    if (!model.choose(node.nodeId, { toggle: Boolean(event.ctrlKey || event.metaKey || event.key === " " || event.toggle), only: event.only === true, position: !canvasMode() })) return;
     if (event.only) { chosenEdges.clear(); edgeVersion++; }
     if (before !== model.selectionVersion) cancelWork();
     selected = model.focus ? { kind: "node", value: model.nodes.get(model.focus) } : chosenEdges.size ? { kind: "edge", value: [...chosenEdges][0] } : null;
@@ -697,10 +701,24 @@
   }
   async function fitExplored() {
     cancelWork(false); const serial = ++jobSerial, basis = metrics().key; busy = true; jobKind = "fit"; $("cancel-work").disabled = false;
-    $("operation-status").textContent = "Placing previously unplaced explored records; existing positions remain fixed…";
-    if (!await model.placeBatch([...model.visible].filter(id => inDisplayScope(model.nodes.get(id))), { cancelled: () => serial !== jobSerial || metrics().key !== basis, yieldWork })) { supersededCalculation(serial); return; }
+    $("operation-status").textContent = "Preparing explored view; existing positions remain fixed…";
+    const ids = [...model.visible].filter(id => inDisplayScope(model.nodes.get(id)));
+    if (ids.length > screenCapacity()) {
+      // A whole-fit card smaller than a readable screen is a Canvas overview,
+      // not thousands of tiny foreignObjects. Metadata/relationships are intact.
+      await yieldWork(); if (serial !== jobSerial || metrics().key !== basis) { supersededCalculation(serial); return; }
+      mapMode = "explored-overview"; box = [0, 0, 1000, 700]; setBox();
+      render();
+      busy = false; jobKind = null; $("cancel-work").disabled = true;
+      $("operation-status").textContent = "Explored subset overview ready; no card positions changed. Select then Focus selection to read cards; All evidence remains the complete inventory.";
+      renderSelectionCards(); renderDetail(); remember("Fit explored evidence overview");
+      return;
+    }
+    if (!await model.placeBatch(ids, { cancelled: () => serial !== jobSerial || metrics().key !== basis, yieldWork, yieldBeforeCommit: true })) { supersededCalculation(serial); return; }
     if (serial !== jobSerial) return;
-    busy = false; jobKind = null; $("cancel-work").disabled = true; mapMode = "explored"; fit(); remember("Fit explored map"); render();
+    mapMode = "explored"; fit(); render(); busy = false; jobKind = null; $("cancel-work").disabled = true;
+    $("operation-status").textContent = "Explored cards fitted; existing coordinates, pins and selection retained.";
+    renderSelectionCards(); renderDetail(); remember("Fit explored map");
   }
   function supersededCalculation(serial) {
     if (serial !== jobSerial) return;
@@ -1029,8 +1047,8 @@
   function render() {
     setBox();
     const started = performance.now(), found = matches(); visibleMatches = found; foundIds = scopeCache.foundIds;
-    hide($("graph"), mapMode === "overview"); hide($("overview"), mapMode !== "overview"); hide($("overview-note"), mapMode !== "overview");
-    renderList(found); renderTrail(); if (mapMode === "overview") renderOverview(scopeCache.shown); else renderGraph(found); renderSelectionCards(); renderDetail();
+    hide($("graph"), canvasMode()); hide($("overview"), !canvasMode()); hide($("overview-note"), !canvasMode());
+    renderList(found); renderTrail(); if (canvasMode()) renderOverview(scopeCache.shown); else renderGraph(found); renderSelectionCards(); renderDetail();
     document.documentElement.dataset.explorerLastRenderMs = String(performance.now() - started);
   }
   $("project").textContent = data.project ? `${data.project.projectId} · Project view` : "No initialized Project. Ordinary work can continue.";
@@ -1100,13 +1118,13 @@
   for (const [id, direction] of [["back", -1], ["forward", 1]]) $(id).addEventListener("click", () => travelView(viewCursor + direction));
   $("restart").addEventListener("click", () => { if (model.current) { cancelWork(false); const id = model.current; startNeighborhood(model.nodes.get(id), true); model.choose(id); chosenEdges.clear(); edgeVersion++; selected = { kind: "node", value: model.nodes.get(id) }; connectionResult = null; mapMode = "focus"; focusCamera(true); remember("Start here"); render(); prepareNeighborhood().catch(calculationFailed); } });
   $("zoom-in").addEventListener("click", () => { zoom(.8); remember("Zoom in"); }); $("zoom-out").addEventListener("click", () => { zoom(1.25); remember("Zoom out"); });
-  $("focus").addEventListener("click", () => { if (model.focus) model.place(model.focus); mapMode = "focus"; focusCamera(); remember("Center reading focus"); render(); });
+  $("focus").addEventListener("click", () => { cancelWork(false); if (model.focus) model.place(model.focus); mapMode = "focus"; focusCamera(); remember("Center reading focus"); render(); });
   $("reset").addEventListener("click", () => { fitExplored().catch(calculationFailed); });
-  $("overview-button").addEventListener("click", () => { mapMode = "overview"; box = [0, 0, 1000, 700]; setBox(); remember("All evidence"); render(); });
+  $("overview-button").addEventListener("click", () => { cancelWork(false); mapMode = "overview"; box = [0, 0, 1000, 700]; setBox(); remember("All evidence"); render(); });
   $("overview").addEventListener("click", event => {
     if (suppressClick) return;
     const camera = explorerModel.viewport(box, $("overview").getBoundingClientRect()), point = camera.fromClient(event.clientX, event.clientY);
-    const id = overviewModel().hit(point.x, point.y, scopeCache.shownIds, 8 / camera.scale);
+    const id = overviewModel().hit(point.x, point.y, overviewIncluded(), 8 / camera.scale);
     if (id) selectNode(model.nodes.get(id), event.detail === 0, event);
   });
   $("clear-selection").addEventListener("click", () => { cancelWork(); model.clearSelection(); chosenEdges.clear(); edgeVersion++; selected = null; remember("Clear selection only"); render(); });
@@ -1115,7 +1133,7 @@
     if (selectionValues().some(historical)) $("include-history").checked = true; scopeCache = null; remember("Show selected scope"); render(); });
   $("wide-reading").addEventListener("click", () => { const wide = document.documentElement.dataset.readingWide !== "true"; document.documentElement.dataset.readingWide = String(wide); $("wide-reading").setAttribute("aria-pressed", String(wide)); $("wide-reading").textContent = wide ? "Compact reading area" : "Widen reading area"; redrawCamera(); });
   $("jump-reading").addEventListener("click", () => { $("reading-heading").scrollIntoView({ block: "start" }); $("reading-heading").focus(); });
-  $("jump-map").addEventListener("click", () => { const map = mapMode === "overview" ? $("overview") : $("graph"); map.scrollIntoView({ block: "start" }); map.focus(); });
+  $("jump-map").addEventListener("click", () => { const map = canvasMode() ? $("overview") : $("graph"); map.scrollIntoView({ block: "start" }); map.focus(); });
   $("cards-prev").addEventListener("click", () => { cardPage--; renderSelectionCards(); }); $("cards-next").addEventListener("click", () => { cardPage++; renderSelectionCards(); });
   $("roots-prev").addEventListener("click", () => { rootPage--; renderSelectionCards(); }); $("roots-next").addEventListener("click", () => { rootPage++; renderSelectionCards(); });
   for (const [id, delta] of [["file-prev", -1], ["file-next", 1]]) $(id).addEventListener("click", () => {
@@ -1139,7 +1157,7 @@
     if (event.button !== 0 || event.target.closest("[data-edge]") || event.target.closest("[data-card-control]")) return;
     if (jobKind === "fit" || jobKind === "geometry" || jobKind === "disclosure") cancelWork();
     const transform = camera(), at = transform.fromClient(event.clientX, event.clientY);
-    const node = event.target.closest("[data-node]"), id = overview ? overviewModel().hit(at.x, at.y, scopeCache.shownIds, 8 / transform.scale) : node?.getAttribute("data-node");
+    const node = event.target.closest("[data-node]"), id = overview ? overviewModel().hit(at.x, at.y, overviewIncluded(), 8 / transform.scale) : node?.getAttribute("data-node");
     if (!overview && node && event.target !== node && !event.target.closest("[data-card-header]")) return;
     const rectangle = $("rectangle-mode").checked || event.shiftKey && !id;
     const original = id ? (overview ? overviewModel().points : model.positions).get(id) : null;
@@ -1169,7 +1187,7 @@
     const state = drag; drag = null; hide($("selection-box"), true); suppressClick = Boolean(state?.moved);
     if (state?.rectangle && state.moved) {
       const finish = state.transform.fromClient(event.clientX, event.clientY), left = Math.min(state.at.x, finish.x), right = Math.max(state.at.x, finish.x), top = Math.min(state.at.y, finish.y), bottom = Math.max(state.at.y, finish.y);
-      const positions = overview ? overviewModel().points : model.positions, included = overview ? scopeCache.shownIds : drawnNodeIds, picked = [];
+      const positions = overview ? overviewModel().points : model.positions, included = overview ? overviewIncluded() : drawnNodeIds, picked = [];
       cancelWork(false);
       const selection = { left: Math.max(left, box[0]), right: Math.min(right, box[0] + box[2]), top: Math.max(top, box[1]), bottom: Math.min(bottom, box[1] + box[3]) };
       for (const id of included) {
