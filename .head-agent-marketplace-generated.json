@@ -1,0 +1,11 @@
+{
+  "protocolVersion": "0.1.0",
+  "kind": "HeadAgentCodexMarketplaceSnapshot",
+  "marketplaceName": "head-agent-plugin",
+  "pluginName": "head-agent-core",
+  "pluginVersion": "0.3.0-beta.61",
+  "distributionReleaseId": "release-868429e19e6e872aa9da4524",
+  "sourceRepository": "binary1215/lode",
+  "sourceCommit": "1efa2cac2e9790b16e2032f79a3e483a2291062c",
+  "snapshotId": "codex-marketplace-f60138c80b95c65474ebf6db"
+}
