@@ -1,0 +1,183 @@
+# Changelog
+
+[한국어](CHANGELOG.ko.md)
+
+## Publication policy
+
+Intermediate beta versions are distributed through the Codex and Claude
+marketplace branches after successful CI and publication checks. A source commit
+or version number alone does not prove publication. Git tags and GitHub Releases
+are made only for separately designated releases; missing intermediate tags are
+not backfilled. Marketplace publication does not prove local installation or
+Host/MCP reload.
+
+## 0.3.0-beta.61 — publication tracked separately
+
+- Protect optional prompt-reference storage with Windows owner/SYSTEM-only
+  DACLs and a shared, bounded helper budget. Preserve masking, Project scoping,
+  POSIX permissions and ordinary work when optional capture is unavailable.
+- Keep the child-write guard off by default, apply enabled checks to the exact
+  call, select the installed Claude package exactly, and avoid implicit default
+  routing when native binding is missing. Portable OpenCode configuration stays
+  unchanged; explicit logical Session routing remains available.
+- Show supported work observations, follow-ups and exact partial excerpts in
+  Graph Explorer cards. Preserve exact lineage endpoints, source comparisons,
+  file/hunk navigation and honest missing-original or exhausted-budget notices.
+- Keep large maps responsive with cooperative placement and the existing Canvas
+  overview of explored evidence. Preserve all exported records/relationships,
+  search, pins and explicit Focus back to cards; do not invent graph membership.
+- Validate the scoped changes with independent source/browser review and focused
+  synthetic checks. Correct obsolete all-SVG assertions and use controlled clocks
+  for the cleanup phase boundary without changing runtime grace periods.
+  Actual Host/provider behavior, Claude `/clear`, other-PC card causes and
+  real-project performance remain unverified. Marketplace publication and local
+  installation still require separate confirmation; no release tag is implied.
+
+## 0.3.0-beta.60 — publication tracked separately
+
+- Make Graph Explorer maps title-first, with per-card details and independently
+  folded reading cards. Preserve intentional expansion, scroll, selection,
+  camera and pins; measure changed card bounds without rearranging the graph.
+- Show evidence-backed direct groups without inventing membership or edges.
+  Keep source freshness, missing originals and recorded conditions available
+  when expanded, including unfamiliar states.
+- Connect Source-layer imports/calls to existing exact source comparisons by
+  path and digest. Open code context explicitly and retain added/removed lines,
+  file/hunk navigation and conservative missing-path/rename explanations.
+- Verify the requested UI in a real localhost browser on synthetic reader
+  output, alongside focused source tests. This is not proof of actual Host
+  use, large-graph browser performance, 200% text or all long-body scrolling.
+  Source/PR readiness is not marketplace publication or local installation.
+
+## 0.3.0-beta.59 — publication tracked separately
+
+- Write portable Claude Code, Codex, and OpenCode MCP launch lines. Shared
+  `.mcp.json` and `opencode.json` use `node` plus a project-relative script or
+  the client placeholder (`${CLAUDE_PLUGIN_ROOT}`, `${PLUGIN_ROOT}`,
+  `{env:LODE_PLUGIN_ROOT}`). Absolute Node and install paths stay out of those
+  files. Scan tracked files and three-client init output for concrete personal
+  home paths, with the marketplace negative fixture allowlisted. Replace the
+  personal Windows LSP fixture path. Default graph-explorer HTML remains a
+  local report; `--share` still omits generated machine paths.
+- Add an optional MCP subagent state-write guard. It is off unless
+  `LODE_SUBAGENT_WRITE_GUARD=enforce`. Enforcement rejects non-read-only Lode
+  tools from a subagent caller with `SUBAGENT_STATE_WRITE_REJECTED`. Claude
+  uses the existing child `agent_id`, Codex uses `_meta.agent_id`,
+  `_meta.subagent`, or a `SubagentStart` observation, and OpenCode uses a
+  child session `parentID` in the exact pre-execution hook. OpenCode applies the
+  same catalog read-only hint and shared policy without cross-call tickets. The
+  default stays off, so a subagent can still record canon and checkpoints.
+- Restore a bounded, redacted, local user-prompt reference after compaction
+  or clear. Claude Code and Codex capture `prompt` on `UserPromptSubmit`,
+  freeze it on `PreCompact`, and append it from `SessionStart` `compact` or
+  `clear` when it fits. OpenCode captures `message.part.updated`, freezes it
+  in `experimental.session.compacting`, and appends it once on the next system
+  transform after `session.compacted` or a `clear` `command.executed` event.
+  References are scoped by verified Project identity and caller, preserving
+  explicit same-Project relocation without leaking between Projects. The text
+  is non-authoritative. The checkpoint remains the recovery source.
+- Resolve OpenCode's empty env-expanded launch path only from a hash-verified
+  managed original bound to the current package. Keep user-owned, edited and
+  unrelated commands unchanged. Verify actual selected installation paths
+  after synthetic distribution upgrade and rollback, not a releaseId substring.
+- This source entry is not publication proof. No intermediate tag or GitHub
+  Release is created for this beta.
+
+## 0.3.0-beta.58 — publication tracked separately
+
+- Collapse selection tools on narrow screens and fit graph labels using measured
+  extents; retain selection actions, pinned positions and graph authority limits.
+- Prefer exact declaration identifiers in graph queries without turning ordinary
+  words into semantic intent or excluding documents. Request-local lookup reuse
+  preserves freshness and integrity checks; no material speedup was measured.
+- Show exact cited historical text when a current file is missing. Display only
+  bounded, byte-verified historical rename candidates, never inferred identity,
+  causality or a replacement current path. Preserve UTF-8 BOM evidence.
+- Correct remaining CLI display labels, add English/Korean security and
+  contribution guidance, and include those documents in distribution payloads.
+- Consolidate duplicate storage test files and legacy fixture setup, and remove
+  redundant discovery-only subprocesses without weakening real process tests.
+- Enable GitHub private vulnerability reporting and link its reporting form in
+  both security documents; no response SLA or support window is promised.
+- Actual browser GUI acceptance and the reported 7.3-second query remain
+  unverified.
+  Local and synthetic checks do not prove GUI, Host loading or provider behavior.
+
+This source entry is not publication proof. Verify the exact source commit's CI
+and each canonical/compatibility marketplace marker separately. No intermediate
+tag/GitHub Release, local installation or MCP reload is included.
+
+## 0.3.0-beta.57 — published to Codex and Claude marketplaces
+
+Source: `e77c8e84ba82bbc70764110087d8485b2dbd7973`.
+CI [39610882032](https://github.com/binary1215/lode/actions/runs/39610882032)
+completed successfully. Canonical and compatibility Codex/Claude marketplace
+branches were verified against this source. No GitHub Release or tag was made
+for this intermediate beta, under the publication policy above. These are
+publication records, not proof that a particular Host has reloaded the package.
+
+- Use the existing controlled cleanup clock before invalid-transport requests
+  start automatic shutdown. Keep all named cases and require exact native exit,
+  verified tree cleanup and PID absence; do not change production grace periods
+  or reinterpret uncertain cleanup as success.
+- Carry forward beta.56's graph multi-selection UX. Actual browser GUI acceptance
+  remains pending; a successful CI run is not GUI or Host reload evidence.
+
+## 0.3.0-beta.56 — not published
+
+Source: `be9bcacae377babe3aa425172661b5b9d9820847`.
+CI [39602422243](https://github.com/binary1215/lode/actions/runs/39602422243)
+failed two invalid-transport cleanup tests; marketplace publication was skipped.
+The original failure remains recorded separately from the beta.57 repair.
+
+- Keep multiple selected records and exact-linked file comparisons open together.
+- Separate reading focus from exposure and camera; add rectangle selection,
+  repeatable boundary expansion, contribution folding and real view history.
+- Highlight selected connection branches with fixed component references, all
+  equal shortest predecessors and original directions; do not infer causality.
+- Keep large selections accessible through paging and cancellable calculations.
+  These are local read-only presentation changes, not new authority or gates.
+- Synthetic UI regressions are not actual browser/GUI acceptance.
+
+## 0.3.0-beta.55 — published
+
+Source: `fe731c88183f021e05c9a1a6e8bb7ac34890cd9c`.
+CI [39581040674](https://github.com/binary1215/lode/actions/runs/39581040674)
+succeeded; Lode and compatibility Codex/Claude marketplace branches were verified.
+
+- Preserve selected graph context during search while retaining explicit scope.
+- Explain verified copied/pending Project locations without adopting them in status.
+- Omit generated local metadata with `graph-explorer --share`; retain original
+  evidence and disclose exact HTML size without a size gate.
+- Correct relocation/CLI guidance, human-facing Lode labels and missing-source
+  explanations. These changes do not add a new MCP tool or recovery authority.
+
+## 0.3.0-beta.54 — published
+
+Source: `d0c12fe20ad0759efedb096542ecd7ccf47af2a3`.
+CI [39562855184](https://github.com/binary1215/lode/actions/runs/39562855184)
+succeeded; Lode and compatibility Codex/Claude marketplace branches were verified.
+Preserved immediate Session-loss diagnostics and aligned the explicit-relocation
+regression fixture with supported resume behavior.
+
+## 0.3.0-beta.53 — not published
+
+Source: `22d471e18e0ebbe82b8ea07612cc749598ae20c4`.
+Added scalable graph navigation, exact context detail and explicit Project-folder
+relocation. CI failed two regression tests; marketplace publishers were skipped.
+The corrected successor is beta.54, not a replacement of this source history.
+
+## 0.3.0-beta.52
+
+Source: `4883322`. Retained recorded context provenance in shared graph views.
+
+## 0.3.0-beta.51 — not published
+
+Source: `465120c`. Aligned graph presentation and scan signatures. CI failed;
+do not interpret this version as a successfully published marketplace release.
+
+## 0.3.0-beta.50 / beta.49
+
+Sources: `3327dfc` / `a2a9b08`. Added compute-output retries up to 512 MiB and
+raised the default compute-output budget to 64 MiB, respectively. These entries
+describe source changes, not an independent assertion of publication status.
