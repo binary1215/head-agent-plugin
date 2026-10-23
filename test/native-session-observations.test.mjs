@@ -218,20 +218,37 @@ test("child source own header uses leaf/direct parent, never shared root or pare
   assert.equal(root.rows[0].observation.member.nativeSessionId, "leaf");
 });
 
-test("Claude actual private Hook correlation reads its own observations without changing binding or Canon", async t => {
+test("Claude private Hook correlation uses explicit logical routing without changing binding or Canon", async t => {
   const f = fixture(t), config = path.join(f.base, "claude-config"); fs.mkdirSync(path.join(config, "sessions"), { recursive: true });
   f.environment.CLAUDE_CONFIG_DIR = config;
   fs.writeFileSync(path.join(config, "sessions", `${process.pid}.json`), JSON.stringify({ pid: process.pid, sessionId: "claude-caller" }));
   const before = tree(f.root);
   await runSessionHostHook({ runtime: "claude", event: event(f.root, "UserPromptSubmit", { session_id: "claude-caller", prompt_id: "actual-prompt", prompt: "SECRET" }), environment: f.environment, observeOnly: true });
   const operational = tree(f.operational), native = createNativeSessionHostBridge({ runtime: "claude", environment: f.environment });
-  for (const name of ["head_project_status", "head_conversation_enter"]) {
-    const toolId = `exact-tool-${name}`, wire = request(f.root, name); wire.params._meta = { "claudecode/toolUseId": toolId };
+  // Native Hook identity is not a logical Session selection. Keep the absent
+  // binding refusal, then prove that an exact explicit route still reads this
+  // caller's observations without inventing a binding or selecting a default.
+  const logicalSessionId = inspectProject(f.root).state.sessionId;
+  const cases = [
+    ["head_project_status", {}, false],
+    ["head_conversation_enter", {}, false],
+    ["head_project_status", { session_id: logicalSessionId }, true],
+    ["head_conversation_enter", { session_id: logicalSessionId }, true],
+  ];
+  for (const [index, [name, args, routed]] of cases.entries()) {
+    const toolId = `exact-tool-${name}-${index}`, wire = request(f.root, name, args); wire.params._meta = { "claudecode/toolUseId": toolId };
     const prepared = await invoke(native, { id: 2, method: "tools/call", params: { name: SESSION_HOST_REQUEST_HELPER,
       arguments: { native_session_id: "claude-caller", native_agent_id: "", tool_use_id: toolId,
         outer_tool_name: `mcp__lode__${name}`, original_arguments: JSON.stringify(wire.params.arguments) } } });
     assert.equal(prepared.result.isError, undefined);
-    const res = await invoke(native, wire), obs = res.result.structuredContent.nativeContext;
+    const res = await invoke(native, wire);
+    if (!routed) {
+      assert.equal(res.result.structuredContent.status, "session_selection_unresolved");
+      assert.equal(res.result.structuredContent.nativeContext, undefined);
+      continue;
+    }
+    const obs = res.result.structuredContent.nativeContext;
+    assert(obs, `Expected caller observations for case ${index} ${name}; primary status=${res.result.structuredContent.status}`);
     assert.equal(obs.caller.nativeSessionId, "claude-caller");
     assert.equal(obs.observations[0].requestId, "actual-prompt");
     if (["win32", "linux"].includes(process.platform)) assert.equal(obs.observations[0].processObservation?.state, "live-at-check");
