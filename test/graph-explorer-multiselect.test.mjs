@@ -33,6 +33,7 @@ test("fit explored uses explicit subset Canvas detail when cards would be unread
   assert.equal(camera(ui), before); assert.equal(ui.ids.get("overview").hidden, true);
   ui.event("reset"); await ui.settle(); assert.equal(ui.ids.get("overview").hidden, false);
   assert.match(ui.ids.get("status").textContent, /Explored evidence overview/);
+  assert.match(ui.html, /id="overview-note"[^>]*>Evidence overview\./); assert(!ui.html.includes("Whole-inventory overview."));
   assert.equal(ui.ids.get("expand").disabled, false, "Fit completion must not leave ordinary exploration gated");
   assert.equal(ui.stats.svg, svgCount, "Whole fit must not allocate a foreignObject/SVG graph for every explored record");
   assert.equal(nodeElement(ui, "A").getAttribute("transform"), position);
