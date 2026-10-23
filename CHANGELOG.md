@@ -11,6 +11,28 @@ are made only for separately designated releases; missing intermediate tags are
 not backfilled. Marketplace publication does not prove local installation or
 Host/MCP reload.
 
+## 0.3.0-beta.61 — publication tracked separately
+
+- Protect optional prompt-reference storage with Windows owner/SYSTEM-only
+  DACLs and a shared, bounded helper budget. Preserve masking, Project scoping,
+  POSIX permissions and ordinary work when optional capture is unavailable.
+- Keep the child-write guard off by default, apply enabled checks to the exact
+  call, select the installed Claude package exactly, and avoid implicit default
+  routing when native binding is missing. Portable OpenCode configuration stays
+  unchanged; explicit logical Session routing remains available.
+- Show supported work observations, follow-ups and exact partial excerpts in
+  Graph Explorer cards. Preserve exact lineage endpoints, source comparisons,
+  file/hunk navigation and honest missing-original or exhausted-budget notices.
+- Keep large maps responsive with cooperative placement and the existing Canvas
+  overview of explored evidence. Preserve all exported records/relationships,
+  search, pins and explicit Focus back to cards; do not invent graph membership.
+- Validate the scoped changes with independent source/browser review and focused
+  synthetic checks. Correct obsolete all-SVG assertions and use controlled clocks
+  for the cleanup phase boundary without changing runtime grace periods.
+  Actual Host/provider behavior, Claude `/clear`, other-PC card causes and
+  real-project performance remain unverified. Marketplace publication and local
+  installation still require separate confirmation; no release tag is implied.
+
 ## 0.3.0-beta.60 — publication tracked separately
 
 - Make Graph Explorer maps title-first, with per-card details and independently
