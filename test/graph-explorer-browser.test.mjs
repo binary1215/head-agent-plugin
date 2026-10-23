@@ -1,33 +1,25 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import vm from "node:vm";
 import test from "node:test";
 import { explorerDom } from "./helpers/graph-explorer-dom-fixture.mjs";
 
-test("narrow selection controls collapse without losing selection and camera captions stay inside their viewport", () => {
-  const snapshot = fixture(6000), before = JSON.stringify(snapshot), ui = explorerDom(snapshot, { narrow: true });
+test("narrow controls preserve selection and card rectangles replace compressed circle captions", () => {
+  const snapshot = fixture(12), before = JSON.stringify(snapshot), ui = explorerDom(snapshot, { narrow: true });
   assert.equal(ui.ids.get("selection-tools").open, false); assert.equal(ui.ids.get("display-options").open, false);
   const selected = ui.ids.get("selection-count").textContent;
   ui.ids.get("selection-tools").open = true;
   assert.equal(ui.ids.get("selection-count").textContent, selected);
   assert.equal(explorerDom(snapshot).ids.get("selection-tools").open, true);
   assert.equal(JSON.stringify(snapshot), before);
+  const nodes = ui.ids.get("graph").children.filter(element => element.getAttribute("data-node"));
+  assert(nodes.length); assert(nodes.every(node => node.children.some(child => child.tagName === "foreignObject")));
+  for (const node of nodes) { const rectangle = node.children[0]; assert.equal(rectangle.tagName, "rect"); assert(Number(rectangle.getAttribute("width")) >= 200); assert(Number(rectangle.getAttribute("height")) > 0); }
   const source = fs.readFileSync(new URL("../scripts/graph-explorer/browser.js", import.meta.url), "utf8");
-  const start = source.indexOf("  function captionPlacement("), end = source.indexOf("\n  }\n", start) + 5;
-  assert(start >= 0 && end > start);
-  const place = vm.runInNewContext("(" + source.slice(start, end).trim() + ")");
-  for (const [point, extent, viewport] of [[{ x: 990, y: 690 }, { left: 100, right: 100 }, [0, 0, 1000, 700]],
-    [{ x: 388, y: 315 }, { left: 150, right: 150 }, [0, 0, 390, 320]]]) {
-    const original = structuredClone(point), result = place(point, extent, viewport);
-    assert(point.x + result.x - extent.left >= viewport[0]);
-    assert(point.x + result.x + extent.right <= viewport[0] + viewport[2]);
-    assert(point.y + result.y >= viewport[1]); assert(point.y + result.y + 17 <= viewport[1] + viewport[3]);
-    assert.deepEqual(point, original, "Caption adjustment must not move a layout/pin coordinate");
-  }
+  assert.doesNotMatch(source, /textLength|spacingAndGlyphs|svg\("circle"/);
 });
 
 test("missing current source displays exact retained text without manufacturing an empty after-version", () => {
-  const snapshot = fixture(6000), digest = "a".repeat(64);
+  const snapshot = fixture(12), digest = "a".repeat(64);
   snapshot.graph.contextLineage = { events: [], recordedReasons: [], canonChanges: [], files: [{ path: "src/generic-0.mjs",
     currentObservation: { reasonCode: "ENOENT", explanation: "Current path not found; deletion and rename remain unproven." }, associations: [],
     renameEvidence: { candidates: [{ path: "src/moved.mjs", digest }] }, comparisons: [{ status: "unknown", after: null,
@@ -41,8 +33,9 @@ test("missing current source displays exact retained text without manufacturing 
 });
 
 function fixture(count = 60000) {
+  const historicalStart = count >= 5000 ? count - 5000 : count;
   const nodes = Array.from({ length: count }, (_, i) => ({ nodeId: `generic-${i}`, kind: "File", path: `src/generic-${i}.mjs`, name: `Generic ${i}`,
-    views: ["work"], freshness: i >= count - 5000 ? "domain-not-current" : "snapshot-evidence", currentTraversalEligible: i < count - 5000,
+    views: ["work"], freshness: i >= historicalStart ? "domain-not-current" : "snapshot-evidence", currentTraversalEligible: i < historicalStart,
     detailCoverage: i ? "metadata-only" : "selected-detail", sourceReference: { path: `src/generic-${i}.mjs`, digest: "a".repeat(64) } }));
   const edges = nodes.slice(1).map((node, i) => ({ edgeId: `edge-${i}`, from: nodes[i].nodeId, to: node.nodeId, type: "NEXT" }));
   for (let i = 1; i <= Math.min(10000, count - 1); i++) edges.push({ edgeId: `star-${i}`, from: "generic-0", to: `generic-${i}`, type: "LINK" });
@@ -51,8 +44,8 @@ function fixture(count = 60000) {
     codeGraph: { nodes: [], edges: [], status: "unavailable" }, originals: {}, history: { status: "not-requested", entries: [] } };
 }
 
-test("actual bundled UI script reaches all 60000 IDs through complete search/overview, with bounded DOM and explicit historical scope", t => {
-  const snapshot = fixture(), before = JSON.stringify(snapshot), ui = explorerDom(snapshot);
+test("actual bundled UI script reaches all 60000 IDs through complete search/overview, with bounded DOM and explicit historical scope", async t => {
+  const snapshot = fixture(), before = JSON.stringify(snapshot), ui = explorerDom(snapshot, { cardMeasure: () => 220 });
   assert.equal(ui.document.documentElement.dataset.explorerReady, "true");
   assert(ui.ids.get("selected-title").textContent.includes("Generic 0"));
   assert(ui.ids.get("records").children.length <= 100); assert(ui.ids.get("relations").children.length <= 100);
@@ -69,15 +62,49 @@ test("actual bundled UI script reaches all 60000 IDs through complete search/ove
   const fills = ui.stats.fills; ui.event("overview-button");
   assert.equal(ui.stats.fills - fills, 60000); assert(ui.ids.get("status").textContent.includes("60000 filtered records"));
   assert.equal(ui.ids.get("graph").hidden, true); assert.equal(ui.ids.get("overview").hidden, false);
-  ui.event("focus"); assert.equal(ui.ids.get("graph").hidden, false);
+  ui.event("focus"); assert.equal(ui.ids.get("graph").hidden, false); await ui.settle();
   const svg = ui.stats.svg; ui.event("graph", "wheel", { deltaY: 1 }); ui.event("graph", "wheel", { deltaY: 1 });
   assert.equal(ui.pendingFrames(), 1); ui.flush(); assert(ui.stats.svg > svg);
+  await ui.settle();
+  assert(Number(ui.document.documentElement.dataset.explorerCardMeasures) < 10, "Untouched 60000 metadata bodies must not be premeasured");
   assert.equal(JSON.stringify(snapshot), before);
   t.diagnostic(JSON.stringify({ scope: "Node VM + limited DOM/Canvas double; not actual browser or GUI", initialMs: ui.initialMs, svgCreated: ui.stats.svg }));
 });
 
+test("1000-plus initial neighbors yield during measurement, cancel without partial coordinates, and remain accessible for explicit placement", async () => {
+  const snapshot = fixture(1100), ui = explorerDom(snapshot, { cardMeasure: (_element, size) => 220 * size / 14 });
+  assert.match(ui.ids.get("status").textContent, /1097 positions not prepared/); assert(!ui.ids.get("expand").disabled);
+  const root = () => ui.ids.get("graph").children.find(element => element.getAttribute("data-node") === "generic-0");
+  const transform = root().getAttribute("transform"), camera = ui.ids.get("graph").getAttribute("viewBox");
+  ui.frame(); await Promise.resolve(); assert(Number(ui.document.documentElement.dataset.explorerCardMeasures) >= 35);
+  ui.event("cancel-work"); await ui.settle();
+  assert.match(ui.ids.get("status").textContent, /1097 positions not prepared/); assert.match(ui.ids.get("operation-status").textContent, /Cancelled neighbor.*not a completed layout/);
+  assert.equal(root().getAttribute("transform"), transform); assert.equal(ui.ids.get("graph").getAttribute("viewBox"), camera);
+  ui.ids.get("search").value = "generic-1099"; ui.event("search", "input"); assert.equal(ui.ids.get("records").children.length, 1);
+  ui.event(ui.ids.get("records").children[0].children[0]); ui.event("focus"); await ui.settle();
+  assert(ui.ids.get("graph").children.some(element => element.getAttribute("data-node") === "generic-1099"));
+  ui.event("reset"); await ui.settle(); assert.match(ui.ids.get("status").textContent, /0 positions not prepared/);
+  ui.ids.get("search").value = '"generic-0"'; ui.event("search", "input"); ui.event(ui.ids.get("records").children[0].children[0]);
+  ui.event("restart"); assert.match(ui.ids.get("operation-status").textContent, /Preparing/);
+  ui.frame(); await Promise.resolve();
+  ui.ids.get("layer").value = "code"; ui.event("layer", "change"); await ui.settle();
+  assert(!ui.ids.get("graph").children.some(element => element.getAttribute("data-node"))); assert(ui.ids.get("cancel-work").disabled);
+  assert(!/Preparing/.test(ui.ids.get("operation-status").textContent));
+});
+
+test("font changes during initial measurement cannot commit mixed-basis positions or impersonate completed preparation", async () => {
+  const ui = explorerDom(fixture(1100), { cardMeasure: (_element, size) => 220 * size / 14 });
+  const root = () => ui.ids.get("graph").children.find(element => element.getAttribute("data-node") === "generic-0");
+  ui.event(root(), "keydown", { shiftKey: true, key: "ArrowRight" }); const pin = root().getAttribute("transform"), camera = ui.ids.get("graph").getAttribute("viewBox");
+  ui.frame(); await Promise.resolve(); ui.setModeledFontSize(28); ui.windowEvent("resize"); await ui.settle();
+  assert.match(ui.ids.get("status").textContent, /1097 positions not prepared/); assert.equal(root().getAttribute("transform"), pin);
+  assert.equal(ui.ids.get("graph").getAttribute("viewBox"), camera); assert(ui.ids.get("cancel-work").disabled);
+  assert(!/Direct-neighbor positions prepared/.test(ui.ids.get("operation-status").textContent));
+  ui.event("reset"); await ui.settle(); assert.match(ui.ids.get("status").textContent, /0 positions not prepared/);
+});
+
 test("a retained non-current relationship is labelled before selection and opt-in preserves its exact endpoint", () => {
-  const snapshot = fixture(6000);
+  const snapshot = fixture(12);
   snapshot.graph.edges[3].currentTraversalEligible = false;
   snapshot.graph.edges[3].viewerCurrentness = "domain-not-current";
   snapshot.graph.edges[3].from = "generic-0";
@@ -89,7 +116,7 @@ test("a retained non-current relationship is labelled before selection and opt-i
 });
 
 test("exact bounded excerpt UI shows additions/removals, line roles and missing detail honestly", () => {
-  const snapshot = fixture(6000);
+  const snapshot = fixture(12);
   snapshot.graph.contextLineage = { events: [], recordedReasons: [], canonChanges: [], files: [{ path: "src/generic-0.mjs", current: { digest: "a".repeat(64) }, associations: [{ nodeId: "generic-0" }],
     comparisons: [{ status: "verified", scope: "recorded-changeset-snapshot-pair", before: { digest: "a".repeat(64) }, after: { digest: "b".repeat(64) }, currentMatchesRecordedAfter: false, symbols: [], diff: { changed: true,
       before: { startLine: 10, text: "same\nold", omittedLines: 20 }, after: { startLine: 20, text: "same\nnew", textTruncated: true } } }], unrecordedIntervals: "Unknown unsaved work" }] };
@@ -98,4 +125,52 @@ test("exact bounded excerpt UI shows additions/removals, line roles and missing 
   assert(body.includes("Recorded after — not necessarily current")); assert(body.includes("Partial comparison excerpt"));
   assert.equal(ui.ids.get("show-code-diff").hidden, false);
   ui.event("show-code-diff"); assert.equal(ui.ids.get("context-lineage").open, true);
+});
+
+test("modeled font/width changes preserve camera, pins and keyed reading state through cancel after measured first placement", async t => {
+  const snapshot = fixture(80), before = JSON.stringify(snapshot);
+  const ui = explorerDom(snapshot, { cardMeasure: (element, size) => 210 * size / 14 + Math.ceil(element.textContent.length / Math.max(1, parseFloat(element.style.width))) * 18 });
+  assert.equal(Number(ui.document.documentElement.dataset.explorerCardMeasures), 3, "Only the starting cards are measured synchronously");
+  assert.match(ui.ids.get("operation-status").textContent, /Preparing.*direct-neighbor/); assert(!ui.ids.get("expand").disabled);
+  await ui.settle();
+  const mapNode = () => ui.ids.get("graph").children.find(element => element.getAttribute("data-node") === "generic-0");
+  const root = mapNode(), read = ui.ids.get("selection-cards").children[0], detail = read.children.find(item => item.tagName === "details"); read.open = true; detail.open = true;
+  ui.event(root, "keydown", { shiftKey: true, key: "ArrowRight" }); await ui.settle();
+  const pin = mapNode().getAttribute("transform"), camera = ui.ids.get("graph").getAttribute("viewBox"), height = Number(mapNode().children[0].getAttribute("height"));
+  assert.equal(Number(ui.document.documentElement.dataset.explorerCardMeasures), 80, "Every committed neighbor has its actual measured extent, no unrequested inventory");
+  ui.setModeledFontSize(28); ui.windowEvent("resize"); ui.frame();
+  assert.match(ui.ids.get("operation-status").textContent, /Measuring changed/);
+  ui.event("cancel-work"); await ui.settle();
+  assert.equal(mapNode().getAttribute("transform"), pin); assert.equal(Number(mapNode().children[0].getAttribute("height")), height);
+  assert.equal(ui.ids.get("graph").getAttribute("viewBox"), camera); assert(detail.open); assert.equal(ui.ids.get("selection-cards").children[0], read);
+  ui.finishModeledFonts(); await ui.settle();
+  assert(Number(mapNode().children[0].getAttribute("height")) > height * 1.5);
+  assert.equal(mapNode().getAttribute("transform"), pin); assert.equal(ui.ids.get("graph").getAttribute("viewBox"), camera); assert(detail.open);
+  ui.rectangle("graph", { left: 0, top: 0, width: 260, height: 700 }); ui.windowEvent("resize"); await ui.settle();
+  assert.equal(Number(mapNode().children[0].getAttribute("width")), 220); assert.equal(mapNode().getAttribute("transform"), pin);
+  assert.equal(JSON.stringify(snapshot), before);
+  t.diagnostic("Font/width and layout measurements above are an explicit model, NOT actual browser, mobile, 200% text or font-load acceptance.");
+});
+
+test("pending automatic measurements do not cancel a user expansion and newer font changes do not leave a busy calculation stuck", async () => {
+  const snapshot = fixture(1100); snapshot.graph.edges = [{ edgeId: "start", from: "generic-0", to: "generic-1", type: "LINK" },
+    ...snapshot.graph.nodes.slice(2).map(node => ({ edgeId: `child-${node.nodeId}`, from: "generic-1", to: node.nodeId, type: "LINK" }))];
+  const ui = explorerDom(snapshot, { cardMeasure: (_element, size) => 220 * size / 14 });
+  ui.event("expand"); await ui.settle();
+  assert.match(ui.ids.get("trail").textContent, /Expand 1098/); assert(ui.ids.get("cancel-work").disabled);
+  ui.setModeledFontSize(30); ui.windowEvent("resize"); ui.frame(); ui.setModeledFontSize(32); ui.windowEvent("resize"); await ui.settle();
+  assert(ui.ids.get("cancel-work").disabled); assert(!/Calculation failed/.test(ui.ids.get("operation-status").textContent));
+  assert.equal(ui.pendingFrames(), 0);
+});
+
+test("first reading of a previously off-screen tall card cannot re-place it or previously read cards at unchanged metrics", async () => {
+  const snapshot = fixture(80), ui = explorerDom(snapshot, { cardMeasure: element => Number(/Generic (\d+)/.exec(element.textContent)?.[1]) < 3 ? 210 : 900 });
+  await ui.settle();
+  ui.ids.get("search").value = "generic-10"; ui.event("search", "input"); ui.event(ui.ids.get("records").children[0].children[0]); ui.event("focus");
+  const card = () => ui.ids.get("graph").children.find(element => element.getAttribute("data-node") === "generic-10");
+  const position = card()?.getAttribute("transform"), camera = ui.ids.get("graph").getAttribute("viewBox"); assert(position);
+  const measures = ui.document.documentElement.dataset.explorerCardMeasures;
+  await ui.settle(); assert.equal(card()?.getAttribute("transform"), position); assert.equal(ui.ids.get("graph").getAttribute("viewBox"), camera);
+  ui.event("zoom-out"); ui.flush(); ui.event("zoom-in"); ui.flush();
+  assert.equal(ui.document.documentElement.dataset.explorerCardMeasures, measures, "Normal focus/zoom cannot invalidate committed extents");
 });

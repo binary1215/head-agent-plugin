@@ -15,7 +15,8 @@ import { buildStorageSelection, buildOnboardingState } from "../scripts/lib/onbo
 import { buildCodexMarketplaceSnapshot } from "../scripts/lib/codex-marketplace.mjs";
 import { buildClaudeMarketplaceSnapshot } from "../scripts/lib/claude-marketplace.mjs";
 import { snapshot, pluginRoot } from "./helpers/session-work-linkage-fixture.mjs";
-import { explorerFixture } from "./helpers/graph-explorer-fixture.mjs";
+import { explorerFixture, codeHistoryExplorerFixture } from "./helpers/graph-explorer-fixture.mjs";
+import { explorerDom, visibleText } from "./helpers/graph-explorer-dom-fixture.mjs";
 import { runCommand, usage } from "../scripts/lode.mjs";
 
 test("exploration is reversible display state over exact edges, with stable positions and no cross-layer merging", () => {
@@ -118,6 +119,35 @@ test("optional retained history uses exact IDs without refresh and remains a der
   assert.notEqual(result.history.diff.from.worldModelId, result.history.diff.to.worldModelId);
 });
 
+test("actual code reader imports/calls reach exact cited/current diff in the Source layer without same-path or code-ID joins", async t => {
+  const f = await codeHistoryExplorerFixture(t), before = snapshot(f.root), result = await buildGraphExplorerSnapshot({ root: f.root, query: "relay-implementation" });
+  assert.deepEqual(snapshot(f.root), before, "Read/export preparation must not update the synthetic originals");
+  const file = result.graph.contextLineage.files.find(file => file.path === f.sourcePath); assert(file);
+  assert(file.comparisons.some(pair => pair.diff?.changed && pair.diff.before.text.includes("'before'") && pair.diff.after.text.includes("'after'")));
+  const imports = result.codeGraph.edges.filter(edge => edge.type === "IMPORTS"), calls = result.codeGraph.edges.filter(edge => edge.type === "CALLS");
+  const codeById = new Map(result.codeGraph.nodes.map(node => [node.nodeId, node]));
+  assert(imports.some(edge => codeById.get(edge.from)?.path === "src/main.mjs" && codeById.get(edge.to)?.path === f.sourcePath));
+  assert(calls.some(edge => codeById.get(edge.from)?.path === "src/main.mjs" && codeById.get(edge.to)?.path === f.sourcePath));
+  assert(result.codeGraph.contextLineage, "Existing exact common comparisons must be available to the code-layer consumer");
+  const ui = explorerDom(result); ui.ids.get("layer").value = "code"; ui.event("layer", "change");
+  const node = result.codeGraph.nodes.find(node => node.kind === "File" && node.path === f.sourcePath); assert(node);
+  ui.event(ui.ids.get("records").children.find(row => row.children[0].getAttribute("data-record-entry") === node.nodeId).children[0]);
+  assert.equal(ui.ids.get("context-lineage").open, false, "A source selection must not automatically dump all comparison bodies");
+  ui.event("show-code-diff"); assert(ui.ids.get("context-lineage").open);
+  const body = visibleText(ui.ids.get("context-lineage-body"));
+  assert(body.includes(f.sourcePath)); assert.match(body, /− .*before/); assert.match(body, /\+ .*after/);
+  assert.match(body, /Cited revision \/ export-observed current/); ui.event("change-next"); assert.match(ui.ids.get("comparison-position").textContent, /changed region 1\//);
+  const retained = result.graph.contextLineage.files.find(file => file.path === "src/missing-later.mjs"); assert(retained.currentObservation); assert.equal(retained.currentObservation.deletionEstablished, false);
+  const renamed = result.graph.contextLineage.files.find(file => file.path === "src/rename-before.mjs"); assert(renamed.currentObservation); assert.equal(renamed.currentObservation.renameEstablished, false);
+  assert(!result.codeGraph.nodes.some(node => node.path === "src/missing-later.mjs"));
+  const mismatched = structuredClone(result);
+  const wrong = mismatched.codeGraph.nodes.find(candidate => candidate.nodeId === node.nodeId); wrong.digest = "c".repeat(64); wrong.sourceReference = { path: f.sourcePath, digest: wrong.digest };
+  wrong.nodeId = file.comparisons.find(pair => pair.leftRecord?.nodeId)?.leftRecord.nodeId || "source-with-review-id";
+  const noJoin = explorerDom(mismatched); noJoin.ids.get("layer").value = "code"; noJoin.event("layer", "change");
+  noJoin.event(noJoin.ids.get("records").children.find(row => row.children[0].getAttribute("data-record-entry") === wrong.nodeId).children[0]); noJoin.event("only-focus");
+  assert(!noJoin.ids.get("context-lineage-body").textContent.includes("Bounded excerpt changes"), "Matching paths cannot connect another exact revision");
+});
+
 test("exact original drift is unavailable rather than silently replaced by current bytes", async t => {
   const f = await explorerFixture(t), target = path.join(f.root, "src/relay.mjs"), open = fs.openSync; let changed = false;
   t.mock.method(fs, "openSync", function(file, ...args) {
@@ -190,7 +220,7 @@ test("canonical and legacy Codex/Claude packages include assets and execute the 
   for (const [provider, build] of [["codex", buildCodexMarketplaceSnapshot], ["claude", buildClaudeMarketplaceSnapshot]]) for (const name of ["lode-agent-plugin", "head-agent-plugin"]) {
     const destination = path.join(f.base, `${provider}-${name}`), built = build({ sourceRoot: pluginRoot, outputRoot: destination, name, repository: "local", commit: "local" });
     const root = path.join(destination, "plugins", built.pluginName);
-    for (const asset of ["scripts/graph-explorer.mjs", "scripts/graph-explorer/browser.js", "scripts/graph-explorer/exploration.js", "scripts/graph-explorer/style.css"]) assert(fs.existsSync(path.join(root, asset)));
+    for (const asset of ["scripts/graph-explorer.mjs", "scripts/graph-explorer/cards.js", "scripts/graph-explorer/browser.js", "scripts/graph-explorer/exploration.js", "scripts/graph-explorer/style.css"]) assert(fs.existsSync(path.join(root, asset)));
     const packaged = await import(pathToFileURL(path.join(root, "scripts/lib/graph-explorer.mjs")));
     const report = await packaged.exportGraphExplorer({ root: f.root, query: "relay", output: path.join(f.base, `${provider}-${name}.html`) });
     assert.equal(report.projectId, f.projectId); assert(fs.readFileSync(report.file, "utf8").includes("Source imports &amp; calls"));

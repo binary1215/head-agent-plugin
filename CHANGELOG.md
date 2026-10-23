@@ -11,6 +11,22 @@ are made only for separately designated releases; missing intermediate tags are
 not backfilled. Marketplace publication does not prove local installation or
 Host/MCP reload.
 
+## 0.3.0-beta.60 — publication tracked separately
+
+- Make Graph Explorer maps title-first, with per-card details and independently
+  folded reading cards. Preserve intentional expansion, scroll, selection,
+  camera and pins; measure changed card bounds without rearranging the graph.
+- Show evidence-backed direct groups without inventing membership or edges.
+  Keep source freshness, missing originals and recorded conditions available
+  when expanded, including unfamiliar states.
+- Connect Source-layer imports/calls to existing exact source comparisons by
+  path and digest. Open code context explicitly and retain added/removed lines,
+  file/hunk navigation and conservative missing-path/rename explanations.
+- Verify the requested UI in a real localhost browser on synthetic reader
+  output, alongside focused source tests. This is not proof of actual Host
+  use, large-graph browser performance, 200% text or all long-body scrolling.
+  Source/PR readiness is not marketplace publication or local installation.
+
 ## 0.3.0-beta.59 — publication tracked separately
 
 - Write portable Claude Code, Codex, and OpenCode MCP launch lines. Shared

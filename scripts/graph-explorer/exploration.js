@@ -1,6 +1,6 @@
 // Private display state, bundled inline. No persistence, repository effects or inferred edges.
 const explorerModel = (() => {
-  function create(graph, axisFor = () => "context", extentFor = () => ({ left: 155, right: 155, top: 44, bottom: 84 })) {
+  function create(graph, axisFor = () => "context", extentFor = () => ({ left: 155, right: 155, top: 44, bottom: 84 }), anchorFor = () => null) {
     const nodes = new Map(graph.nodes.map(node => [node.nodeId, node]));
     const positions = new Map(), visible = new Set(), pinned = new Set(), history = [];
     const chosen = new Set(), baseVisible = new Set();
@@ -8,13 +8,14 @@ const explorerModel = (() => {
     const searchText = new Map();
     const cells = new Map(), occupied = new Map();
     const extents = new Map(), adjacency = new Map();
-    let maxLeft = 155, maxRight = 155, maxTop = 44, maxBottom = 84;
-    function extent(id) {
-      if (extents.has(id)) return extents.get(id);
+    const live = { positions, cells, occupied, extents, maxLeft: 155, maxRight: 155, maxTop: 44, maxBottom: 84 };
+    let geometryVersion = 0;
+    function extent(id, space = live) {
+      if (space.extents.has(id)) return space.extents.get(id);
       const measured = extentFor(nodes.get(id)), value = {};
       for (const side of ["left", "right", "top", "bottom"]) value[side] = Number.isFinite(measured?.[side]) && measured[side] > 0 ? measured[side] : side === "top" ? 44 : side === "bottom" ? 84 : 155;
-      extents.set(id, value); maxLeft = Math.max(maxLeft, value.left); maxRight = Math.max(maxRight, value.right);
-      maxTop = Math.max(maxTop, value.top); maxBottom = Math.max(maxBottom, value.bottom); return value;
+      space.extents.set(id, value); space.maxLeft = Math.max(space.maxLeft, value.left); space.maxRight = Math.max(space.maxRight, value.right);
+      space.maxTop = Math.max(space.maxTop, value.top); space.maxBottom = Math.max(space.maxBottom, value.bottom); return value;
     }
     for (const edge of graph.edges) for (const id of new Set([edge.from, edge.to])) {
       if (!adjacency.has(id)) adjacency.set(id, []); adjacency.get(id).push(edge);
@@ -22,68 +23,70 @@ const explorerModel = (() => {
     let cursor = -1;
     const links = id => adjacency.get(id) || [];
     const neighbors = id => [...new Set(links(id).flatMap(edge => [edge.from, edge.to]))].filter(other => other !== id && nodes.has(other));
-    function cellKeys(id, point) {
-      const e = extent(id), keys = [];
+    function cellKeys(id, point, space = live) {
+      const e = extent(id, space), keys = [];
       const left = Math.floor((point.x - e.left) / 320), right = Math.floor((point.x + e.right) / 320);
       const top = Math.floor((point.y - e.top) / 160), bottom = Math.floor((point.y + e.bottom) / 160);
       for (let x = 0; x <= right - left; x++) for (let y = 0; y <= bottom - top; y++) keys.push(`${left + x},${top + y}`);
       return keys;
     }
-    function put(id, point) {
-      for (const key of occupied.get(id) || []) { const cell = cells.get(key); cell.delete(id); if (!cell.size) cells.delete(key); }
-      const keys = cellKeys(id, point); occupied.set(id, keys); positions.set(id, point);
-      for (const key of keys) { if (!cells.has(key)) cells.set(key, new Set()); cells.get(key).add(id); }
+    function put(id, point, space = live) {
+      for (const key of space.occupied.get(id) || []) { const cell = space.cells.get(key); cell.delete(id); if (!cell.size) space.cells.delete(key); }
+      const keys = cellKeys(id, point, space); space.occupied.set(id, keys); space.positions.set(id, point);
+      for (const key of keys) { if (!space.cells.has(key)) space.cells.set(key, new Set()); space.cells.get(key).add(id); }
+      if (space === live) geometryVersion++;
     }
-    function free(id, point) {
-      const e = extent(id);
-      const nearby = new Set(cellKeys(id, point).flatMap(key => [...(cells.get(key) || [])]));
+    function free(id, point, space = live) {
+      const e = extent(id, space);
+      const nearby = new Set(cellKeys(id, point, space).flatMap(key => [...(space.cells.get(key) || [])]));
       for (const other of nearby) {
         if (other === id) continue;
-        const p = positions.get(other), o = extent(other);
+        const p = space.positions.get(other), o = extent(other, space);
         if (point.x - e.left < p.x + o.right && point.x + e.right > p.x - o.left
           && point.y - e.top < p.y + o.bottom && point.y + e.bottom > p.y - o.top) return false;
       }
       return true;
     }
-    function placer(center, horizontal, sign = 1) {
-      const stepX = maxLeft + maxRight, stepY = maxTop + maxBottom;
+    function placer(center, horizontal, sign = 1, space = live) {
+      const stepX = space.maxLeft + space.maxRight + 18, stepY = space.maxTop + space.maxBottom + 18;
       const primaryStep = Math.max(horizontal ? 240 : 210, horizontal ? stepX : stepY), secondaryStep = horizontal ? stepY : stepX;
       let band = 1, slot = 0;
       return id => {
         // One monotone cursor per expansion fan; occupied slots are not
         // rescanned for every neighbor. There is no evidence/count cutoff.
         for (;;) {
-          const lanes = Math.floor(band * primaryStep / (2 * secondaryStep));
-          if (slot > 2 * lanes) { band++; slot = 0; continue; }
-          const lane = slot ? Math.ceil(slot / 2) * (slot % 2 ? 1 : -1) : 0;
+          const lanes = Math.max(1, Math.floor(band * primaryStep / (2 * secondaryStep)));
+          if (slot >= 2 * lanes) { band++; slot = 0; continue; }
+          const lane = (Math.floor(slot / 2) + .5) * (slot % 2 ? 1 : -1);
           slot++;
           const primary = band * primaryStep, secondary = lane * secondaryStep;
           const point = horizontal ? { x: center.x + sign * primary, y: center.y + secondary }
             : { x: center.x + secondary, y: center.y + sign * primary };
-          if (free(id, point)) { put(id, point); return; }
+          if (free(id, point, space)) { put(id, point, space); return; }
         }
       };
     }
-    function expand(id) {
+    function expand(id, { placeNeighbors = true } = {}) {
       if (!nodes.has(id)) return;
       if (!positions.has(id)) {
         const origin = { x: 500, y: 350 };
         if (free(id, origin)) put(id, origin); else placer(positions.get(history[cursor]) || origin, axisFor(nodes.get(id)) === "code")(id);
       }
       const center = positions.get(id); visible.add(id);
-      const additions = neighbors(id).filter(other => !positions.has(other));
-      additions.forEach(extent);
+      const additions = placeNeighbors ? neighbors(id).filter(other => !positions.has(other)) : [];
+      additions.forEach(id => extent(id));
       const fans = new Map(), outgoing = new Set(links(id).filter(edge => edge.from === id).map(edge => edge.to));
       // Place only new neighbors. Previously explored/pinned nodes never jump on selection.
       additions.forEach(other => {
         const horizontal = axisFor(nodes.get(other)) === "code", sign = outgoing.has(other) ? 1 : -1, key = `${horizontal}:${sign}`;
-        if (!fans.has(key)) fans.set(key, placer(center, horizontal, sign)); fans.get(key)(other);
+        const anchor = anchorFor(other, positions), groupedKey = `${key}:${anchor || ""}`;
+        if (!fans.has(groupedKey)) fans.set(groupedKey, placer(positions.get(anchor) || center, horizontal, sign)); fans.get(groupedKey)(other);
       });
       neighbors(id).forEach(other => visible.add(other));
     }
-    function visit(id, record = true) {
+    function visit(id, record = true, options) {
       if (!nodes.has(id)) return false;
-      expand(id);
+      expand(id, options);
       for (const shown of visible) baseVisible.add(shown);
       focusId = id;
       if (record && history[cursor] !== id) { history.splice(cursor + 1); history.push(id); cursor = history.length - 1; }
@@ -95,11 +98,11 @@ const explorerModel = (() => {
       cursor = next; focusId = history[cursor]; expand(history[cursor]); return history[cursor];
     }
     function move(id, x, y) { if (!nodes.has(id) || !Number.isFinite(x) || !Number.isFinite(y)) return; put(id, { x, y }); pinned.add(id); }
-    function reset(id) { visible.clear(); baseVisible.clear(); chosen.clear(); steps = []; frontier = []; processed.clear(); expansionKey = null;
-      positions.clear(); cells.clear(); occupied.clear(); pinned.clear(); history.length = 0; cursor = -1; visit(id); }
+    function reset(id, options) { visible.clear(); baseVisible.clear(); chosen.clear(); steps = []; frontier = []; processed.clear(); expansionKey = null;
+      positions.clear(); cells.clear(); occupied.clear(); extents.clear(); pinned.clear(); history.length = 0; cursor = -1; visit(id, true, options); }
     function place(id, near = focusId) {
       if (!nodes.has(id) || positions.has(id)) return;
-      extent(id); const origin = positions.get(near) || { x: 500, y: 350 };
+      extent(id); const origin = positions.get(anchorFor(id, positions) || near) || { x: 500, y: 350 };
       if (free(id, origin)) put(id, origin); else placer(origin, axisFor(nodes.get(id)) === "code")(id);
     }
     function rebuildVisible() {
@@ -141,17 +144,60 @@ const explorerModel = (() => {
       frontier = [...step.before.frontier]; processed = new Set(step.before.processed); expansionKey = step.before.expansionKey;
       rebuildVisible(); return step;
     }
+    function draft() {
+      return { ...live, positions: new Map(positions), cells: new Map([...cells].map(([key, ids]) => [key, new Set(ids)])),
+        occupied: new Map(occupied), extents: new Map(extents) };
+    }
+    function commit(space, basis) {
+      if (geometryVersion !== basis) return false;
+      for (const field of ["positions", "cells", "occupied", "extents"]) { live[field].clear(); for (const [key, value] of space[field]) live[field].set(key, value); }
+      for (const field of ["maxLeft", "maxRight", "maxTop", "maxBottom"]) live[field] = space[field];
+      geometryVersion++; return true;
+    }
     async function placeBatch(ids, { cancelled = () => false, yieldWork = async () => {} } = {}) {
+      const space = draft(), basis = geometryVersion;
       const additions = [...ids].filter(id => nodes.has(id) && !positions.has(id));
-      for (let i = 0; i < additions.length; i++) { extent(additions[i]); if (i % 512 === 511) { await yieldWork(); if (cancelled()) return false; } }
+      for (let i = 0; i < additions.length; i++) { extent(additions[i], space); if (i % 32 === 31) { await yieldWork(); if (cancelled() || basis !== geometryVersion) return false; } }
       const center = positions.get(focusId) || { x: 500, y: 350 }, fans = new Map();
       for (let i = 0; i < additions.length; i++) {
         const id = additions[i], horizontal = axisFor(nodes.get(id)) === "code";
-        if (!fans.has(horizontal)) fans.set(horizontal, placer(center, horizontal));
-        fans.get(horizontal)(id);
+        const anchor = anchorFor(id, space.positions), key = `${horizontal}:${anchor || ""}`;
+        if (!fans.has(key)) fans.set(key, placer(space.positions.get(anchor) || center, horizontal, 1, space));
+        fans.get(key)(id);
         if (i % 256 === 255) { await yieldWork(); if (cancelled()) return false; }
       }
-      return !cancelled();
+      return !cancelled() && commit(space, basis);
+    }
+    async function remeasure(ids, { cancelled = () => false, yieldWork = async () => {}, yieldBeforeCommit = false, onCommit = () => {}, area = null } = {}) {
+      const requested = new Set([...ids].filter(id => positions.has(id))), affected = new Set(), basis = geometryVersion, space = draft();
+      let count = 0;
+      for (const id of requested) {
+        const previous = extent(id); space.extents.delete(id); const next = extent(id, space);
+        if (["left", "right", "top", "bottom"].some(side => next[side] !== previous[side])) affected.add(id);
+        if (++count % 32 === 0) { await yieldWork(); if (cancelled() || basis !== geometryVersion) return false; }
+      }
+      space.positions.clear(); space.cells.clear(); space.occupied.clear();
+      // Pins and unaffected coordinates always win. Manual pinned overlap stays
+      // visible, never silently corrected; full reading cards remain available.
+      for (const [id, point] of positions) if (pinned.has(id) || !affected.has(id)) put(id, point, space);
+      count = 0;
+      for (const [id, point] of positions) if (affected.has(id) && !pinned.has(id)) {
+        let preferred = null;
+        if (area) {
+          const e = extent(id, space), left = area.left + e.left, right = area.right - e.right, top = area.top + e.top, bottom = area.bottom - e.bottom;
+          if (left <= right && top <= bottom) {
+            const xs = new Set([Math.max(left, Math.min(right, point.x)), left, right]), ys = new Set([Math.max(top, Math.min(bottom, point.y)), top, bottom]);
+            for (let x = left; x <= right; x += Math.max(e.left + e.right + 18, (right - left) / 32)) xs.add(x);
+            for (let y = top; y <= bottom; y += Math.max(e.top + e.bottom + 18, (bottom - top) / 32)) ys.add(y);
+            const candidates = [...xs].flatMap(x => [...ys].map(y => ({ x, y }))).sort((a, b) => Math.hypot(a.x - point.x, a.y - point.y) - Math.hypot(b.x - point.x, b.y - point.y));
+            preferred = candidates.find(candidate => free(id, candidate, space));
+          }
+        }
+        if (preferred) put(id, preferred, space); else if (free(id, point, space)) put(id, point, space); else placer(point, axisFor(nodes.get(id)) === "code", 1, space)(id);
+        if (++count % 256 === 0) { await yieldWork(); if (cancelled() || basis !== geometryVersion) return false; }
+      }
+      if (yieldBeforeCommit) { await yieldWork(); if (cancelled() || basis !== geometryVersion) return false; }
+      const applied = !cancelled() && commit(space, basis); if (applied) onCommit(); return applied;
     }
     async function expandWave({ key = "", allowed = () => true, edgeAllowed = () => true, cancelled = () => false, yieldWork = async () => {}, progress = () => {} } = {}) {
       const scope = JSON.stringify([[...chosen], key]);
@@ -176,7 +222,7 @@ const explorerModel = (() => {
         if ([...contributed].some(id => !visible.has(id))) break;
       }
       const additions = [...contributed].filter(id => !visible.has(id));
-      if (!await placeBatch(additions, { cancelled, yieldWork })) return { status: "cancelled" };
+      if (!await placeBatch([...contributed].filter(id => !positions.has(id)), { cancelled, yieldWork })) return { status: "cancelled" };
       if (cancelled()) return { status: "cancelled" };
       frontier = pending; processed = visited; expansionKey = scope;
       const step = { kind: "expand", nodes: contributed, edges, before, added: additions.length, examinedEdges: reads };
@@ -229,7 +275,7 @@ const explorerModel = (() => {
       });
     }
     return { nodes, positions, visible, pinned, history, neighbors, links, expand, visit, travel, move, reset, search,
-      chosen, choose, chooseBatch, clearSelection, reveal, place, placeBatch, capture, restore, collapse, expandWave, connectSelection, showConnections,
+      chosen, choose, chooseBatch, clearSelection, reveal, place, placeBatch, remeasure, extent, capture, restore, collapse, expandWave, connectSelection, showConnections,
       get selectionVersion() { return selectionVersion; },
       get steps() { return steps; }, get focus() { return focusId; },
       get cursor() { return cursor; }, get current() { return focusId ?? history[cursor] ?? null; } };

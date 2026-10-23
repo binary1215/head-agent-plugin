@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
-import { explorerDom } from "./helpers/graph-explorer-dom-fixture.mjs";
+import crypto from "node:crypto";
+import { explorerDom, visibleText } from "./helpers/graph-explorer-dom-fixture.mjs";
 
 const source = fs.readFileSync(new URL("../scripts/graph-explorer/exploration.js", import.meta.url), "utf8");
 const factory = () => vm.runInNewContext(source + "\nexplorerModel");
@@ -15,6 +16,9 @@ function nodeElement(ui, id) { return ui.ids.get("graph").children.find(item => 
 function recordButton(ui, id) { return ui.ids.get("records").children.find(item => item.children[0].textContent.startsWith(id))?.children[0]; }
 const camera = ui => ui.ids.get("graph").getAttribute("viewBox");
 const selectionCount = ui => Number(ui.ids.get("selection-count").textContent.match(/^\d+/)[0]);
+const cards = vm.runInNewContext(fs.readFileSync(new URL("../scripts/graph-explorer/cards.js", import.meta.url), "utf8") + "\nexplorerCards");
+const descendants = element => [element, ...element.children.flatMap(descendants)];
+const readingCard = (ui, id) => ui.ids.get("selection-cards").children.find(item => item.getAttribute("data-record") === `node:${id}`);
 
 test("boundary expansion actually advances, retains stable positions, and folding removes only its contribution", async () => {
   const graph = { nodes: nodes("A", "B", "C", "D"), edges: [edge("A", "B"), edge("B", "C"), edge("C", "D")] };
@@ -79,7 +83,7 @@ test("bundled UI keeps additive selection, cards, camera, map mode, folding and 
   ui.event(nodeElement(ui, "B")); assert.equal(selectionCount(ui), 2); assert.equal(ui.ids.get("selection-cards").children.length, 2); assert.equal(camera(ui), initialCamera);
   ui.event(nodeElement(ui, "A")); assert.equal(selectionCount(ui), 2); assert.equal(camera(ui), initialCamera);
   assert.equal(ui.document.documentElement.dataset.explorerSearchPasses, initialPasses, "Focus must reuse metadata search");
-  const cardA = ui.ids.get("selection-cards").children[0]; cardA.children.find(item => item.tagName === "details").open = true;
+  const cardA = ui.ids.get("selection-cards").children[0]; cardA.open = true; cardA.children.find(item => item.tagName === "details").open = true;
   ui.event(nodeElement(ui, "B")); assert.equal(ui.ids.get("selection-cards").children[0], cardA, "Focus must not replace other cards");
   ui.event("expand"); await ui.settle(); assert.match(ui.ids.get("operation-status").textContent, /1 newly exposed/); assert.equal(camera(ui), initialCamera);
   ui.event("expand"); await ui.settle(); assert.match(ui.ids.get("operation-status").textContent, /1 newly exposed/);
@@ -214,4 +218,226 @@ test("plain SVG-node pointerdown/up/click keeps the node click target instead of
   ui.pointerClick(node, { clientX: 500, clientY: 560 });
   assert.equal(selectionCount(ui), 2); assert.equal(camera(ui), box);
   assert(ui.ids.get("selection-cards").textContent.includes("B"));
+});
+
+test("expanded cards use actual recorded text and known conditions, with full qualifiers beyond a grapheme-safe excerpt", async () => {
+  const summary = "e\u0301".repeat(450) + " This is NOT approval; retain the original exception.";
+  const work = { ...nodes("A")[0], revisionId: "work-r1", origin: { layer: "sessionWork", path: "work.json", digest: "a".repeat(64) },
+    workContent: { summary, judgments: [{ assessment: "Proposal only", reason: "No user decision", alternatives: ["Keep investigating"] }], pending: ["Review pending"], unknowns: ["Effect unknown"] },
+    workContentCoverage: { partial: true }, reviewState: "unreviewed" };
+  const direction = { ...nodes("B")[0], kind: "ProjectDirection", revisionId: "direction-r1", directionEvidence: {
+    goal: "Ship only after review", constraints: ["No remote effects"], cancelledActions: ["Do not deploy"], decisions: ["Keep this local"] } };
+  const graph = { nodes: [work, direction, { ...nodes("C")[0], kind: "Run", purpose: "Investigate failure", status: "failed" }], edges: [edge("A", "B")] };
+  const snapshot = input(graph), before = JSON.stringify(snapshot), index = cards.create(snapshot, graph, "project");
+  assert.equal(index.describe(work).body, summary); assert.match(index.describe(work).conditions.join(" "), /Pending: 1.*Unknown: 1.*unreviewed.*Historical.*Partial/);
+  assert.match(index.describe(direction).conditions.join(" "), /Cancelled actions: 1.*Constraints: 1/);
+  assert.equal(index.describe(graph.nodes[2]).body, "Investigate failure");
+  assert.equal(index.describe({ kind: "Unknown", nodeId: "empty" }).body, "");
+  const ui = explorerDom(snapshot); assert(!visibleText(nodeElement(ui, "A")).includes("Pending"));
+  ui.event(nodeElement(ui, "A").querySelectorAll("[data-card-control]")[0]); await ui.settle(); const map = visibleText(nodeElement(ui, "A"));
+  assert.match(map, /Excerpt, not a complete summary/); assert(!map.includes("This is NOT approval"));
+  assert.match(map, /e\u0301…/); readingCard(ui, "A").open = true; assert(visibleText(readingCard(ui, "A")).includes(summary));
+  assert.match(visibleText(readingCard(ui, "A")), /not a captured user utterance.*No user decision.*Keep investigating/s);
+  ui.event(recordButton(ui, "B")); readingCard(ui, "B").open = true; assert.match(visibleText(readingCard(ui, "B")), /No remote effects.*Do not deploy.*Keep this local/s);
+  assert.equal(JSON.stringify(snapshot), before);
+});
+
+test("expanded simultaneous map/reading cards preserve unavailable, historical, current, unknown and unfamiliar currentness", async () => {
+  const states = ["unavailable", "historical-source-bytes", "unknown", "future-source-state", "current-source-bytes", "constructor", "__proto__"];
+  const graph = { nodes: [{ nodeId: "root", name: "root", kind: "Run", purpose: "Read recorded source states" },
+    ...states.map((freshness, i) => ({ nodeId: `S${i}`, kind: "FileRevisionReference", name: `Source ${i}`, path: `src/source-${i}.mjs`, revisionId: `revision-${i}`,
+      freshness, reviewState: "observed-evidence", sourceReference: { path: `src/source-${i}.mjs`, digest: String(i).repeat(64) },
+      sourceCurrentness: { path: `src/source-${i}.mjs`, retainedDigest: String(i).repeat(64), currentDigest: i ? "f".repeat(64) : null, freshness },
+      ...(i === 3 ? { viewerCurrentness: "future-relationship-state" } : {}) }))],
+    edges: states.map((_, i) => edge("root", `S${i}`)) };
+  const snapshot = input(graph); snapshot.graph.initialNodeId = "root";
+  const before = JSON.stringify(snapshot), ui = explorerDom(snapshot), visibleConditions = card => card.children.find(item => item.className === "card-conditions").textContent;
+  ui.ids.get("include-history").checked = true; ui.event("include-history", "change");
+  for (let i = 0; i < states.length; i++) { ui.event(recordButton(ui, `Source ${i}`)); readingCard(ui, `S${i}`).open = true; }
+  ui.event(recordButton(ui, "Source 1"));
+  assert.match(ui.ids.get("selected-caption").textContent, /historical-source-bytes/);
+  const unavailable = visibleConditions(readingCard(ui, "S0")), historical = visibleConditions(readingCard(ui, "S1"));
+  assert.match(unavailable, /unavailable/); assert.match(historical, /historical-source-bytes/); assert.notEqual(unavailable, historical);
+  assert.doesNotMatch(unavailable, /deleted|renamed|permission denied|deployment failed/i, "Unavailable bytes do not establish a cause");
+  for (let i = 0; i < states.length; i++) {
+    const condition = visibleConditions(readingCard(ui, `S${i}`)); assert(condition.includes(states[i]), states[i]);
+    ui.event(recordButton(ui, `Source ${i}`)); ui.event("focus");
+    ui.event(nodeElement(ui, `S${i}`).querySelectorAll("[data-card-control]")[0]); await ui.settle();
+    const map = nodeElement(ui, `S${i}`); assert(map);
+    const mapConditions = descendants(map).find(item => item.className === "map-card-conditions"); assert(visibleText(mapConditions).includes(states[i]), `Map ${states[i]}`);
+  }
+  assert.match(visibleConditions(readingCard(ui, "S3")), /future-relationship-state/);
+  const index = cards.create(snapshot, graph, "project"), conflicting = { ...graph.nodes[1], sourceCurrentness: { freshness: "different-recorded-source-state" } };
+  assert(index.describe(conflicting).conditions.join(" ").includes("different-recorded-source-state"), "A distinct recorded source state is not silently replaced by top-level freshness");
+  assert.equal(JSON.stringify(snapshot), before);
+});
+
+test("group membership requires exact verified sources, preserves direct multi-membership and rejects inferred joins", () => {
+  const origin = { layer: "product", path: "product-model.json", digest: "a".repeat(64) };
+  const product = (id, kind, extra = {}) => ({ nodeId: id, name: id, kind, integrity: "verified", revisionId: "model-1", origin, key: id, ...extra });
+  const g1 = product("G1", "FeatureGroup"), g2 = product("G2", "FeatureGroup"), f = product("F", "Feature", { featureGroupKeys: ["G1", "G2"] });
+  const child = product("G3", "FeatureGroup", { parentFeatureGroupKeys: ["G1"] });
+  const graph = { nodes: [g1, g2, f, child, product("isolated", "Feature"),
+    ...[{ revisionId: "other-model" }, { projectId: "another-project" }, { integrity: "unverified" }, { origin: { ...origin, digest: "b".repeat(64) } },
+      { origin: { ...origin, layer: "unrelated" } }].map((invalid, i) => product(`invalid-${i}`, "Feature", { featureGroupKeys: ["G1"], ...invalid }))],
+    edges: [edge("G2", "isolated", "not-membership", "CONTAINS")] };
+  const snapshot = input(graph), before = JSON.stringify(snapshot), index = cards.create(snapshot, graph, "project");
+  assert.equal(index.groups.size, 2); assert.equal(index.memberships.get("F").size, 2);
+  assert.deepEqual(sorted([...index.groups.values()].find(group => group.rootId === "G1").members), ["F", "G1", "G3"]);
+  for (const id of ["isolated", ...graph.nodes.filter(node => node.nodeId.startsWith("invalid-")).map(node => node.nodeId)]) assert(!index.memberships.has(id), id);
+  assert.equal(index.anchor("F", new Map()), null); assert.equal(index.anchor("F", new Map([["G2", { x: 0, y: 0 }]])), "G2");
+  const world = (id, kind, extra = {}) => ({ nodeId: id, kind, integrity: "verified", sourceSnapshotId: "source-1", origin: { layer: "world", worldModelId: "world-1", graphSnapshotId: "graph-1" }, ...extra });
+  const wg = { nodes: [world("WG", "FeatureGroup"), world("WF", "Feature"), world("wrong-source", "Feature", { sourceSnapshotId: "source-2" })],
+    edges: [edge("WG", "WF", "valid", "CONTAINS"), edge("WG", "wrong-source", "bad", "CONTAINS")].map(item => ({ ...item, sourceSnapshotId: "source-1", provenance: { worldModelId: "world-1", graphSnapshotId: "graph-1" } })) };
+  const worldIndex = cards.create(input(wg), wg, "project"); assert.equal(worldIndex.groups.size, 1); assert(!worldIndex.memberships.has("wrong-source"));
+  for (const patch of [{ sourceSnapshotId: "source-2" }, { provenance: { worldModelId: "world-2", graphSnapshotId: "graph-1" } }]) {
+    const invalid = { ...wg, edges: [{ ...wg.edges[0], ...patch }] }; assert.equal(cards.create(input(invalid), invalid, "project").groups.size, 0);
+  }
+  const work = (id, sessionId = "session-1") => ({ nodeId: id, name: id, integrity: "verified", sessionId, origin: { layer: "sessionWork", path: `${id}.json`, digest: id.repeat(64) } });
+  const a = work("a"), b = work("b"), c = work("c", "other-session");
+  const workEdge = { ...edge("b", "a", "work", "DECLARES_WORK_ROOT"), provenance: { ...b.origin } };
+  const workGraph = { nodes: [a, b, c], edges: [workEdge, { ...workEdge, from: "c" }] };
+  assert.equal(cards.create(input(workGraph), workGraph, "project").groups.size, 1);
+  for (const patch of [{ type: "FOLLOWS_WORK_EVIDENCE" }, { type: "RECORDED_FOR_SESSION" }, { provenance: { ...b.origin, digest: "wrong" } }]) {
+    const invalid = { ...workGraph, edges: [{ ...workEdge, ...patch }] }; assert.equal(cards.create(input(invalid), invalid, "project").groups.size, 0);
+  }
+  const group = [...index.groups.values()].find(group => group.rootId === "G1");
+  const points = new Map([["G1", { left: 0, right: 100, top: 0, bottom: 100 }], ["G3", { left: 200, right: 300, top: 0, bottom: 100 }]]);
+  assert.equal(cards.groupGeometry(new Map([[group.key, group]]), index.memberships, points)[0].enclosure, true);
+  points.set("isolated", { left: 130, right: 160, top: 20, bottom: 40 });
+  assert.equal(cards.groupGeometry(new Map([[group.key, group]]), index.memberships, points)[0].enclosure, false);
+  points.delete("isolated"); points.set("F", { left: 400, right: 500, top: 0, bottom: 100 });
+  assert(cards.groupGeometry(index.groups, index.memberships, points).every(group => !group.enclosure));
+  assert.equal(JSON.stringify(snapshot), before);
+  const id = index.identity(f);
+  for (const [s, g, layer, value] of [[{ project: { projectId: "different" } }, graph, "project", f], [snapshot, graph, "code", f],
+    [snapshot, graph, "project", { ...f, revisionId: "model-2" }], [snapshot, graph, "project", { ...f, origin: { ...origin, digest: "changed" } }]])
+    assert.notEqual(cards.create(s, g, layer).identity(value), id);
+  assert.equal(index.identity({ nodeId: "unqualified" }), null);
+});
+
+test("reading cards retain A/B expansion, scroll and pages through C changes, filtering, history and layer collisions", async () => {
+  const graph = { nodes: nodes("A", "B", "C", ...Array.from({ length: 104 }, (_, i) => `N${i}`)).map(node => ({ ...node, revisionId: "revision-1", sourceReference: { path: `${node.nodeId}.json`, digest: "a".repeat(64) } })),
+    edges: ["B", "C", ...Array.from({ length: 104 }, (_, i) => `N${i}`)].map(id => edge("A", id)) };
+  const snapshot = input(graph); snapshot.originals = Object.fromEntries(["A", "B"].map(id => [JSON.stringify([`${id}.json`, "a".repeat(64)]), { status: "verified-exact-bytes", text: `${id} long original\n`.repeat(30) }]));
+  snapshot.codeGraph = { nodes: [{ ...graph.nodes[0], name: "Code A", revisionId: "different-revision" }], edges: [], status: "current" };
+  const before = JSON.stringify(snapshot), ui = explorerDom(snapshot); ui.event(recordButton(ui, "B"));
+  const remember = id => { const card = readingCard(ui, id); card.open = true; const details = card.children.filter(item => item.tagName === "details"); for (const detail of details) detail.open = true;
+    const pre = descendants(card).find(item => item.tagName === "pre"); pre.scrollTop = 77; pre.scrollLeft = 9; card.scrollTop = 31; return { card, pre }; };
+  const a = remember("A"), b = remember("B"), mapA = nodeElement(ui, "A"), transform = mapA.getAttribute("transform"), box = camera(ui);
+  ui.event(mapA, "keydown", { shiftKey: true, key: "ArrowRight" }); const pinned = mapA.getAttribute("transform");
+  ui.event(recordButton(ui, "C")); assert.equal(readingCard(ui, "A"), a.card); assert.equal(readingCard(ui, "B"), b.card);
+  const removeC = descendants(readingCard(ui, "C")).find(item => item.tagName === "button" && item.textContent === "Remove"); ui.event(removeC);
+  assert.equal(readingCard(ui, "A"), a.card); assert.equal(a.pre.scrollTop, 77); assert.equal(camera(ui), box); assert.notEqual(transform, pinned);
+  ui.event("overview-button"); ui.event("overview", "pointerdown", { clientX: 0, clientY: 0, pointerId: 1, shiftKey: true });
+  ui.event("overview", "pointermove", { clientX: 1000, clientY: 700, pointerId: 1, shiftKey: true }); ui.event("overview", "pointerup", { clientX: 1000, clientY: 700, pointerId: 1, shiftKey: true }); await ui.settle();
+  a.pre.focus(); ui.event("cards-next"); assert.equal(ui.stats.focusedElement.id, "reading-range");
+  assert(!ui.ids.get("selection-cards").contains(a.pre)); ui.event("cards-prev");
+  const restoredA = readingCard(ui, "A"), restoredB = readingCard(ui, "B");
+  for (const card of [restoredA, restoredB]) { assert(card.open); assert(card.children.filter(item => item.tagName === "details").every(item => item.open)); const pre = descendants(card).find(item => item.tagName === "pre"); assert.equal(pre.scrollTop, 77); assert.equal(pre.scrollLeft, 9); assert.equal(card.scrollTop, 31); }
+  ui.ids.get("search").value = "N103"; ui.event("search", "input"); ui.event("back"); ui.event("forward");
+  assert.equal(readingCard(ui, "A"), restoredA); assert.equal(readingCard(ui, "B"), restoredB);
+  ui.ids.get("layer").value = "code"; ui.event("layer", "change"); assert(!readingCard(ui, "A").children.filter(item => item.tagName === "details").some(item => item.open));
+  ui.ids.get("layer").value = "project"; ui.event("layer", "change");
+  assert.equal(descendants(readingCard(ui, "A")).find(item => item.tagName === "pre").scrollTop, 77);
+  ui.event(descendants(readingCard(ui, "A")).find(item => item.tagName === "button" && item.textContent === "Read focus"));
+  ui.event("focus"); assert.equal(nodeElement(ui, "A")?.getAttribute("transform"), pinned); assert.equal(JSON.stringify(snapshot), before);
+});
+
+test("rectangle geometry uses positive-area corners and keeps directed, parallel, reversed and self endpoints outside cards", () => {
+  const e = { left: 140, right: 140, top: 100, bottom: 100 }, a = { x: 0, y: 0 }, b = { x: 400, y: 200 }, bounds = cards.bounds(a, e);
+  assert(cards.intersects(bounds, { left: 139, right: 145, top: 99, bottom: 110 }));
+  assert(!cards.intersects(bounds, { left: 140, right: 145, top: 100, bottom: 110 }));
+  assert(!cards.intersects(bounds, { left: 0, right: 0, top: 0, bottom: 100 }));
+  for (const [start, end, offset] of [[a, b, 0], [a, b, 48], [b, a, -48], [a, a, 0], [a, a, -180]]) {
+    const geometry = cards.edgeGeometry(start, end, e, e, offset); assert(!/NaN|Infinity/.test(geometry.path)); assert(geometry.bounds.bottom > geometry.bounds.top);
+    const numbers = geometry.path.match(/-?\d+(?:\.\d+)?(?:e[+-]?\d+)?/gi).map(Number);
+    for (const [point, center] of [[numbers.slice(0, 2), start], [numbers.slice(-2), end]]) {
+      const r = cards.bounds(center, e); assert(point[0] < r.left || point[0] > r.right || point[1] < r.top || point[1] > r.bottom);
+    }
+    for (let i = 0; i < numbers.length; i += 2) { assert(numbers[i] >= geometry.bounds.left && numbers[i] <= geometry.bounds.right); assert(numbers[i + 1] >= geometry.bounds.top && numbers[i + 1] <= geometry.bounds.bottom); }
+  }
+  const largeTarget = { ...e, top: 400, right: 200 }, coincident = cards.edgeGeometry(a, a, e, largeTarget).path.match(/-?\d+(?:\.\d+)?/g).map(Number);
+  assert(coincident.at(-1) < -largeTarget.top, "Coincident unequal pinned cards must use the target extent for the arrow end");
+});
+
+test("declared work groups keep one map card per node and restore member pagination without detaching focused controls", async () => {
+  const work = id => ({ nodeId: id, name: id, kind: "SessionWorkEvidence", integrity: "verified", sessionId: "s1", revisionId: `revision-${id}`,
+    origin: { layer: "sessionWork", path: `${id}.json`, digest: "a".repeat(64) }, workContent: { summary: `Recorded ${id}` } });
+  const groupNodes = [work("A"), ...Array.from({ length: 25 }, (_, i) => work(`Member${i}`)), work("C")];
+  const graph = { nodes: groupNodes, edges: groupNodes.slice(1, -1).map(node => ({ ...edge(node.nodeId, "A", node.nodeId, "DECLARES_WORK_ROOT"), provenance: { ...node.origin } })) };
+  const snapshot = input(graph), before = JSON.stringify(snapshot), ui = explorerDom(snapshot), card = readingCard(ui, "A");
+  card.open = true; const membership = card.children.find(item => item.className === "record-membership"); assert(membership); membership.open = true; ui.event(membership, "toggle");
+  const nav = membership.children.find(item => item.tagName === "nav"), next = nav.children[2]; next.focus(); ui.event(next);
+  assert.equal(ui.stats.focusedElement, next); assert(membership.contains(next)); assert.match(nav.textContent, /21–26 \/ 26/);
+  ui.event(recordButton(ui, "C")); assert.equal(readingCard(ui, "A"), card); assert(membership.open);
+  const remove = descendants(card).find(item => item.tagName === "button" && item.textContent === "Remove"); ui.event(remove);
+  ui.event(recordButton(ui, "A")); const restored = readingCard(ui, "A"), group = restored.children.find(item => item.className === "record-membership");
+  assert(group.open); assert.match(group.textContent, /21–26 \/ 26/);
+  const mapped = ui.ids.get("graph").children.filter(item => item.getAttribute("data-node")), mappedIds = mapped.map(item => item.getAttribute("data-node"));
+  assert.equal(new Set(mappedIds).size, mappedIds.length);
+  ui.event(nodeElement(ui, "A").querySelectorAll("[data-card-control]")[0]); await ui.settle();
+  assert(ui.ids.get("graph").textContent.includes("exported"));
+  assert.match(restored.textContent, /Declared work group/); assert.equal(JSON.stringify(snapshot), before);
+});
+
+test("header drag and corner rectangle selection do not swallow body text selection or native accessibility zoom", async () => {
+  for (const dpr of [1, 2]) {
+    const ui = explorerDom(input({ nodes: nodes("A", "B"), edges: [edge("A", "B")] }), { devicePixelRatio: dpr });
+    ui.event(nodeElement(ui, "A").querySelectorAll("[data-card-control]")[0]); await ui.settle();
+    const a = nodeElement(ui, "A"), body = a.querySelectorAll("[data-card-body]")[0], before = a.getAttribute("transform"), box = camera(ui);
+    ui.pointerClick(body, { clientX: 500, clientY: 350 }); assert.equal(selectionCount(ui), 1); assert.equal(camera(ui), box);
+    ui.event("graph", "pointerdown", { target: body, clientX: 500, clientY: 350, pointerId: 1 }); ui.event("graph", "pointermove", { clientX: 550, clientY: 380, pointerId: 1 }); ui.event("graph", "pointerup", { clientX: 550, clientY: 380, pointerId: 1 });
+    assert.equal(a.getAttribute("transform"), before); assert.equal(camera(ui), box);
+    let prevented = false; ui.event("graph", "wheel", { ctrlKey: true, deltaY: 1, preventDefault() { prevented = true; } }); assert(!prevented); assert.equal(camera(ui), box);
+    const header = a.querySelectorAll("[data-card-header]")[0]; ui.event("graph", "pointerdown", { target: header, clientX: 500, clientY: 350, pointerId: 2 });
+    ui.event("graph", "pointermove", { clientX: 550, clientY: 380, pointerId: 2 }); ui.flush(); assert.notEqual(a.getAttribute("transform"), before);
+    ui.event("graph", "keydown", { key: "Escape" }); ui.flush(); assert.equal(nodeElement(ui, "A").getAttribute("transform"), before); assert.equal(nodeElement(ui, "A").dataset.pinned, "false");
+    ui.event("clear-selection");
+    const r = nodeElement(ui, "A").children[0], at = /translate\(([^,]+),([^\)]+)\)/.exec(nodeElement(ui, "A").getAttribute("transform")), cameraBox = camera(ui).split(" ").map(Number);
+    ui.rectangle("graph", { left: 23, top: 17, width: 800, height: 400 }); const view = factory().viewport(cameraBox, ui.ids.get("graph").getBoundingClientRect());
+    const corner = view.toClient(Number(at[1]) + Number(r.getAttribute("x")) + 1, Number(at[2]) + Number(r.getAttribute("y")) + 1);
+    ui.event("graph", "pointerdown", { clientX: corner.x, clientY: corner.y, pointerId: 3, shiftKey: true });
+    ui.event("graph", "pointermove", { clientX: corner.x + 8, clientY: corner.y + 8, pointerId: 3 }); ui.event("graph", "pointerup", { clientX: corner.x + 8, clientY: corner.y + 8, pointerId: 3 }); await ui.settle();
+    assert.equal(selectionCount(ui), 1, "A corner intersection, not center containment, selects the card");
+  }
+});
+
+test("title-only map and reading disclosures are independent, measured, cancellable and preserve other nodes, pins and keyboard defaults", async () => {
+  const graph = { nodes: nodes("A", "B", "C").map(node => ({ ...node, revisionId: `r-${node.nodeId}`, summary: `RECORDED BODY ${node.nodeId}`,
+    reviewState: "unreviewed", freshness: "unavailable", sourceReference: { path: `src/${node.nodeId}.mjs`, digest: "a".repeat(64) } })), edges: [edge("A", "B")] };
+  for (const node of graph.nodes) node.freshness = "snapshot-evidence"; graph.edges.push(edge("A", "C"));
+  const snapshot = input(graph), original = Array.from({ length: 60 }, (_, i) => `// synthetic recorded line ${i}`).join("\n"), digest = crypto.createHash("sha256").update(original).digest("hex");
+  graph.nodes[0].sourceReference.digest = digest;
+  snapshot.originals[JSON.stringify(["src/A.mjs", digest])] = { status: "verified-exact-bytes", digest, text: original };
+  const before = JSON.stringify(snapshot), ui = explorerDom(snapshot, { cardMeasure: (element, size) => (element.children[1].hidden ? 56 : 250) * size / 14 });
+  await ui.settle(); const nodeA = () => nodeElement(ui, "A"), nodeB = () => nodeElement(ui, "B"), control = id => nodeElement(ui, id).querySelectorAll("[data-card-control]")[0];
+  assert.equal(visibleText(nodeA()), "A+"); assert(!visibleText(nodeA()).includes("unreviewed")); assert.equal(visibleText(readingCard(ui, "A")), "A"); assert.equal(readingCard(ui, "A").open, false);
+  const cameraBefore = camera(ui), closedHeight = Number(nodeA().children[0].getAttribute("height")), untouchedC = nodeElement(ui, "C").getAttribute("transform");
+  ui.event(nodeB(), "keydown", { shiftKey: true, key: "ArrowRight" }); const pinnedB = nodeB().getAttribute("transform");
+  const aControl = control("A"); aControl.focus(); ui.pointerClick(aControl); await ui.settle();
+  assert.equal(selectionCount(ui), 1, "Disclosure must not implicitly select a record"); assert.equal(control("A").getAttribute("aria-expanded"), "true");
+  assert(visibleText(nodeA()).includes("RECORDED BODY A")); assert(visibleText(nodeA()).includes("unreviewed")); assert(visibleText(nodeA()).includes("src/A.mjs"));
+  assert(Number(nodeA().children[0].getAttribute("height")) > closedHeight); assert.equal(nodeB().getAttribute("transform"), pinnedB); assert.equal(camera(ui), cameraBefore);
+  assert.equal(readingCard(ui, "A").open, false, "Map disclosure does not force independent reading open");
+  const scrollingBody = nodeA().querySelectorAll("[data-card-body]")[0]; scrollingBody.scrollTop = 41; ui.event(scrollingBody, "scroll");
+  ui.event(control("A")); await ui.settle(); ui.event(control("A")); await ui.settle();
+  assert.equal(nodeA().querySelectorAll("[data-card-body]")[0].scrollTop, 41, "Map body scroll survives an explicit fold/open");
+  let prevented = false; ui.event(nodeA(), "keydown", { target: control("A"), key: "Enter", preventDefault() { prevented = true; } }); assert(!prevented);
+  ui.event(nodeA(), "keydown", { target: control("A"), key: " ", preventDefault() { prevented = true; } }); assert(!prevented);
+  const content = nodeA().querySelectorAll("[data-card-body]")[0];
+  ui.event("graph", "wheel", { target: content, deltaY: 1, preventDefault() { prevented = true; } }); assert(!prevented); assert.equal(camera(ui), cameraBefore);
+  const openRead = descendants(nodeA()).find(item => item.tagName === "button" && item.textContent === "Read full record"); ui.event(openRead);
+  assert(readingCard(ui, "A").open); assert(visibleText(readingCard(ui, "A")).includes("RECORDED BODY A"));
+  const record = readingCard(ui, "A"); for (const element of descendants(record)) if (element.tagName === "details") element.open = true;
+  const inner = descendants(record).find(element => element.tagName === "pre"); inner.scrollTop = 37;
+  ui.event(record.children[0]); record.open = false; ui.event(record, "toggle"); inner.scrollTop = 0;
+  record.open = true; ui.event(record, "toggle"); assert.equal(inner.scrollTop, 37, "Explicit reading collapse does not lose its internal scroll position");
+  ui.event(recordButton(ui, "B")); assert.equal(readingCard(ui, "B").open, false); assert(readingCard(ui, "A").open);
+  ui.event(control("A")); ui.event("cancel-work"); await ui.settle(); assert.equal(control("A").getAttribute("aria-expanded"), "true");
+  ui.event(control("A")); ui.event(control("B")); await ui.settle();
+  assert.equal(control("A").getAttribute("aria-expanded"), "false"); assert.equal(control("B").getAttribute("aria-expanded"), "true");
+  assert.equal(nodeB().getAttribute("transform"), pinnedB); assert.equal(nodeElement(ui, "C").getAttribute("transform"), untouchedC); assert.equal(camera(ui), cameraBefore); assert(readingCard(ui, "A").open);
+  ui.ids.get("search").value = "not-a-match"; ui.event("search", "input"); ui.event("back"); ui.event("forward");
+  assert.equal(control("B").getAttribute("aria-expanded"), "true"); assert(readingCard(ui, "A").open); assert.equal(JSON.stringify(snapshot), before);
 });
