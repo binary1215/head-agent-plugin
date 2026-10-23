@@ -44,6 +44,16 @@ function fixture(count = 60000) {
     codeGraph: { nodes: [], edges: [], status: "unavailable" }, originals: {}, history: { status: "not-requested", entries: [] } };
 }
 
+function assertExploredOverview(ui, snapshot) {
+  const status = ui.ids.get("status").textContent;
+  assert.match(status, /^Explored evidence overview:/);
+  assert(status.includes(`${snapshot.graph.nodes.length} filtered records`));
+  assert(status.includes(`${snapshot.graph.edges.length} shown / ${snapshot.graph.edges.length} exported relationships`));
+  assert(status.includes(`${snapshot.graph.nodes.length} total exported records`));
+  assert.equal(ui.ids.get("overview").hidden, false); assert.equal(ui.ids.get("graph").hidden, true);
+  assert(!ui.ids.get("expand").disabled, "Completing a whole fit must not gate further exploration");
+}
+
 test("actual bundled UI script reaches all 60000 IDs through complete search/overview, with bounded DOM and explicit historical scope", async t => {
   const snapshot = fixture(), before = JSON.stringify(snapshot), ui = explorerDom(snapshot, { cardMeasure: () => 220 });
   assert.equal(ui.document.documentElement.dataset.explorerReady, "true");
@@ -84,7 +94,9 @@ test("1000-plus initial neighbors prepare only a first-screen batch, cancel atom
   ui.ids.get("search").value = "generic-1099"; ui.event("search", "input"); assert.equal(ui.ids.get("records").children.length, 1);
   ui.event(ui.ids.get("records").children[0].children[0]); ui.event("focus"); await ui.settle();
   assert(ui.ids.get("graph").children.some(element => element.getAttribute("data-node") === "generic-1099"));
-  ui.event("reset"); await ui.settle(); assert.match(ui.ids.get("status").textContent, /0 positions not prepared/);
+  ui.event("reset"); await ui.settle(); assertExploredOverview(ui, snapshot);
+  ui.event(ui.ids.get("records").children[0].children[0]); ui.event("focus"); await ui.settle();
+  assert(ui.ids.get("graph").children.some(element => element.getAttribute("data-node") === "generic-1099"), "Exact late record remains readable after the Canvas fit, without all-card placement");
   ui.ids.get("search").value = '"generic-0"'; ui.event("search", "input"); ui.event(ui.ids.get("records").children[0].children[0]);
   ui.event("restart"); assert.match(ui.ids.get("operation-status").textContent, /Preparing/);
   ui.frame(); await Promise.resolve();
@@ -94,14 +106,16 @@ test("1000-plus initial neighbors prepare only a first-screen batch, cancel atom
 });
 
 test("font changes during initial measurement cannot commit mixed-basis positions or impersonate completed preparation", async () => {
-  const ui = explorerDom(fixture(1100), { cardMeasure: (_element, size) => 220 * size / 14 });
+  const snapshot = fixture(1100), before = JSON.stringify(snapshot), ui = explorerDom(snapshot, { cardMeasure: (_element, size) => 220 * size / 14 });
   const root = () => ui.ids.get("graph").children.find(element => element.getAttribute("data-node") === "generic-0");
   ui.event(root(), "keydown", { shiftKey: true, key: "ArrowRight" }); const pin = root().getAttribute("transform"), camera = ui.ids.get("graph").getAttribute("viewBox");
   ui.frame(); await Promise.resolve(); ui.setModeledFontSize(28); ui.windowEvent("resize"); await ui.settle();
   assert.match(ui.ids.get("status").textContent, /1097 positions not prepared/); assert.equal(root().getAttribute("transform"), pin);
   assert.equal(ui.ids.get("graph").getAttribute("viewBox"), camera); assert(ui.ids.get("cancel-work").disabled);
   assert(!/Direct-neighbor positions prepared/.test(ui.ids.get("operation-status").textContent));
-  ui.event("reset"); await ui.settle(); assert.match(ui.ids.get("status").textContent, /0 positions not prepared/);
+  ui.event("reset"); await ui.settle(); assertExploredOverview(ui, snapshot);
+  ui.event("focus"); await ui.settle(); assert.equal(root().getAttribute("transform"), pin);
+  assert.equal(JSON.stringify(snapshot), before);
 });
 
 test("a retained non-current relationship is labelled before selection and opt-in preserves its exact endpoint", () => {
