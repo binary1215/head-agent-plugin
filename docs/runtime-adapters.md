@@ -64,7 +64,29 @@ to the same output object. It uses the supplied exact-session lookup and at most
 one bounded status map (O(A), not an exact-ID API), never a new SDK/client/auth.
 Experimental code-mode and OpenCode ancestry/P3 entry remain outside this path.
 
-Generated client launch lines are portable. Claude Code `.mcp.json` uses `node` with `${CLAUDE_PLUGIN_ROOT}/scripts/mcp-server.mjs` when the install is outside the project, and project-relative `scripts/mcp-server.mjs` when the install is inside it. Codex project init writes no MCP path; its plugin `.mcp.json` stays `node` plus `scripts/mcp-server.mjs` with `cwd` `.`, and hooks expand `${PLUGIN_ROOT}`. OpenCode `opencode.json` uses `node` and `{env:LODE_PLUGIN_ROOT}/scripts/mcp-server.mjs`. OpenCode config substitution and the plugin `config` hook resolve that placeholder in memory to this package. Those shared files do not receive an absolute Node binary or install path. `.lode/generated/manifest.json` still records `pluginRoot` as host installation identity so a moved install can be recognized. Default graph-explorer HTML keeps local `project.root` and `regenerate.argv` for regeneration on this machine; `--share` omits those generated paths. Default HTML is a local report, not a shared artifact.
+Marketplace client launch lines remain portable. Inside a loaded Claude plugin,
+`${CLAUDE_PLUGIN_ROOT}` is the Host-supplied plugin root. In contrast, explicit
+CLI initialization generates a machine-local Claude project configuration using
+`node` and the selected package's verified absolute MCP entry and working
+directory; it does not assume that plugin-only variable exists. User-owned
+configuration stays untouched. A changed selected installation is reflected by
+normal explicit resume/convergence, not an automatic Host reload. This local
+Claude projection is not a portable file to copy between machines.
+
+Codex project init writes no MCP path; its plugin `.mcp.json` stays `node` plus
+`scripts/mcp-server.mjs` with `cwd` `.`, and hooks expand `${PLUGIN_ROOT}`.
+OpenCode `opencode.json` stays `node` and
+`{env:LODE_PLUGIN_ROOT}/scripts/mcp-server.mjs`; its config hook resolves the
+placeholder in memory without writing an absolute install or Node path into
+that shared file. `.lode/generated/manifest.json` records `pluginRoot` as local
+installation identity. Default graph-explorer HTML retains local `project.root`
+and `regenerate.argv`; `--share` omits those generated regeneration paths.
+
+The optional `LODE_SUBAGENT_WRITE_GUARD` remains off by default. Only exact
+`enforce` enables it; an invalid nonempty value warns on stderr without echoing
+the value, blocking ordinary work, or silently enabling a different policy.
+Known child writes are rejected before optional Session-binding diagnostics;
+this does not grant authority to parent calls or create a Session binding.
 
 Local source-shaped tests and owned OS helper tests do not establish installed
 Host event delivery, model tool choice, native long-compaction behavior or full

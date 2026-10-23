@@ -64,10 +64,30 @@ const explorerCards = (() => {
       const body = first(value.workContent?.summary, value.directionEvidence?.goal, value.description, value.summary,
         value.objective, value.purpose, value.outcome, value.assessment, value.rationale, value.statement, value.explanation,
         value.semantic?.description, value.semantic?.statement, value.proposedPolicy?.statement, value.path, value.qualifiedName);
-      const facts = [["Recorded judgments", value.workContent?.judgments], ["Pending", value.workContent?.pending],
+      const facts = [["Recorded judgments", value.workContent?.judgments], ["Observed work", value.workContent?.observedWork], ["Pending", value.workContent?.pending],
         ["Unknown", value.workContent?.unknowns || value.unknowns], ["Constraints", value.directionEvidence?.constraints],
-        ["Cancelled actions", value.directionEvidence?.cancelledActions], ["Recorded decisions", value.directionEvidence?.decisions]]
+        ["Cancelled actions", value.directionEvidence?.cancelledActions], ["Recorded decisions", value.directionEvidence?.decisions],
+        ["Suggested follow-up (historical; not permission)", value.workContent?.suggestedFollowUp],
+        ["Authored topics (navigation only)", value.workContent?.workTopics]]
         .filter(([, items]) => Array.isArray(items) && items.length);
+      // Preserve the reader's exact selectors/ranges; never reconstruct omitted
+      // wording or reinterpret agent-authored text as a captured user request.
+      const excerpts = (Array.isArray(value.workContentExcerpts) ? value.workContentExcerpts : [])
+        .filter(entry => entry && typeof entry.text === "string").map(entry => {
+          const location = `workContent.${entry.field}${entry.index == null ? "" : `[${entry.index}]`}`
+            + (entry.subfield ? `.${entry.subfield}` : "") + (entry.alternativeIndex == null ? "" : `[${entry.alternativeIndex}]`);
+          return { text: entry.text, heading: `Exact recorded excerpt · ${location} · [${entry.start}, ${entry.end}) / ${entry.totalCharacters}` };
+        });
+      const hasDisplayText = Boolean(body || facts.length || excerpts.length);
+      const firstFact = facts[0]?.[1]?.[0];
+      const factPreview = firstFact && (typeof firstFact === "string" ? firstFact : first(firstFact.assessment, firstFact.reason));
+      const preview = body || (factPreview ? `${facts[0][0]}: ${factPreview}` : "")
+        || (excerpts[0] ? `${excerpts[0].heading}: ${excerpts[0].text}` : "");
+      const emptyNotice = value.kind === "ProductPolicyEvidence" && value.evidenceKind === "user-request" && value.reference
+        ? "Reference-only evidence in this projection; no summary is included. This does not establish whether request text exists elsewhere."
+        : value.detailCoverage === "metadata-only"
+          ? `No readable text in this metadata-only projection${value.detailReasonCode ? ` (${value.detailReasonCode})` : ""}; this does not establish original absence.`
+          : "No supported display text is included in this projection; original availability is reported separately.";
       const conditions = [];
       for (const name of ["Cancelled actions", "Pending", "Unknown", "Constraints"]) {
         const items = facts.find(([heading]) => heading === name)?.[1]; if (items) conditions.push(`${name}: ${items.length}`);
@@ -87,10 +107,10 @@ const explorerCards = (() => {
       if (value.contentPartial || value.workContentCoverage?.partial || value.directionContentCoverage?.partial) conditions.push("Partial exported content");
       const notes = value.origin?.layer === "sessionWork" ? ["Agent-authored work; not a captured user utterance."]
         : value.kind === "ProjectDirection" ? ["Recorded caller-conveyed direction; not automatic transcript capture or new authority."] : [];
-      const result = { title: title(value), kind: kindName(value), body, facts, conditions, notes,
+      const result = { title: title(value), kind: kindName(value), body, facts, excerpts, preview, hasDisplayText, emptyNotice, conditions, notes,
         source: first(value.sourceReference?.path, value.path, value.provenance?.path, value.origin?.path),
         groups: [...(memberships.get(value.nodeId) || [])].map(key => groups.get(key)),
-        excerptNotice: body ? "Excerpt, not a complete summary. Read the record for all wording and conditions." : "Body not included in this export." };
+        excerptNotice: hasDisplayText ? "Excerpt, not a complete summary. Read the record for all wording and conditions." : "" };
       descriptions.set(value, result); return result;
     }
     function identity(value) {

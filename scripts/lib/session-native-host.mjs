@@ -140,7 +140,12 @@ export function createNativeSessionHostBridge({ environment = process.env, runti
         if (prepared) return prepared.context;
         if (!initialized) return null;
         if (requestContext) return requestContext;
-        requestContext = adapter.resolveSessionContext(original, { allowAbsentDefault: true,
+        // A Claude /clear may replace its native ID without an authenticated
+        // old→new continuity edge. An absent binding must not silently switch
+        // a selected logical Session to the Project default. Explicit init/
+        // resume can still select the default, and exact request routes work
+        // independently. Never infer continuity from recency or other callers.
+        requestContext = adapter.resolveSessionContext(original, { allowAbsentDefault: caller.runtime !== "claude" || selecting,
           onBindingRead: binding => { selectionBasis = { expectedRevision: binding.revision,
             expectedBindingDigest: binding.bindingDigest || null }; } });
         return requestContext;

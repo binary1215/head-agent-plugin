@@ -322,7 +322,7 @@ const allTools = [
   },
   {
     name: "head_project_initialize_or_resume",
-    description: "Initialize or resume exactly one HEAD project and project-scoped Session, converge managed plugin projections, and optionally activate Product onboarding only through the explicit product profile. Existing projects require a fresh HEAD semantic proposal or user-owned brief; Core verifies evidence but never infers product meaning. Core is the default. This writes only the selected project and never contacts GraphDB.",
+    description: "Initialize or resume one Lode Project and its explicitly routed logical Session, and converge managed plugin projections. Core is the default. Core initialize/resume requires no Product brief or semantic proposal and leaves optional Product governance inactive or preserves its existing state. Only the explicit Product profile requires a fresh provider proposal or user-owned brief when Product candidates need to be created; Core verifies evidence but never infers product meaning. This writes only the selected project and never contacts GraphDB.",
     inputSchema: {
       type: "object",
       properties: {
@@ -655,7 +655,7 @@ const allTools = [
   },
   {
     name: "head_runtime_adapters",
-    description: "Inspect provider-neutral runtime contracts, privacy-bounded executable discovery, fixed non-session version and protocol/capability evidence, and HEAD project/session capability binding without creating or controlling a provider session.",
+    description: "Inspect provider-neutral runtime contracts, privacy-bounded executable discovery, fixed non-session version and protocol/capability evidence, and Lode project/session capability binding without creating or controlling a provider session.",
     inputSchema: {
       type: "object",
       properties: { project_root: { type: "string", minLength: 1 } },
@@ -2342,6 +2342,14 @@ async function dispatchSessionRequest(request, options = {}) {
   const args = routed ? outer?.arguments : outer;
   const hasSelection = args && Object.hasOwn(args, "session_id");
   const requestedName = semanticToolName(routed ? outer?.name : request.params?.name);
+  // A verified child write has the same optional policy regardless of whether
+  // its caller has selected a logical Session. Reject it before an unrelated
+  // absent-binding diagnostic can hide the existing write-guard explanation.
+  // Unknown/parent callers and disabled guards retain their normal routing.
+  if (request.method === "tools/call" && options.caller?.subagent === true) {
+    const rejection = await subagentStateWriteRejection(requestedName, args, options.caller, options.hostEnvironment ?? process.env);
+    if (rejection) return failure(request.id ?? null, rejection);
+  }
   // Only views/effects that actually consume the selected Session need its
   // binding. Project-scoped Product/Observation/source work is independent.
   const dependent = sessionCallRequiresBinding(requestedName);

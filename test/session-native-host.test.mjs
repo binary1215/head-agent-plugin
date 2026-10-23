@@ -12,6 +12,7 @@ import { createNativeSessionHostBridge } from "../scripts/lib/session-native-hos
 import { createSessionHostRequestRegistry, SESSION_HOST_REQUEST_HELPER } from "../scripts/lib/session-host-request.mjs";
 import { sessionCallRequiresBinding } from "../scripts/lib/session-routing.mjs";
 import { dispatch, catalogTools } from "../scripts/mcp-server.mjs";
+import { sessionStartContext } from "../scripts/session-host-hook.mjs";
 
 // head_* request inputs below deliberately exercise compatibility dispatch;
 // generated catalog and Hook assertions use the canonical Lode vocabulary.
@@ -59,6 +60,65 @@ async function claudeCall(bridge,wire,nativeSessionId="native-claude-root",agent
   assert.equal((await invoke(bridge,hookRequest(wire,nativeSessionId,agentId))).result.isError,undefined);
   return invoke(bridge,wire);
 }
+
+test("synthetic Claude changed native ID never falls through to default or another chat; explicit recovery stays usable", async t => {
+  const { root, environment, operational } = fixture(t);
+  const native = createNativeSessionHostBridge({ runtime: "claude", environment });
+  t.after(() => native.dispose());
+  const a = createHeadSession({ root, purpose: "Old chat A" }).sessionId;
+  const b = createHeadSession({ root, purpose: "Simultaneous chat B" }).sessionId;
+  await claudeCall(native, claudeRequest(root, "head_project_initialize_or_resume", { session_id: a }, "old-a-init"), "old-a");
+  await claudeCall(native, claudeRequest(root, "head_project_initialize_or_resume", { session_id: b }, "old-b-init"), "old-b");
+  const before = snapshot(root).concat(snapshot(operational));
+  const output = sessionStartContext({ runtime: "claude", environment,
+    event: { hook_event_name: "SessionStart", source: "clear", cwd: root, session_id: "new-a", old_session_id: "old-a" } });
+  assert.equal(JSON.parse(output.hookSpecificOutput.additionalContext).logicalSessionId, null,
+    "An unverified old_session_id field is not a continuity contract.");
+  const unresolved = await claudeCall(native, claudeRequest(root, "head_conversation_enter", {}, "new-a-enter"), "new-a");
+  assert.equal(unresolved.result.structuredContent.status, "session_selection_unresolved");
+  assert.equal(unresolved.result.structuredContent.ordinaryWorkBlocked, false);
+  const explicit = await claudeCall(native, claudeRequest(root, "head_conversation_enter", { session_id: a }, "new-a-explicit"), "new-a");
+  assert.equal(explicit.result.structuredContent.workContext.sessionId, a);
+  const child = await claudeCall(native, claudeRequest(root, "head_conversation_enter", {}, "old-a-child"), "old-a", "new-child");
+  assert.equal(child.result.structuredContent.status, "session_selection_unresolved");
+  assert.equal((await claudeCall(native, claudeRequest(root, "head_conversation_enter", {}, "old-b-enter"), "old-b")).result.structuredContent.workContext.sessionId, b);
+  assert.equal((await claudeCall(native, claudeRequest(root, "head_project_direction_read", {}, "new-a-project"), "new-a")).error, undefined,
+    "Independent Project reads have no new Session gate.");
+  assert.deepEqual(snapshot(root).concat(snapshot(operational)), before, "Reads create no migration/binding/P2 writes.");
+  await claudeCall(native, claudeRequest(root, "head_project_initialize_or_resume", { session_id: a }, "new-a-resume"), "new-a");
+  assert.equal((await claudeCall(native, claudeRequest(root, "head_conversation_enter", {}, "new-a-after-resume"), "new-a")).result.structuredContent.workContext.sessionId, a);
+  const fresh = await claudeCall(native, claudeRequest(root, "head_project_initialize_or_resume", {}, "fresh-init-default"), "fresh-chat");
+  assert.equal(fresh.result.structuredContent.project.sessionId, inspectProject(root).state.sessionId,
+    "An explicit initialize/resume still may select the verified default.");
+});
+
+test("Claude pending/lost/corrupt bindings stay unresolved while exact reads and Project work survive", async t => {
+  const { root, environment, operational } = fixture(t), target = createHeadSession({ root, purpose: "Exact retained evidence" }).sessionId;
+  const native = createNativeSessionHostBridge({ runtime: "claude", environment });
+  t.after(() => native.dispose());
+  for (const status of ["pending", "lost", "corrupt"]) {
+    const caller = "claude-" + status;
+    const host = createSessionHostAdapter({ runtime: "claude", nativeSessionId: caller, environment });
+    if (status === "pending") host.prepareSelection({ root, sessionId: target });
+    else {
+      host.select({ root, sessionId: target, expectedRevision: 0 });
+      if (status === "lost") host.lose({ root, expectedRevision: 1 });
+      else {
+        const digest = host.read({ root }).bindingDigest;
+        const file = fs.readdirSync(operational, { recursive: true }).map(relative => path.join(operational, relative))
+          .find(file => file.endsWith("binding.json") && JSON.parse(fs.readFileSync(file, "utf8")).bindingDigest === digest);
+        fs.writeFileSync(file, "{corrupt synthetic binding");
+      }
+    }
+    const before = snapshot(root).concat(snapshot(operational));
+    const read = await claudeCall(native, claudeRequest(root, "head_conversation_enter", {}, status + "-entry"), caller);
+    assert.equal(read.result.structuredContent.status, "session_selection_unresolved", status);
+    const exact = await claudeCall(native, claudeRequest(root, "head_conversation_enter", { session_id: target }, status + "-exact"), caller);
+    assert.equal(exact.result.structuredContent.workContext.sessionId, target, status);
+    assert.equal((await claudeCall(native, claudeRequest(root, "head_project_direction_read", {}, status + "-project"), caller)).error, undefined);
+    assert.deepEqual(snapshot(root).concat(snapshot(operational)), before);
+  }
+});
 
 test("init/resume selects; later automatic entry preserves Session without read writes", async t => {
   const { root, storage, operational, bridge, host } = fixture(t), native = bridge();

@@ -210,8 +210,18 @@ for (const holdEof of [false, true]) for (const [action, code] of [["deadline", 
         const unclean = assert.rejects(closing, { code: "CODEX_RPC_UNCLEAN_EXIT" });
         assert.equal(await eofObserved, true, "actual fixture received EOF before deliberate escalation");
         assert.equal(f.journal.some(event => event.event === "process-closed"), false);
-        t.mock.timers.tick(Math.floor(f.config.terminationGraceMs / 3));
-        await unclean;
+        const terminate = t.mock.method(owner, "terminate");
+        try {
+          const phaseMs = Math.floor(f.config.terminationGraceMs / 3);
+          t.mock.timers.tick(phaseMs - 1);
+          // Drain promise continuations without advancing the controlled clock.
+          // An early/unawaited stop must fail even if native close arrives later.
+          await new Promise(resolve => setImmediate(resolve));
+          assert.equal(terminate.mock.callCount(), 0, "No owned stop before the configured EOF phase elapses");
+          assert.equal(f.journal.some(event => event.event === "process-closed"), false);
+          t.mock.timers.tick(1); await unclean;
+          assert.equal(terminate.mock.calls[0]?.arguments[0], false, "The configured phase first requests an owned soft stop");
+        } finally { terminate.mock.restore(); }
       } else await closing;
       assert.equal(wire.writes.filter(frame => frame.method === "thread/fork").length, 0);
       assert.equal(wire.branched(), false);
@@ -455,10 +465,14 @@ test("EOF-resistant subprocess is owned, forcibly cleaned and never reported cle
   assert.equal(closed.cleanupTiming.graceMs, 200);
   assert.equal(closed.cleanupTiming.eofRejected, false);
   assert.ok(closed.cleanupTiming.eofFlushedAtMs >= closed.cleanupTiming.startedAtMs);
-  // Real wall time complements the explicit-clock queue cases. No grace was
-  // widened: the configured first phase is the unchanged floor(200 / 3).
-  assert.ok(closed.cleanupTiming.softStopAtMs - closed.cleanupTiming.startedAtMs >= 65);
+  // The 65+1 controlled-clock boundary above proves the unchanged 66ms phase.
+  // Real Node timers do not guarantee an exact performance.now delta:
+  // https://github.com/nodejs/node/blob/v24.18.0/doc/api/timers.md#settimeoutcallback-delay-args
+  assert.ok(closed.cleanupTiming.softStopAtMs >= closed.cleanupTiming.eofFlushedAtMs);
   assert.ok(closed.cleanupTiming.processCloseAtMs >= closed.cleanupTiming.softStopAtMs);
+  assert.equal(closed.exactExitObserved, true);
+  assert.equal(closed.supervision.ownershipEstablished, true);
+  assert.equal(closed.supervision.treeCleanupVerified, true);
 });
 
 test("closing a never-started connection prevents late spawning", async t => {

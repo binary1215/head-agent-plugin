@@ -44,6 +44,16 @@ function fixture(count = 60000) {
     codeGraph: { nodes: [], edges: [], status: "unavailable" }, originals: {}, history: { status: "not-requested", entries: [] } };
 }
 
+function assertExploredOverview(ui, snapshot) {
+  const status = ui.ids.get("status").textContent;
+  assert.match(status, /^Explored evidence overview:/);
+  assert(status.includes(`${snapshot.graph.nodes.length} filtered records`));
+  assert(status.includes(`${snapshot.graph.edges.length} shown / ${snapshot.graph.edges.length} exported relationships`));
+  assert(status.includes(`${snapshot.graph.nodes.length} total exported records`));
+  assert.equal(ui.ids.get("overview").hidden, false); assert.equal(ui.ids.get("graph").hidden, true);
+  assert(!ui.ids.get("expand").disabled, "Completing a whole fit must not gate further exploration");
+}
+
 test("actual bundled UI script reaches all 60000 IDs through complete search/overview, with bounded DOM and explicit historical scope", async t => {
   const snapshot = fixture(), before = JSON.stringify(snapshot), ui = explorerDom(snapshot, { cardMeasure: () => 220 });
   assert.equal(ui.document.documentElement.dataset.explorerReady, "true");
@@ -71,19 +81,22 @@ test("actual bundled UI script reaches all 60000 IDs through complete search/ove
   t.diagnostic(JSON.stringify({ scope: "Node VM + limited DOM/Canvas double; not actual browser or GUI", initialMs: ui.initialMs, svgCreated: ui.stats.svg }));
 });
 
-test("1000-plus initial neighbors yield during measurement, cancel without partial coordinates, and remain accessible for explicit placement", async () => {
+test("1000-plus initial neighbors prepare only a first-screen batch, cancel atomically before commit, and remain accessible for explicit placement", async () => {
   const snapshot = fixture(1100), ui = explorerDom(snapshot, { cardMeasure: (_element, size) => 220 * size / 14 });
   assert.match(ui.ids.get("status").textContent, /1097 positions not prepared/); assert(!ui.ids.get("expand").disabled);
   const root = () => ui.ids.get("graph").children.find(element => element.getAttribute("data-node") === "generic-0");
   const transform = root().getAttribute("transform"), camera = ui.ids.get("graph").getAttribute("viewBox");
-  ui.frame(); await Promise.resolve(); assert(Number(ui.document.documentElement.dataset.explorerCardMeasures) >= 35);
+  ui.frame(); await Promise.resolve(); assert.equal(Number(ui.document.documentElement.dataset.explorerCardMeasures), 15, "3 initial cards + viewport-derived 12-card batch, not every hub neighbor");
+  assert(!ui.ids.get("cancel-work").disabled, "First-screen batch yields before committing, so cancellation can still discard every staged position");
   ui.event("cancel-work"); await ui.settle();
   assert.match(ui.ids.get("status").textContent, /1097 positions not prepared/); assert.match(ui.ids.get("operation-status").textContent, /Cancelled neighbor.*not a completed layout/);
   assert.equal(root().getAttribute("transform"), transform); assert.equal(ui.ids.get("graph").getAttribute("viewBox"), camera);
   ui.ids.get("search").value = "generic-1099"; ui.event("search", "input"); assert.equal(ui.ids.get("records").children.length, 1);
   ui.event(ui.ids.get("records").children[0].children[0]); ui.event("focus"); await ui.settle();
   assert(ui.ids.get("graph").children.some(element => element.getAttribute("data-node") === "generic-1099"));
-  ui.event("reset"); await ui.settle(); assert.match(ui.ids.get("status").textContent, /0 positions not prepared/);
+  ui.event("reset"); await ui.settle(); assertExploredOverview(ui, snapshot);
+  ui.event(ui.ids.get("records").children[0].children[0]); ui.event("focus"); await ui.settle();
+  assert(ui.ids.get("graph").children.some(element => element.getAttribute("data-node") === "generic-1099"), "Exact late record remains readable after the Canvas fit, without all-card placement");
   ui.ids.get("search").value = '"generic-0"'; ui.event("search", "input"); ui.event(ui.ids.get("records").children[0].children[0]);
   ui.event("restart"); assert.match(ui.ids.get("operation-status").textContent, /Preparing/);
   ui.frame(); await Promise.resolve();
@@ -93,14 +106,16 @@ test("1000-plus initial neighbors yield during measurement, cancel without parti
 });
 
 test("font changes during initial measurement cannot commit mixed-basis positions or impersonate completed preparation", async () => {
-  const ui = explorerDom(fixture(1100), { cardMeasure: (_element, size) => 220 * size / 14 });
+  const snapshot = fixture(1100), before = JSON.stringify(snapshot), ui = explorerDom(snapshot, { cardMeasure: (_element, size) => 220 * size / 14 });
   const root = () => ui.ids.get("graph").children.find(element => element.getAttribute("data-node") === "generic-0");
   ui.event(root(), "keydown", { shiftKey: true, key: "ArrowRight" }); const pin = root().getAttribute("transform"), camera = ui.ids.get("graph").getAttribute("viewBox");
   ui.frame(); await Promise.resolve(); ui.setModeledFontSize(28); ui.windowEvent("resize"); await ui.settle();
   assert.match(ui.ids.get("status").textContent, /1097 positions not prepared/); assert.equal(root().getAttribute("transform"), pin);
   assert.equal(ui.ids.get("graph").getAttribute("viewBox"), camera); assert(ui.ids.get("cancel-work").disabled);
   assert(!/Direct-neighbor positions prepared/.test(ui.ids.get("operation-status").textContent));
-  ui.event("reset"); await ui.settle(); assert.match(ui.ids.get("status").textContent, /0 positions not prepared/);
+  ui.event("reset"); await ui.settle(); assertExploredOverview(ui, snapshot);
+  ui.event("focus"); await ui.settle(); assert.equal(root().getAttribute("transform"), pin);
+  assert.equal(JSON.stringify(snapshot), before);
 });
 
 test("a retained non-current relationship is labelled before selection and opt-in preserves its exact endpoint", () => {
@@ -137,7 +152,9 @@ test("modeled font/width changes preserve camera, pins and keyed reading state t
   const root = mapNode(), read = ui.ids.get("selection-cards").children[0], detail = read.children.find(item => item.tagName === "details"); read.open = true; detail.open = true;
   ui.event(root, "keydown", { shiftKey: true, key: "ArrowRight" }); await ui.settle();
   const pin = mapNode().getAttribute("transform"), camera = ui.ids.get("graph").getAttribute("viewBox"), height = Number(mapNode().children[0].getAttribute("height"));
-  assert.equal(Number(ui.document.documentElement.dataset.explorerCardMeasures), 80, "Every committed neighbor has its actual measured extent, no unrequested inventory");
+  assert.equal(Number(ui.document.documentElement.dataset.explorerCardMeasures), 15, "Every first-screen neighbor has its actual extent; 65 offscreen neighbors remain on demand");
+  assert.match(ui.ids.get("status").textContent, /65 positions not prepared/);
+  assert.match(ui.ids.get("operation-status").textContent, /65 further positions remain on demand/);
   ui.setModeledFontSize(28); ui.windowEvent("resize"); ui.frame();
   assert.match(ui.ids.get("operation-status").textContent, /Measuring changed/);
   ui.event("cancel-work"); await ui.settle();

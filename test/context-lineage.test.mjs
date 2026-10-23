@@ -6,6 +6,7 @@ import { spawn } from "node:child_process";
 import vm from "node:vm";
 import { compareExactSourceVersions } from "../scripts/lib/context-source-delta.mjs";
 import { createContextSourceReader } from "../scripts/lib/context-source-reader.mjs";
+import { explainContextLineage } from "../scripts/lib/context-lineage.mjs";
 import { queryProjectGraph } from "../scripts/lib/project-graph.mjs";
 import { buildGraphExplorerSnapshot, exportGraphExplorer } from "../scripts/lib/graph-explorer.mjs";
 import { formatCliResult, formatMcpToolContent } from "../scripts/lib/cli-presentation.mjs";
@@ -27,6 +28,64 @@ const newSource = oldSource.replace("'allow'", "'block'");
 const version = (text, file = "src/action.mjs", projectId = "synthetic-project") => ({ text, digest: sha(text), path: file, projectId, basis: { kind: "synthetic-exact-version" } });
 const compare = (a, b, file) => compareExactSourceVersions(version(a, file), version(b, file), "synthetic-project");
 const symbol = (result, name) => result.symbols.find(item => (item.after || item.before).qualifiedName === name);
+
+test("separated late changes share exact excerpt budgets without inventing contiguous source lines", () => {
+  const lines = Array.from({ length: 1200 }, (_, i) => `line ${i + 1}`), next = [...lines];
+  next[9] = "early change"; next[999] = "late change";
+  const result = compare(lines.join("\n"), next.join("\n"), "notes.txt"), { regions, coverage } = result.diff;
+  assert.equal(regions.length, 2); assert(regions[0].after.text.includes("early change")); assert(regions[1].after.text.includes("late change"));
+  for (const side of ["before", "after"]) {
+    assert(coverage[side].includedLines <= 160); assert(coverage[side].includedBytes <= 32768);
+    for (const region of regions) assert.equal(region[side].text, (side === "before" ? lines : next).slice(region[side].startLine - 1, region[side].endLine).join("\n"));
+  }
+  assert(regions[1].after.startLine > 990); assert.equal(result.diff.before, regions[0].before);
+});
+
+test("many or very long changed regions preserve shared UTF8 byte and line bounds with honest omissions", () => {
+  const a = [], b = [];
+  for (let i = 0; i < 200; i++) { a.push(`old ${i}`, ...Array.from({ length: 8 }, (_, j) => `anchor ${i}-${j}`)); b.push(`new ${i}`, ...Array.from({ length: 8 }, (_, j) => `anchor ${i}-${j}`)); }
+  const many = compare(a.join("\n"), b.join("\n"), "notes.txt").diff;
+  assert.equal(many.coverage.includedRegionCount, 160); assert.equal(many.coverage.omittedRegionCount, 40);
+  assert(many.regions.at(-1).after.text.includes("new 199"));
+  for (const side of ["before", "after"]) assert(many.coverage[side].includedLines <= 160 && many.coverage[side].includedBytes <= 32768);
+  const long = compare("old\n" + "🙂".repeat(20000), "new\n" + "한".repeat(20000), "notes.txt").diff;
+  for (const side of ["before", "after"]) {
+    assert(long.coverage[side].textTruncated); assert(long.coverage[side].includedBytes <= 32768);
+    assert(!/[\ud800-\udbff]$/u.test(long[side].text));
+  }
+  for (const [before, after] of [["x\ny", "x\ninsert\ny"], ["x\nremoved\ny", "x\ny"], ["", "new"], ["same", "same"]]) {
+    const diff = compare(before, after, "notes.txt").diff;
+    assert.equal(diff.changed, before !== after); assert(diff.coverage.before.includedLines <= 160); assert(diff.coverage.after.includedLines <= 160);
+  }
+});
+
+test("recorded exact World IDs bypass the 128 inventory window while pair-only exhaustion retains its actual identity", async t => {
+  const f = fixture(t); fs.mkdirSync(path.join(f.root, "src")); fs.writeFileSync(path.join(f.root, "src/action.mjs"), oldSource);
+  const built = await buildWorldModel({ root: f.root }), world = built.snapshot;
+  const pair = { sourceSnapshotId: world.temporalProvenanceGraph.sourceSnapshotId, graphSnapshotId: world.temporalProvenanceGraph.graphSnapshotId };
+  const directory = path.join(f.root, ".lode/world-model/snapshots");
+  for (let i = 0; i < 129; i++) fs.writeFileSync(path.join(directory, `world-model-${i.toString(16).padStart(24, "0")}.json`), "{}");
+  assert(fs.readdirSync(directory).sort().indexOf(`${world.worldModelId}.json`) >= 128);
+  const query = async endpoint => {
+    const document = { projectId: f.owner.project.projectId, before: endpoint, after: endpoint, changes: [{ path: "src/action.mjs" }], resultPacketId: null, reviewDecisionId: null };
+    const text = JSON.stringify(document); fs.writeFileSync(path.join(f.root, "change-original.json"), text);
+    const before = snapshot(f.base);
+    const result = await explainContextLineage({ root: f.root, project: f.owner.project, storage: f.storage, selection: {
+      query: { details: true, paths: ["src/action.mjs"], maxNodes: 10 }, basis: { projectId: f.owner.project.projectId }, edges: [],
+      nodes: [{ nodeId: "synthetic-change", kind: "ChangeSet", sourceReference: { path: "change-original.json", digest: sha(text) } }],
+    } });
+    assert.deepEqual(snapshot(f.base), before); return result;
+  };
+  const exact = await query({ ...pair, worldModelId: world.worldModelId });
+  assert.equal(exact.files[0].comparisons[0].status, "observed"); assert.equal(exact.files[0].comparisons[0].snapshotLookup.before.method, "recorded-exact-world-id"); assert.equal(exact.gaps.length, 0);
+  const legacy = await query(pair), exhausted = legacy.gaps.find(item => item.reasonCode === "RETAINED_SOURCE_SNAPSHOT_LOOKUP_BUDGET_REACHED");
+  assert(exhausted); assert.equal(exhausted.worldModelId, undefined); assert.equal(exhausted.sourceSnapshotId, pair.sourceSnapshotId); assert.equal(exhausted.uninspectedSnapshotCount, 2);
+  assert.equal(legacy.files[0].comparisons[0].snapshotLookup.before.worldIdRecorded, false);
+  const missing = await query({ ...pair, worldModelId: "world-model-ffffffffffffffffffffffff" });
+  assert(missing.gaps.some(item => item.reasonCode === "WORLD_MODEL_SNAPSHOT_MISSING")); assert.equal(missing.files[0].comparisons[0].status, "unknown");
+  const mismatched = await query({ ...pair, worldModelId: world.worldModelId, graphSnapshotId: "different-graph" });
+  assert(mismatched.gaps.some(item => item.reasonCode === "RETAINED_SOURCE_SNAPSHOT_PAIR_MISMATCH"));
+});
 
 test("comment removal preserves token boundaries and line terminators instead of claiming code edits are comment-only", () => {
   const pairs = [
@@ -299,7 +358,7 @@ test("source reader refuses traversal, links, invalid UTF8 and absent old bytes 
   assert.equal(bom.text, bomSource); assert.equal(sha(bom.text), bom.digest);
   assert.equal(compareExactSourceVersions(bom, bom, f.owner.project.projectId).fileBytes, "unchanged");
   assert.equal(bomReader.diagnostics().localGitCommands, 0);
-  const missing = await reader.read("missing.mjs", "a".repeat(64)); assert.equal(missing.status, "unavailable"); assert.equal(reader.diagnostics().writes, false);
+  const missing = await reader.read("missing.mjs", "a".repeat(64)); assert.equal(missing.status, "unavailable"); assert.equal(missing.reasonCode, "LOCAL_GIT_NOT_A_REPOSITORY"); assert.equal(reader.diagnostics().writes, false);
   fs.mkdirSync(path.join(f.base, "outside-source")); fs.writeFileSync(path.join(f.base, "outside-source/action.mjs"), oldSource);
   try { fs.symlinkSync(path.join(f.base, "outside-source"), path.join(f.root, "linked"), process.platform === "win32" ? "junction" : "dir");
     const linked = await reader.read("linked/action.mjs", sha(oldSource)); assert.equal(linked.reasonCode, "PROJECT_GRAPH_SYMLINK_PATH");
@@ -308,6 +367,10 @@ test("source reader refuses traversal, links, invalid UTF8 and absent old bytes 
   const open = fs.openSync, denied = createContextSourceReader(f.root, f.owner.project.projectId);
   t.mock.method(fs, "openSync", function(file, ...args) { if (file === path.join(f.root, "denied.mjs")) throw Object.assign(new Error("Synthetic permission denial"), { code: "EACCES" }); return open.call(this, file, ...args); });
   assert.equal((await denied.read("denied.mjs", sha(oldSource))).reasonCode, "EACCES"); assert.equal(denied.diagnostics().localGitCommands, 0);
+  fs.writeFileSync(path.join(f.root, ".git"), `gitdir: ${path.join(f.base, "missing-git-metadata")}\n`);
+  const damaged = createContextSourceReader(f.root, f.owner.project.projectId);
+  assert.equal((await damaged.read("missing.mjs", "a".repeat(64))).reasonCode, "LOCAL_GIT_COMMAND_FAILED");
+  assert.equal(damaged.diagnostics().localGitCommands, 1);
 });
 
 test("missing-path historical excerpts retain exact digest and report the actually included line range", async t => {

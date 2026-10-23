@@ -356,3 +356,32 @@ cannot author that move. The verifier also covers interruption before/after chec
 publication, independent writers, divergent integration and non-accept review.
 It requires no Git repository, GraphDB, WorkspaceHost, Herdr process, or provider
 session resume.
+
+## Bounded prompt references and absent native correlation
+
+Optional local prompt references are redacted plaintext P5 hints, not encryption,
+a transcript, an instruction or a P2 recovery source. The prompt-only store uses
+0700 directories and 0600 staging files on POSIX, checks owned regular entries
+and rejects unsafe links. Existing references are bounded and re-masked before
+reuse. These are best-effort credential patterns, not a universal secret detector.
+On Windows, the dedicated prompt directory and regular single-link files use a
+protected DACL limited to the current token SID and SYSTEM. A hidden, bounded
+Windows PowerShell/.NET check re-reads that ACL before success; POSIX mode flags
+are not used as Windows proof. Verification is reused only for the same filesystem
+entry within one synchronous operation, never across callers/turns. No general
+operational directory ACL is changed. Missing verifier, unowned entries or unsafe
+links suppress capture/reuse rather than claim private storage. This adds local
+helper-start cost and does not protect against the same user, administrators or
+kernel access, encrypt records, or reverse any prior exposure.
+Existing directory/file checks share one fixed helper request; a new stage is
+checked separately before plaintext. Helpers share one five-second monotonic
+budget per public operation, and a failed check is not retried within that call.
+Hooks still wait synchronously for this optional work; it is not a no-overhead or
+nonblocking performance guarantee.
+Unavailable optional storage suppresses that hint, not ordinary direct work.
+
+An absent Claude native-caller binding cannot silently choose another logical
+Session through the Project default. Exact explicit logical routes and explicit
+initialize/resume remain available. No old-to-new native-ID correlation is guessed
+from recency or a different caller. Synthetic routing tests do not prove actual
+Claude `/clear` ID changes or automatic cross-ID restoration.

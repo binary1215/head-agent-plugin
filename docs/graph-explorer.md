@@ -74,9 +74,26 @@ camera transform for drawing, pointer hits and rectangle selection, including
 resized viewports; choosing a Canvas point does not exit the overview.
 Node distance is not a relevance score.
 
+When the explored set exceeds readable screen capacity, Explored map uses the
+existing Canvas overview for that explored subset instead of creating thousands
+of tiny card elements. The status distinguishes it from All evidence, which still
+shows the whole inventory. Prior card coordinates and pins are untouched; select
+a record and use Focus selection to return to readable cards. This is display
+detail, not a record/relationship cap. Bulk placement also yields during crowded
+candidate searches, and a cancelled/superseded fit cannot later replace your view.
+
 Current evidence is the default. Include historical / non-current evidence
 reveals retained records and exact relationships with their original state.
 This switch cannot make them current or authorize an effect.
+
+Expanded cards read recorded observations and suggested follow-ups even when a
+work record has no summary. Map cards show an excerpt; reading cards retain the
+exported structured content and exact partial-excerpt field/range labels. These
+are agent-authored records, not captured user speech or permission. Reference-only
+evidence and metadata-only projections have distinct notices. Exact-original
+omission or read-failure codes remain separate; a missing summary does not prove
+that the original is absent. Snapshot lookup notices match both the lookup method
+and the complete recorded World/Source/Graph endpoint, not World ID alone.
 
 Selected records stay together in individually folded reading cards. Open the
 record you want to read; selecting another does not open every body or replace
@@ -256,7 +273,22 @@ selection tools. Their controls and all exported metadata remain available.
 Cards replace the former circle labels; glyphs are not squeezed to fit a fixed
 caption width. Source/VM tests, including explicitly modeled font/width changes,
 do not prove actual browser layout, mobile reading, 200% text, real gestures or
-performance. Actual GUI verification remains separately pending.
+performance. The previously accepted synthetic-reader GUI scope does not prove
+this follow-up's new layout, mobile or large-graph behavior; those require
+separate actual browser verification.
+
+Additional selection retains an exact comparison pair's open diff, file, changed
+region and scroll state; another pair does not inherit them. Layer navigation
+uses exact source identity rather than selecting an unrelated first record.
+Hidden selections remain named with a restore action. Reading/diff/map jumps
+reduce narrow-screen travel without expanding all cards by default.
+
+Initial placement prioritizes the current viewport. The complete metadata and
+direct-neighbor inventory remain accessible; explicit expansion and explored-map
+placement still reach them. Initial and resized batches yield before atomic
+commit, so cancellation or changed font metrics cannot publish partial geometry.
+Overview geometry caching and offscreen-edge culling change drawing cost, not
+which relationships exist. Source/model tests are not a 60fps or memory claim.
 
 When the current path is not found, an exact cited digest can still locate
 bounded historical raw Git bytes locally. The excerpt is separate from an

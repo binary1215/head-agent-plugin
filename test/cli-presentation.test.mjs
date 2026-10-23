@@ -268,6 +268,70 @@ test("ordinary project status leads with the task and hides implementation detai
   assert.match(doctor, /Command:|MCP:/u);
 });
 
+test("quiet and notice readiness disclose preserved Host configuration and modified projections without a work gate", () => {
+  for (const mode of ["quiet", "notice", "normal"]) {
+    const value = projectExperience(); value.presentation = { mode };
+    value.project = { integrations: { claude: { status: "manual", mcpProjection: ".lode/generated/claude.mcp.json", instructionProjection: ".lode/generated/lode-instructions.md" }, codex: { status: "managed", path: "AGENTS.md" } } };
+    value.drift = [{ path: "AGENTS.md", reason: "modified" }];
+    const before = JSON.stringify(value);
+    for (const text of [formatProjectStatus(value), formatProjectBootstrap(value)]) {
+      assert(text.includes("Automatic connection was not verified")); assert(text.includes(".lode/generated/claude.mcp.json"));
+      assert(text.includes("AGENTS.md (modified)")); assert(text.includes("ordinary work continues"));
+      assert(!text.includes("run doctor before continuing")); assert(!text.includes("Host connected"));
+    }
+    assert.equal(JSON.stringify(value), before);
+  }
+  const value = projectExperience(); value.project = { integrations: { codex: { status: "managed", path: "AGENTS.md" } } };
+  assert(!formatProjectStatus(value).includes("Automatic connection"));
+});
+
+test("World and document CLI summaries bound human output while preserving the raw result and exact read routes", () => {
+  const world = { status: "stale", snapshot: { worldModelId: "world-model-A", summary: { fileCount: 9000, symbolCount: 30000 }, files: Array(500).fill({ text: "do-not-dump-original".repeat(100) }), temporalProvenanceGraph: { graphSnapshotId: "graph-A", nodes: Array(500).fill({ text: "do-not-dump-original" }) } },
+    changes: { added: Array.from({ length: 100 }, (_, i) => `src/new-${i}.mjs`), changed: ["src/action.mjs"], removed: [], productModelChanged: true } };
+  const before = JSON.stringify(world), text = formatCliResult("world-status", world);
+  assert(text.length < 2200); assert(text.includes("World: stale")); assert(text.includes("fileCount: 9000")); assert(text.includes("94 more in --json")); assert(text.includes('lode-agent world-status "<project>" --json'));
+  assert(!text.includes("do-not-dump-original")); assert.equal(JSON.stringify(world), before);
+  const docs = { status: "projected", worldModelStatus: "current", worldModelId: "world-A", projection: { projection: { documentProjectionId: "docs-A", documents: Array(500).fill({ content: "do-not-dump-original" }), summary: { documentCount: 500 } }, publishedLocations: Array.from({ length: 500 }, (_, i) => ({ relativePath: `knowledge/${i}.md` })) } };
+  const built = formatCliResult("world-docs-build", docs); assert(built.length < 2200); assert(built.includes("documentCount: 500")); assert(built.includes("497 more in --json")); assert(!built.includes("do-not-dump-original"));
+  assert(built.includes("do not repeat a mutation solely to inspect details"));
+  const current = formatCliResult("world-docs-status", { status: "source-stale", worldModelStatus: "stale", projection: { status: "current", candidateRequired: true, drift: [{ relativePath: "knowledge/policy.md", changeType: "modified" }] } });
+  assert(current.includes("source-stale")); assert(current.includes("knowledge/policy.md (modified)")); assert(current.includes("independent work continues"));
+  const receipt = { status: "verified", receipt: { refreshReceiptId: "refresh-receipt-abc" } };
+  assert(formatCliResult("world-refresh-read", receipt).includes('--receipt "refresh-receipt-abc" --json'));
+});
+
+test("World refresh summary reads actual nested receipt changes and separate blocked or failed document outcomes", () => {
+  // Return nesting/statuses from refreshWorldModelLocked/completePostRefreshProjection,
+  // not the top-level inspectWorldModel.changes or a fabricated reasonCode field.
+  const candidateSetId = "document-change-candidate-set-" + "a".repeat(24);
+  for (const [status, reasonCode, candidate] of [
+    ["blocked-edited-view", "DOCUMENT_CHANGE_CANDIDATES_REQUIRE_REVIEW", candidateSetId],
+    ["failed", "DOCUMENT_PROJECTION_PUBLISH_MISMATCH", null],
+  ]) {
+    const value = { status: "refreshed", receiptFile: "synthetic/refresh-receipt.json",
+      worldModel: { worldModelId: "world-model-" + "b".repeat(24), sourceSnapshotId: "source-snapshot-" + "c".repeat(24), graphSnapshotId: "graph-snapshot-" + "d".repeat(24) },
+      receipt: { kind: "IncrementalRefreshReceipt", status: "refreshed", refreshReceiptId: "incremental-refresh-receipt-" + "e".repeat(24),
+        observedChanges: { added: Array.from({ length: 100 }, (_, i) => `src/added-${i}.mjs`), changed: ["src/action.mjs"], removed: ["src/old.mjs"] } },
+      postRefreshProjection: { status, receiptFile: "synthetic/post-refresh-receipt.json", receipt: { kind: "PostRefreshProjectionReceipt",
+        postRefreshProjectionReceiptId: "post-refresh-projection-receipt-" + "f".repeat(24), outcome: {
+          status, reasonCode, documentProjectionId: null, documentProjectionHash: null, candidateSetId: candidate, candidateSetHash: candidate ? "a".repeat(64) : null,
+        } } },
+    };
+    const before = JSON.stringify(value), output = formatCliResult("world-refresh", value);
+    assert(output.includes("World: refreshed.")); assert(output.includes("Recorded refresh source added")); assert(output.includes("src/added-0.mjs")); assert(output.includes("94 more in --json"));
+    assert(output.includes("src/action.mjs")); assert(output.includes("src/old.mjs")); assert(output.includes(reasonCode)); assert(output.includes(status));
+    assert(output.includes("World refresh remains recorded")); assert(output.length < 3000);
+    if (candidate) {
+      assert(output.includes(candidateSetId));
+      assert(output.includes(`lode-agent world-docs-candidates "<project>" --candidate-set "${candidateSetId}" --json`));
+      assert(output.includes("independent work continues"));
+    } else assert(!output.includes("world-docs-candidates"));
+    assert(!output.includes("World: failed")); assert(!output.includes("World: blocked")); assert.equal(JSON.stringify(value), before);
+    const historical = formatCliResult("world-refresh-read", { status: "verified", receipt: value.receipt });
+    assert(historical.includes("Recorded refresh source changed")); assert(historical.includes("src/action.mjs"));
+  }
+});
+
 test("bootstrap and restore keep the original task and authority boundary visible", () => {
   const bootstrap = formatProjectBootstrap(projectExperience());
   assert.match(bootstrap, /Continue the user's original task in this conversation/u);

@@ -7,7 +7,7 @@ const explorerModel = (() => {
     let focusId = null, steps = [], frontier = [], processed = new Set(), expansionKey = null, selectionVersion = 0;
     const searchText = new Map();
     const cells = new Map(), occupied = new Map();
-    const extents = new Map(), adjacency = new Map();
+    const extents = new Map(), adjacency = new Map(), neighborCache = new Map();
     const live = { positions, cells, occupied, extents, maxLeft: 155, maxRight: 155, maxTop: 44, maxBottom: 84 };
     let geometryVersion = 0;
     function extent(id, space = live) {
@@ -22,7 +22,13 @@ const explorerModel = (() => {
     }
     let cursor = -1;
     const links = id => adjacency.get(id) || [];
-    const neighbors = id => [...new Set(links(id).flatMap(edge => [edge.from, edge.to]))].filter(other => other !== id && nodes.has(other));
+    const neighbors = id => {
+      if (!neighborCache.has(id)) {
+        const found = new Set(); for (const edge of links(id)) { const other = edge.from === id ? edge.to : edge.from; if (other !== id && nodes.has(other)) found.add(other); }
+        neighborCache.set(id, [...found]);
+      }
+      return neighborCache.get(id);
+    };
     function cellKeys(id, point, space = live) {
       const e = extent(id, space), keys = [];
       const left = Math.floor((point.x - e.left) / 320), right = Math.floor((point.x + e.right) / 320);
@@ -51,20 +57,32 @@ const explorerModel = (() => {
       const stepX = space.maxLeft + space.maxRight + 18, stepY = space.maxTop + space.maxBottom + 18;
       const primaryStep = Math.max(horizontal ? 240 : 210, horizontal ? stepX : stepY), secondaryStep = horizontal ? stepY : stepX;
       let band = 1, slot = 0;
-      return id => {
+      const attempt = id => {
         // One monotone cursor per expansion fan; occupied slots are not
         // rescanned for every neighbor. There is no evidence/count cutoff.
-        for (;;) {
           const lanes = Math.max(1, Math.floor(band * primaryStep / (2 * secondaryStep)));
-          if (slot >= 2 * lanes) { band++; slot = 0; continue; }
+          if (slot >= 2 * lanes) { band++; slot = 0; return false; }
           const lane = (Math.floor(slot / 2) + .5) * (slot % 2 ? 1 : -1);
           slot++;
           const primary = band * primaryStep, secondary = lane * secondaryStep;
           const point = horizontal ? { x: center.x + sign * primary, y: center.y + secondary }
             : { x: center.x + secondary, y: center.y + sign * primary };
-          if (free(id, point, space)) { put(id, point, space); return; }
-        }
+          if (free(id, point, space)) { put(id, point, space); return true; }
+          return false;
       };
+      const place = id => { while (!attempt(id)) {} }; place.attempt = attempt; return place;
+    }
+    const clock = () => globalThis.performance?.now() ?? Date.now();
+    async function cooperativePlace(place, id, control, cancelled, yieldWork) {
+      for (;;) {
+        const done = place.attempt(id);
+        // A crowded fan may try many candidates before completing one node.
+        // Scheduling bounds computation, never evidence or placement eligibility.
+        if (++control.attempts % 256 === 0 || clock() - control.at >= 8) {
+          await yieldWork(); control.at = clock(); if (cancelled()) return false;
+        }
+        if (done) return !cancelled();
+      }
     }
     function expand(id, { placeNeighbors = true } = {}) {
       if (!nodes.has(id)) return;
@@ -154,18 +172,19 @@ const explorerModel = (() => {
       for (const field of ["maxLeft", "maxRight", "maxTop", "maxBottom"]) live[field] = space[field];
       geometryVersion++; return true;
     }
-    async function placeBatch(ids, { cancelled = () => false, yieldWork = async () => {} } = {}) {
+    async function placeBatch(ids, { cancelled = () => false, yieldWork = async () => {}, yieldBeforeCommit = false } = {}) {
       const space = draft(), basis = geometryVersion;
       const additions = [...ids].filter(id => nodes.has(id) && !positions.has(id));
       for (let i = 0; i < additions.length; i++) { extent(additions[i], space); if (i % 32 === 31) { await yieldWork(); if (cancelled() || basis !== geometryVersion) return false; } }
       const center = positions.get(focusId) || { x: 500, y: 350 }, fans = new Map();
+      const control = { attempts: 0, at: clock() }, stopped = () => cancelled() || basis !== geometryVersion;
       for (let i = 0; i < additions.length; i++) {
         const id = additions[i], horizontal = axisFor(nodes.get(id)) === "code";
         const anchor = anchorFor(id, space.positions), key = `${horizontal}:${anchor || ""}`;
         if (!fans.has(key)) fans.set(key, placer(space.positions.get(anchor) || center, horizontal, 1, space));
-        fans.get(key)(id);
-        if (i % 256 === 255) { await yieldWork(); if (cancelled()) return false; }
+        if (!await cooperativePlace(fans.get(key), id, control, stopped, yieldWork)) return false;
       }
+      if (yieldBeforeCommit) { await yieldWork(); if (cancelled() || basis !== geometryVersion) return false; }
       return !cancelled() && commit(space, basis);
     }
     async function remeasure(ids, { cancelled = () => false, yieldWork = async () => {}, yieldBeforeCommit = false, onCommit = () => {}, area = null } = {}) {
@@ -181,6 +200,7 @@ const explorerModel = (() => {
       // visible, never silently corrected; full reading cards remain available.
       for (const [id, point] of positions) if (pinned.has(id) || !affected.has(id)) put(id, point, space);
       count = 0;
+      const control = { attempts: 0, at: clock() }, stopped = () => cancelled() || basis !== geometryVersion;
       for (const [id, point] of positions) if (affected.has(id) && !pinned.has(id)) {
         let preferred = null;
         if (area) {
@@ -193,13 +213,14 @@ const explorerModel = (() => {
             preferred = candidates.find(candidate => free(id, candidate, space));
           }
         }
-        if (preferred) put(id, preferred, space); else if (free(id, point, space)) put(id, point, space); else placer(point, axisFor(nodes.get(id)) === "code", 1, space)(id);
+        if (preferred) put(id, preferred, space); else if (free(id, point, space)) put(id, point, space);
+        else if (!await cooperativePlace(placer(point, axisFor(nodes.get(id)) === "code", 1, space), id, control, stopped, yieldWork)) return false;
         if (++count % 256 === 0) { await yieldWork(); if (cancelled() || basis !== geometryVersion) return false; }
       }
       if (yieldBeforeCommit) { await yieldWork(); if (cancelled() || basis !== geometryVersion) return false; }
       const applied = !cancelled() && commit(space, basis); if (applied) onCommit(); return applied;
     }
-    async function expandWave({ key = "", allowed = () => true, edgeAllowed = () => true, cancelled = () => false, yieldWork = async () => {}, progress = () => {} } = {}) {
+    async function expandWave({ key = "", allowed = () => true, edgeAllowed = () => true, cancelled = () => false, yieldWork = async () => {}, progress = () => {}, placementLimit = Infinity } = {}) {
       const scope = JSON.stringify([[...chosen], key]);
       const before = { frontier: [...frontier], processed: [...processed], expansionKey };
       let pending = expansionKey === scope ? [...frontier] : [...chosen].filter(id => allowed(nodes.get(id)));
@@ -222,7 +243,7 @@ const explorerModel = (() => {
         if ([...contributed].some(id => !visible.has(id))) break;
       }
       const additions = [...contributed].filter(id => !visible.has(id));
-      if (!await placeBatch([...contributed].filter(id => !positions.has(id)), { cancelled, yieldWork })) return { status: "cancelled" };
+      if (!await placeBatch([...contributed].filter(id => !positions.has(id)).slice(0, placementLimit), { cancelled, yieldWork })) return { status: "cancelled" };
       if (cancelled()) return { status: "cancelled" };
       frontier = pending; processed = visited; expansionKey = scope;
       const step = { kind: "expand", nodes: contributed, edges, before, added: additions.length, examinedEdges: reads };
@@ -282,6 +303,7 @@ const explorerModel = (() => {
   }
   function overview(graph, axisFor = () => "context") {
     const points = new Map(), cells = new Map(), groups = [[], []];
+    let geometry = null, bounds = null;
     for (const node of graph.nodes) groups[axisFor(node) === "code" ? 0 : 1].push(node);
     const both = groups.every(group => group.length);
     for (let groupIndex = 0; groupIndex < groups.length; groupIndex++) {
@@ -294,6 +316,7 @@ const explorerModel = (() => {
         if (!cells.has(key)) cells.set(key, []); cells.get(key).push(node.nodeId);
       });
     }
+    const nodeIds = [...points.keys()], edgesWithEndpoints = graph.edges.filter(edge => points.has(edge.from) && points.has(edge.to));
     function hit(x, y, included, radius = 8) {
       let best = null, distance = radius;
       const cellX = Math.floor(x / 8), cellY = Math.floor(y / 8);
@@ -313,8 +336,41 @@ const explorerModel = (() => {
       const group = cells.get(oldKey); if (group) { const index = group.indexOf(id); if (index >= 0) group.splice(index, 1); if (!group.length) cells.delete(oldKey); }
       points.set(id, { x, y }); const key = `${Math.floor(x / 8)},${Math.floor(y / 8)}`;
       if (!cells.has(key)) cells.set(key, []); cells.get(key).push(id);
+      geometry = null; bounds = null;
     }
-    return { points, hit, move };
+    function window(box) {
+      const [x, y, width, height] = box, right = x + width, bottom = y + height;
+      if (!bounds) {
+        bounds = { left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity };
+        for (const p of points.values()) { bounds.left = Math.min(bounds.left, p.x); bounds.right = Math.max(bounds.right, p.x); bounds.top = Math.min(bounds.top, p.y); bounds.bottom = Math.max(bounds.bottom, p.y); }
+      }
+      // Whole view: drawing already visits every included item. Do not build
+      // duplicate edge tiles/Sets or repeat clipping before that same full draw.
+      if (x <= bounds.left && right >= bounds.right && y <= bounds.top && bottom >= bounds.bottom) return { nodes: nodeIds, edges: edgesWithEndpoints };
+      if (!geometry) geometry = edgesWithEndpoints.map(edge => {
+        const a = points.get(edge.from), b = points.get(edge.to);
+        return { edge, a, b, left: Math.min(a.x, b.x), right: Math.max(a.x, b.x), top: Math.min(a.y, b.y), bottom: Math.max(a.y, b.y) };
+      });
+      const nodes = []; for (const [id, p] of points) if (p.x >= x && p.x <= right && p.y >= y && p.y <= bottom) nodes.push(id);
+      const edges = [];
+      for (const segment of geometry) {
+        const { edge, a, b } = segment;
+        if (segment.right < x || segment.left > right || segment.bottom < y || segment.top > bottom) continue;
+        if (a.x >= x && a.x <= right && a.y >= y && a.y <= bottom || b.x >= x && b.x <= right && b.y >= y && b.y <= bottom) { edges.push(edge); continue; }
+        // Liang–Barsky clipping retains segments crossing the viewport even
+        // with both ends outside, without allocating four tuple arrays per edge.
+        let from = 0, to = 1;
+        for (let side = 0; side < 4; side++) {
+          const p = side === 0 ? a.x - b.x : side === 1 ? b.x - a.x : side === 2 ? a.y - b.y : b.y - a.y;
+          const q = side === 0 ? a.x - x : side === 1 ? right - a.x : side === 2 ? a.y - y : bottom - a.y;
+          if (!p) { if (q < 0) { from = 2; to = 1; break; } continue; }
+          const t = q / p; if (p < 0) from = Math.max(from, t); else to = Math.min(to, t); if (from > to) break;
+        }
+        if (from <= to) edges.push(edge);
+      }
+      return { nodes, edges };
+    }
+    return { points, hit, move, window };
   }
   function viewport(box, rect) {
     const scale = Math.min(rect.width / box[2], rect.height / box[3]);

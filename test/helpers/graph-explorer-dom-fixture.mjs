@@ -12,18 +12,19 @@ export function visibleText(element) {
 
 // A deliberately limited in-memory DOM/Canvas test double. This executes the
 // shipped browser script, but proves neither browser layout nor actual GUI speed.
-export function explorerDom(snapshot, { devicePixelRatio = 1, narrow = false, cardMeasure = null, fontSize = 14 } = {}) {
+export function explorerDom(snapshot, { devicePixelRatio = 1, narrow = false, cardMeasure = null, fontSize = 14, resetDetachedScroll = false } = {}) {
   let modeledFontSize = fontSize;
   const windowListeners = new Map(), fontListeners = new Map();
   const ids = new Map(), frames = [], pointerCaptures = new Map(), stats = { created: 0, svg: 0, fills: 0, strokes: 0, lines: 0, focused: null, transforms: [], scrolled: null, points: [] };
+  const clearDetachedScroll = element => { if (!resetDetachedScroll) return; element.scrollTop = element.scrollLeft = 0; for (const child of element.children) clearDetachedScroll(child); };
   class Element {
     constructor(tag) { this.tagName = tag; this.children = []; this.listeners = new Map(); this.attributes = new Map(); this.dataset = {}; this.style = {}; this.hidden = false; this.value = ""; this.checked = false; this._text = ""; if (tag === "details") this.open = false; this.clientWidth = 1000; this.clientHeight = 700; this.rect = { left: 0, top: 0, width: 1000, height: 700 }; stats.created++; }
     set id(value) { this._id = value; ids.set(value, this); } get id() { return this._id; }
     set textContent(value) { this._text = String(value ?? ""); for (const child of this.children) child.parentNode = null; this.children = []; }
     get textContent() { return this._text + this.children.map(child => child.textContent).join(""); }
     append(...items) { for (const child of items) { const node = typeof child === "string" ? Object.assign(new Element("text"), { textContent: child }) : child; node.remove(); node.parentNode = this; this.children.push(node); } }
-    replaceChildren(...items) { for (const child of this.children) child.parentNode = null; this.children = []; this._text = ""; this.append(...items); }
-    remove() { if (!this.parentNode) return; const list = this.parentNode.children, index = list.indexOf(this); if (index >= 0) list.splice(index, 1); this.parentNode = null; }
+    replaceChildren(...items) { for (const child of this.children) { clearDetachedScroll(child); child.parentNode = null; } this.children = []; this._text = ""; this.append(...items); }
+    remove() { if (!this.parentNode) return; clearDetachedScroll(this); const list = this.parentNode.children, index = list.indexOf(this); if (index >= 0) list.splice(index, 1); this.parentNode = null; }
     insertBefore(child, reference) { if (child === reference) return child; child.remove(); const at = reference ? this.children.indexOf(reference) : this.children.length; child.parentNode = this; this.children.splice(at < 0 ? this.children.length : at, 0, child); return child; }
     contains(element) { return element === this || this.children.some(child => child.contains(element)); }
     before(node) { const parent = this.parentNode || body, index = parent.children.indexOf(this); node.parentNode = parent; parent.children.splice(Math.max(0, index), 0, node); }

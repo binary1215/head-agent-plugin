@@ -4,6 +4,40 @@ import test from "node:test";
 import vm from "node:vm";
 const source = fs.readFileSync(new URL("../scripts/graph-explorer/exploration.js", import.meta.url), "utf8");
 
+test("overview viewport geometry preserves crossing, parallel and self edges, excludes offscreen segments and invalidates after a move", () => {
+  const factory = vm.runInNewContext(source + "\nexplorerModel"), graph = { nodes: ["a", "b", "c", "d"].map(nodeId => ({ nodeId })), edges: [
+    { from: "a", to: "b", id: "cross" }, { from: "b", to: "a", id: "reverse" }, { from: "c", to: "d", id: "outside" }, { from: "a", to: "a", id: "self" }] };
+  const overview = factory.overview(graph);
+  overview.move("a", -1000, 350); overview.move("b", 2000, 350); overview.move("c", -100, -100); overview.move("d", -200, -200);
+  const view = overview.window([0, 0, 1000, 700]); assert.deepEqual([...view.edges].map(edge => edge.id).sort(), ["cross", "reverse"]); assert.equal(view.nodes.length, 0);
+  assert.equal(graph.edges.length, 4); overview.move("a", 500, 350);
+  assert.deepEqual([...overview.window([0, 0, 1000, 700]).edges].map(edge => edge.id).sort(), ["cross", "reverse", "self"]);
+  assert.deepEqual([...overview.window([0, 0, 1000, 700]).nodes], ["a"]);
+  const whole = [-2000, -2000, 5000, 4000]; overview.window(whole);
+  const get = overview.points.get.bind(overview.points); let reads = 0;
+  overview.points.get = id => { reads++; return get(id); };
+  const all = overview.window(whole); assert.equal(all.nodes.length, 4); assert.equal(all.edges.length, 4);
+  assert.equal(reads, 0, "A cached whole-bounds view must not redo every node/edge clipping lookup");
+});
+
+test("bulk placement yields on occupied candidate attempts before even the first new record completes", async () => {
+  const factory = vm.runInNewContext(source + "\nexplorerModel"), ids = Array.from({ length: 1026 }, (_, i) => `crowded-${i}`);
+  const model = factory.create({ nodes: ids.map(nodeId => ({ nodeId })), edges: [] });
+  model.choose(ids[0]); await model.placeBatch(ids.slice(1, -1));
+  const before = JSON.stringify([...model.positions]); let stop = false, yields = 0;
+  const applied = await model.placeBatch([ids.at(-1)], { cancelled: () => stop, yieldWork: async () => { stop = true; yields++; } });
+  assert.equal(applied, false); assert(yields > 0); assert.equal(JSON.stringify([...model.positions]), before);
+});
+
+test("first-screen placement budgets do not limit expansion evidence or later explicit placement", async () => {
+  const factory = vm.runInNewContext(source + "\nexplorerModel"), nodes = Array.from({ length: 1001 }, (_, i) => ({ nodeId: `n${i}` }));
+  const graph = { nodes, edges: nodes.slice(1).map(node => ({ from: "n0", to: node.nodeId, type: "LINK" })) }, model = factory.create(graph);
+  model.choose("n0"); const result = await model.expandWave({ placementLimit: 8 });
+  assert.equal(result.added, 1000); assert.equal(result.edges, 1000); assert.equal(model.visible.size, 1001); assert.equal(model.positions.size, 9);
+  assert.equal(model.search("n1000").length, 1); model.choose("n1000"); assert(model.positions.has("n1000"));
+  await model.placeBatch(model.visible); assert.equal(model.positions.size, 1001);
+});
+
 test("all 60000 metadata IDs stay searchable while layout measures only explored neighbors", () => {
   const factory = vm.runInNewContext(source + "\nexplorerModel");
   const nodes = Array.from({ length: 60000 }, (_, i) => ({ nodeId: `generic-${i}`, kind: "File", path: `src/generic-${i}.mjs` }));

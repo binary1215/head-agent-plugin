@@ -8,7 +8,7 @@ import { pathToFileURL } from "node:url";
 import { ARTIFACT_COMPOSITION, artifactCompositionForIdentity } from "../scripts/lib/lode-artifact-composition.mjs";
 import { historicalArtifactServerName } from "../compat/head/artifact-composition.mjs";
 import { stageDistributionRelease, verifyDistributionRelease, installDistribution, rollbackDistribution, inspectDistribution } from "../scripts/lib/distribution-lifecycle.mjs";
-import { dispatch } from "../scripts/mcp-server.mjs";
+import { dispatch, catalogTools } from "../scripts/mcp-server.mjs";
 
 const sourceRoot = path.resolve(import.meta.dirname, "..");
 const oldDescriptor = fs.readFileSync(path.join(import.meta.dirname, "fixtures/lode-mcp-beta45-composition.txt"), "utf8");
@@ -59,6 +59,15 @@ function rehashMcpManifest(root, manifest) {
   manifest.releaseId = `release-${hash(canonical(identity)).slice(0, 24)}`;
   write(path.join(root, "distribution-manifest.json"), JSON.stringify(manifest) + "\n");
 }
+
+test("Core initialization copy scopes semantic proposals to explicit Product activation", () => {
+  const tool = catalogTools.find(item => item.name === "lode_project_initialize_or_resume");
+  assert(tool);
+  assert.match(tool.description, /Core initialize\/resume requires no Product brief or semantic proposal/);
+  assert.match(tool.description, /Only the explicit Product profile/);
+  assert.doesNotMatch(tool.description, /\bHEAD project\b/);
+  assert.deepEqual(tool.inputSchema.properties.profile.enum, ["core", "product"]);
+});
 
 test("MCP registration and protocol initialization both use exact lode without changing operation aliases", async () => {
   assert.equal(ARTIFACT_COMPOSITION.serverName, "lode");

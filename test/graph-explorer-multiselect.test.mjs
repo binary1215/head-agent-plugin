@@ -4,6 +4,10 @@ import test from "node:test";
 import vm from "node:vm";
 import crypto from "node:crypto";
 import { explorerDom, visibleText } from "./helpers/graph-explorer-dom-fixture.mjs";
+import { fixture as workFixture, snapshot as inputSnapshot } from "./helpers/session-work-linkage-fixture.mjs";
+import { buildGraphExplorerSnapshot } from "../scripts/lib/graph-explorer.mjs";
+import { queryProjectGraph } from "../scripts/lib/project-graph.mjs";
+import { normalizeEvidenceAnchors } from "../scripts/lib/product-policy-records.mjs";
 
 const source = fs.readFileSync(new URL("../scripts/graph-explorer/exploration.js", import.meta.url), "utf8");
 const factory = () => vm.runInNewContext(source + "\nexplorerModel");
@@ -19,6 +23,112 @@ const selectionCount = ui => Number(ui.ids.get("selection-count").textContent.ma
 const cards = vm.runInNewContext(fs.readFileSync(new URL("../scripts/graph-explorer/cards.js", import.meta.url), "utf8") + "\nexplorerCards");
 const descendants = element => [element, ...element.children.flatMap(descendants)];
 const readingCard = (ui, id) => ui.ids.get("selection-cards").children.find(item => item.getAttribute("data-record") === `node:${id}`);
+
+test("fit explored uses explicit subset Canvas detail when cards would be unreadable, stays cancellable and returns to focused cards", async () => {
+  const count = 1200, graph = { nodes: nodes("A", ...Array.from({ length: count }, (_, i) => `N${i}`), ...Array.from({ length: count }, (_, i) => `M${i}`), "unexplored"),
+    edges: Array.from({ length: count }, (_, i) => [edge("A", `N${i}`), edge(`N${i}`, `M${i}`)]).flat() };
+  const data = input(graph), unchanged = JSON.stringify(data), ui = explorerDom(data, { cardMeasure: element => element.children[1].hidden ? 48 : 160 });
+  await ui.settle(); ui.event("expand"); await ui.settle(); const position = nodeElement(ui, "A").getAttribute("transform"), before = camera(ui), svgCount = ui.stats.svg;
+  ui.event("reset"); assert.equal(ui.ids.get("cancel-work").disabled, false); ui.event("cancel-work"); await ui.settle();
+  assert.equal(camera(ui), before); assert.equal(ui.ids.get("overview").hidden, true);
+  ui.event("reset"); await ui.settle(); assert.equal(ui.ids.get("overview").hidden, false);
+  assert.match(ui.ids.get("status").textContent, /Explored evidence overview/);
+  assert.match(ui.html, /id="overview-note"[^>]*>Evidence overview\./); assert(!ui.html.includes("Whole-inventory overview."));
+  assert.equal(ui.ids.get("expand").disabled, false, "Fit completion must not leave ordinary exploration gated");
+  assert.equal(ui.stats.svg, svgCount, "Whole fit must not allocate a foreignObject/SVG graph for every explored record");
+  assert.equal(nodeElement(ui, "A").getAttribute("transform"), position);
+  assert.equal(ui.ids.get("records").children.length, 100, "Complete metadata still uses pages, not a cap");
+  ui.event("overview", "pointerdown", { clientX: 0, clientY: 0, pointerId: 8, shiftKey: true });
+  ui.event("overview", "pointermove", { clientX: 1000, clientY: 700, pointerId: 8, shiftKey: true });
+  ui.event("overview", "pointerup", { clientX: 1000, clientY: 700, pointerId: 8, shiftKey: true }); await ui.settle();
+  assert.equal(selectionCount(ui), count * 2 + 1, "Explored Canvas hit/rectangle scope must not select unexposed inventory");
+  ui.event("focus"); assert.equal(ui.ids.get("overview").hidden, true); assert.equal(ui.ids.get("graph").hidden, false);
+  ui.event(recordButton(ui, "A")); ui.event("focus");
+  assert.equal(nodeElement(ui, "A").getAttribute("transform"), position);
+  ui.event("reset"); ui.event("overview-button"); await ui.settle(); assert.match(ui.ids.get("status").textContent, /^All evidence overview/);
+  assert.equal(JSON.stringify(data), unchanged);
+});
+
+test("supported summary-free work writer content reaches expanded map and reading cards without false missing-body claims", async t => {
+  const f = workFixture(t), cases = [["observedWork", "Observed work", "Synthetic recorded observation <not HTML>"],
+    ["suggestedFollowUp", "Suggested follow-up (historical; not permission)", "Synthetic follow-up is not approval"],
+    ["pending", "Pending", "Synthetic pending action is not complete"]];
+  const saved = cases.map(([field, , value]) => f.save({ [field]: [value] }));
+  const before = inputSnapshot(f.base), data = await buildGraphExplorerSnapshot({ root: f.root });
+  for (const [i, [, heading, value]] of cases.entries()) {
+    const node = data.graph.nodes.find(node => node.evidenceDigest === saved[i].evidence.evidenceDigest);
+    assert(node); assert.equal(node.workContent.summary, null);
+    const ui = explorerDom({ ...data, graph: { ...data.graph, initialNodeId: node.nodeId } });
+    assert(!visibleText(nodeElement(ui, node.nodeId)).includes(value), "Default map remains title-only");
+    ui.event(nodeElement(ui, node.nodeId).querySelectorAll("[data-card-control]")[0]); await ui.settle();
+    const map = visibleText(nodeElement(ui, node.nodeId));
+    assert(map.includes(heading) && map.includes(value), `Expanded map must read ${heading} already exported by the supported writer`);
+    assert(!map.includes("Body not included"));
+    const card = readingCard(ui, node.nodeId); card.open = true;
+    const reading = visibleText(card); assert(reading.includes(heading) && reading.includes(value));
+    assert.match(reading, /Agent-authored work; not a captured user utterance/);
+    assert(!reading.includes("Body not included"));
+  }
+  assert.deepEqual(inputSnapshot(f.base), before, "Card display and export must not change originals or authority");
+});
+
+test("supported partial work reader excerpts retain exact field coordinates and text in expanded cards", async t => {
+  const f = workFixture(t);
+  const saved = [f.save({ summary: "PartialNeedle summary — not approval. ".repeat(1300) }),
+    f.save({ summary: "PartialNeedle judgment", judgments: [{ assessment: "Recorded assessment. ".repeat(80),
+      reason: "Recorded reason — not approval. ".repeat(1300), alternatives: ["Recorded alternative. ".repeat(600)] }] })];
+  const before = inputSnapshot(f.base), projected = await queryProjectGraph({ root: f.root, query: "PartialNeedle", view: "work", details: false });
+  const partials = projected.nodes.filter(node => node.workContentExcerpts?.length); assert.equal(partials.length, 2, "Real reader must produce summary and structured partial excerpts");
+  for (const node of partials) {
+    const original = saved.find(item => item.evidence.evidenceDigest === node.evidenceDigest).evidence.content;
+    for (const excerpt of node.workContentExcerpts) {
+      let text = original[excerpt.field];
+      if (excerpt.index != null) text = text[excerpt.index];
+      if (excerpt.subfield) text = text[excerpt.subfield];
+      if (excerpt.alternativeIndex != null) text = text[excerpt.alternativeIndex];
+      assert.equal(excerpt.text, text.slice(excerpt.start, excerpt.end));
+    }
+    const data = input({ nodes: projected.nodes, edges: projected.edges }); data.project.projectId = node.projectId; data.graph.initialNodeId = node.nodeId;
+    const ui = explorerDom(data); ui.event(nodeElement(ui, node.nodeId).querySelectorAll("[data-card-control]")[0]); await ui.settle();
+    const map = visibleText(nodeElement(ui, node.nodeId)); assert.match(map, /Partial exported content/);
+    const card = readingCard(ui, node.nodeId); card.open = true; const reading = visibleText(card);
+    for (const excerpt of node.workContentExcerpts) {
+      assert(reading.includes(excerpt.text), "Included exact excerpt must be readable, not only in Raw JSON");
+      assert(reading.includes(`workContent.${excerpt.field}`)); assert(reading.includes(`[${excerpt.start}, ${excerpt.end}) / ${excerpt.totalCharacters}`));
+    }
+    assert.match(reading, /Partial exported content.*not a captured user utterance/s);
+    if (node.workContentExcerpts.some(entry => entry.subfield === "reason")) assert(!reading.includes("No recorded reason included for this record."));
+    assert(!reading.includes("Body not included"));
+  }
+  assert.deepEqual(inputSnapshot(f.base), before);
+});
+
+test("empty cards explain a reference or metadata once without guessing original availability or dropping diagnostics", async () => {
+  const [anchor] = normalizeEvidenceAnchors([{ kind: "user-request", reference: "conversation:synthetic-reference" }]);
+  const cases = [
+    { kind: "ProductPolicyEvidence", evidenceKind: anchor.kind, reference: anchor.reference, summary: anchor.summary, expected: /Reference-only evidence/ },
+    { kind: "Unknown", detailCoverage: "metadata-only", detailReasonCode: "DETAIL_NOT_INCLUDED_FOR_THIS_SELECTION", expected: /metadata-only projection/ },
+    ...["ORIGINAL_BYTE_BOUND", "EXACT_REVISION_NOT_ON_DISK", "EACCES"].map(reasonCode => ({ kind: "Unknown", reasonCode, expected: /No supported display text/ })),
+  ];
+  for (const [i, record] of cases.entries()) {
+    const node = { nodeId: "A", name: "User request", sourceReference: { path: `synthetic-${i}.json`, digest: "a".repeat(64) },
+      unknownDiagnostic: { retained: "synthetic unknown field" }, ...record }, data = input({ nodes: [node], edges: [] });
+    if (record.reasonCode) data.originals[JSON.stringify([node.sourceReference.path, node.sourceReference.digest])] = {
+      status: record.reasonCode === "ORIGINAL_BYTE_BOUND" ? "omitted" : "unavailable", reasonCode: record.reasonCode };
+    const unchanged = JSON.stringify(data), descriptor = cards.create(data, data.graph, "project").describe(node);
+    const ui = explorerDom(data); ui.event(nodeElement(ui, "A").querySelectorAll("[data-card-control]")[0]); await ui.settle();
+    const map = visibleText(nodeElement(ui, "A"));
+    const emptyNotice = descriptor.emptyNotice || "Body not included in this export.";
+    assert.equal(map.split(emptyNotice).length - 1, 1, "Missing-text notice appears once per expanded map card");
+    assert.match(map, record.expected);
+    const card = readingCard(ui, "A"); card.open = true; const reading = visibleText(card);
+    assert.equal(reading.split(emptyNotice).length - 1, 1); assert.match(reading, record.expected);
+    assert(card.textContent.includes("synthetic unknown field"), "Raw unknown diagnostics remain available");
+    if (record.reasonCode) assert(card.textContent.includes(record.reasonCode), "Exact original omission/error reason is distinct from absent display text");
+    if (record.reference) assert(!descriptor.body, "A reference must never become invented user speech");
+    assert.equal(JSON.stringify(data), unchanged);
+  }
+});
 
 test("boundary expansion actually advances, retains stable positions, and folding removes only its contribution", async () => {
   const graph = { nodes: nodes("A", "B", "C", "D"), edges: [edge("A", "B"), edge("B", "C"), edge("C", "D")] };
@@ -147,8 +257,12 @@ test("multiple exact file pairs stay open with their roles, partial/missing stat
   ui.event("file-next"); assert.match(ui.ids.get("comparison-position").textContent, /File 2\/2/); assert(ui.stats.scrolled);
   ui.event("change-next"); assert.match(ui.ids.get("comparison-position").textContent, /changed region 1\/4/);
   ui.event("change-next"); assert.match(ui.ids.get("comparison-position").textContent, /changed region 2\/4/);
+  const excerpt = descendants(ui.ids.get("context-lineage-body")).find(element => element.tagName === "details" && element.children[0]?.textContent === "Exact before / after excerpts");
+  excerpt.open = true; const exactPre = descendants(excerpt).find(element => element.tagName === "pre"); exactPre.scrollTop = 39; exactPre.scrollLeft = 8;
   const panel = ui.ids.get("context-lineage-body"); ui.event(recordButton(ui, "A")); assert.equal(ui.ids.get("context-lineage-body"), panel); assert.match(ui.ids.get("comparison-position").textContent, /changed region 2\/4/);
   ui.event(recordButton(ui, "C")); assert(ui.ids.get("context-lineage-body").textContent.includes("deletion/rename not established")); assert(ui.ids.get("context-lineage-body").textContent.includes("not an empty diff"));
+  assert(ui.ids.get("context-lineage-body").contains(excerpt)); assert(excerpt.open); assert.equal(exactPre.scrollTop, 39); assert.equal(exactPre.scrollLeft, 8);
+  assert.match(ui.ids.get("comparison-position").textContent, /changed region 2\/4/);
   assert.doesNotMatch(ui.ids.get("selection-cards").textContent, /\u001b/); assert(ui.ids.get("selection-cards").textContent.includes("<svg"));
   ui.event("wide-reading"); assert.equal(ui.document.documentElement.dataset.readingWide, "true"); assert.equal(selectionCount(ui), 3);
   assert.equal(JSON.stringify(snapshot), before);
@@ -160,11 +274,107 @@ test("Project/layer/revision selections and their cameras remain separate even w
     { nodeId: "Z", name: "Code Z", kind: "File", path: "same.mjs", revisionId: "other-revision" }], edges: [edge("A", "Z", "code-link", "IMPORTS")], status: "current" };
   const before = JSON.stringify(snapshot), ui = explorerDom(snapshot); ui.event(recordButton(ui, "B")); ui.event("zoom-in"); ui.flush();
   const projectBox = camera(ui); ui.ids.get("layer").value = "code"; ui.event("layer", "change");
-  assert.equal(selectionCount(ui), 1); assert(ui.ids.get("selection-cards").textContent.includes("Code A"));
+  assert.equal(selectionCount(ui), 0); assert.match(ui.ids.get("layer-info").textContent, /No unique exact source identity/);
+  ui.event(recordButton(ui, "Code A")); assert.equal(selectionCount(ui), 1);
   ui.event(recordButton(ui, "Code Z")); assert.equal(selectionCount(ui), 2);
   ui.ids.get("layer").value = "project"; ui.event("layer", "change");
   assert.equal(selectionCount(ui), 2); assert.equal(camera(ui), projectBox); assert(!ui.ids.get("selection-cards").textContent.includes("Code Z"));
   assert.equal(JSON.stringify(snapshot), before);
+});
+
+test("layer transition follows only one exact file revision, never a path-only or duplicate candidate", () => {
+  const digest = "a".repeat(64), snapshot = input({ nodes: [{ nodeId: "A", name: "Project file", kind: "FileRevision", path: "src/a.mjs", digest }], edges: [] });
+  snapshot.codeGraph = { nodes: [{ nodeId: "wrong", name: "Old bytes", kind: "File", path: "src/a.mjs", digest: "b".repeat(64) },
+    { nodeId: "right", name: "Exact bytes", kind: "File", path: "src/a.mjs", digest }], edges: [], status: "current" };
+  const ui = explorerDom(snapshot); ui.ids.get("layer").value = "code"; ui.event("layer", "change");
+  assert.equal(selectionCount(ui), 1); assert(ui.ids.get("selection-cards").textContent.includes("Exact bytes")); assert(!ui.ids.get("selection-cards").textContent.includes("Old bytes"));
+  snapshot.codeGraph.nodes.push({ ...snapshot.codeGraph.nodes[1], nodeId: "duplicate" });
+  const ambiguous = explorerDom(snapshot); ambiguous.ids.get("layer").value = "code"; ambiguous.event("layer", "change"); assert.equal(selectionCount(ambiguous), 0);
+  assert.equal(ambiguous.ids.get("records").children.length, 3, "Ambiguous records remain explicit choices");
+});
+
+test("hidden selected records have an explicit restore action and reading/map jumps keep selection", () => {
+  const ui = explorerDom(input({ nodes: nodes("A", "B"), edges: [edge("A", "B")] }));
+  ui.ids.get("search").value = "not-found"; ui.event("search", "input"); ui.ids.get("hide-nonmatches").checked = true; ui.event("hide-nonmatches", "change");
+  assert.match(ui.ids.get("graph").textContent, /hidden by the current filters/); assert.match(ui.ids.get("restore-scope").textContent, /Show 1 hidden selection/);
+  ui.event("jump-reading"); assert.equal(ui.stats.scrolled.id, "reading-heading"); assert.equal(ui.stats.focused, "reading-heading");
+  ui.event("jump-map"); assert.equal(ui.stats.scrolled.id, "graph"); ui.event("restore-scope"); assert(nodeElement(ui, "A")); assert.equal(selectionCount(ui), 1);
+});
+
+test("separate changed regions keep exact offsets and distinct pair disclosure never leaks", () => {
+  const a = "a".repeat(64), b = "b".repeat(64), c = "c".repeat(64), graph = { nodes: nodes("A", "B"), edges: [] };
+  const pair = (id, digest, lines) => ({ status: "observed", scope: "recorded-changeset-snapshot-pair", changeSet: { nodeId: id }, before: { digest }, after: { digest: b },
+    diff: { changed: true, regions: lines.map(startLine => ({ before: { startLine, text: "old", omittedLines: 1000 }, after: { startLine, text: "new", omittedLines: 1000 } })) } });
+  graph.contextLineage = { events: [], files: [{ path: "same.mjs", associations: [], comparisons: [pair("A", a, [10, 1000]), pair("B", c, [20])] }], recordedReasons: [], canonChanges: [] };
+  const ui = explorerDom(input(graph)), root = ui.ids.get("context-lineage-body");
+  assert(root.textContent.includes("− 1000/· old")); assert(root.textContent.includes("+ ·/1000 new"));
+  const excerptsA = descendants(root).filter(item => item.tagName === "details" && item.children[0]?.textContent === "Exact before / after excerpts"); excerptsA[0].open = true;
+  ui.event("change-next"); ui.event("change-next"); assert.match(ui.ids.get("comparison-position").textContent, /changed region 2\/2/);
+  ui.event(recordButton(ui, "B")); const excerptsB = descendants(root).filter(item => item.tagName === "details" && item.children[0]?.textContent === "Exact before / after excerpts" && !excerptsA.includes(item));
+  assert.equal(excerptsB.length, 1); assert.equal(excerptsB[0].open, false); assert(excerptsA[0].open); assert.match(ui.ids.get("comparison-position").textContent, /changed region 2\/3/);
+  ui.event("jump-diff"); assert.equal(ui.stats.scrolled.id, "context-lineage"); assert(ui.ids.get("context-lineage").open);
+});
+
+test("exact pair navigation returns after complete removal and layer roundtrip without borrowing another pair or file cursor", () => {
+  const a = "a".repeat(64), b = "b".repeat(64), c = "c".repeat(64), graph = { nodes: nodes("A", "B"), edges: [] };
+  const pair = (id, digest) => ({ status: "observed", scope: "recorded-changeset-snapshot-pair", changeSet: { nodeId: id }, before: { digest }, after: { digest: b },
+    diff: { changed: true, before: { startLine: 10, text: "old1\ncontext\nold2" }, after: { startLine: 10, text: "new1\ncontext\nnew2" } } });
+  const file = (path, id, digest) => ({ path, current: { digest: b }, associations: [], comparisons: [pair(id, digest)] });
+  graph.contextLineage = { events: [], files: [file("src/one.mjs", "A", a), file("src/two.mjs", "A", a), file("src/other.mjs", "B", c)], recordedReasons: [], canonChanges: [] };
+  const snapshot = input(graph); snapshot.codeGraph = { nodes: [{ nodeId: "code-two", name: "Code two", kind: "File", path: "src/two.mjs", digest: b }], edges: [], status: "current", contextLineage: graph.contextLineage };
+  const ui = explorerDom(snapshot, { resetDetachedScroll: true }), root = ui.ids.get("context-lineage-body");
+  ui.event("file-next"); for (let i = 0; i < 4; i++) ui.event("change-next");
+  assert.match(ui.ids.get("comparison-position").textContent, /File 2\/2.*changed region 4\/4/);
+  const excerpts = descendants(root).filter(item => item.tagName === "details" && item.children[0]?.textContent === "Exact before / after excerpts"), exact = excerpts[1];
+  exact.open = true; const pre = descendants(exact).find(item => item.tagName === "pre"); pre.scrollTop = 77;
+  ui.event(recordButton(ui, "B")); ui.event("only-focus");
+  assert.match(ui.ids.get("comparison-position").textContent, /File 1\/1.*changed region 0\/2/, "A's cursor must not become B's cursor");
+  const otherExcerpt = descendants(root).find(item => item.tagName === "details" && item.children[0]?.textContent === "Exact before / after excerpts"); assert(!otherExcerpt.open);
+  ui.event(recordButton(ui, "A")); ui.event("only-focus");
+  assert.match(ui.ids.get("comparison-position").textContent, /File 2\/2.*changed region 4\/4/, "Returning exact A pair restores its saved second-file, second-region location");
+  assert(root.contains(exact)); assert(exact.open); assert.equal(pre.scrollTop, 77);
+  ui.ids.get("layer").value = "code"; ui.event("layer", "change"); ui.event(recordButton(ui, "Code two"));
+  assert.match(ui.ids.get("comparison-position").textContent, /File 1\/1.*changed region 0\/2/, "Same source in a different graph cannot inherit Project navigation");
+  ui.event("change-next");
+  ui.ids.get("layer").value = "project"; ui.event("layer", "change");
+  assert.match(ui.ids.get("comparison-position").textContent, /File 2\/2.*changed region 4\/4/);
+  assert.equal(pre.scrollTop, 77);
+  ui.ids.get("layer").value = "code"; ui.event("layer", "change");
+  assert.match(ui.ids.get("comparison-position").textContent, /File 1\/1.*changed region 1\/2/, "Code keeps its own separate saved region");
+  ui.ids.get("layer").value = "project"; ui.event("layer", "change");
+  assert.equal(pre.scrollTop, 77);
+});
+
+test("selected file reports actual reader denial and only exact recorded snapshot lookup gaps", () => {
+  const endpoint = { sourceSnapshotId: "source-requested", graphSnapshotId: "graph-requested" }, exact = { worldModelId: "world-recorded", sourceSnapshotId: "source-after", graphSnapshotId: "graph-after" };
+  const graph = { nodes: nodes("A", "B"), edges: [], contextLineage: { events: [], recordedReasons: [], canonChanges: [], files: [{ path: "src/selected.mjs", associations: [],
+    currentObservation: { status: "current-source-unavailable", reasonCode: "SOURCE_READ_PERMISSION_DENIED", explanation: "Current source unavailable; retained citations remain separate." },
+    comparisons: [{ changeSet: { nodeId: "A" }, status: "unknown", scope: "recorded-changeset-snapshot-pair", snapshotLookup: {
+      before: { requested: endpoint, resolvedWorldModelId: null, method: "bounded-source-graph-pair-lookup", worldIdRecorded: false },
+      after: { requested: exact, resolvedWorldModelId: null, method: "recorded-exact-world-id", worldIdRecorded: true } } }] }], gaps: [
+      { ...endpoint, lookup: "recorded-source-graph-pair", reasonCode: "RETAINED_SOURCE_SNAPSHOT_LOOKUP_BUDGET_REACHED", inspectedSnapshotCount: 128, retainedSnapshotCount: 140, uninspectedSnapshotCount: 12, inspectedSnapshotLimit: 128, absenceEstablished: false },
+      { ...exact, lookup: "recorded-exact-world-id", reasonCode: "REQUESTED_EXACT_WORLD_NOT_FOUND" },
+      { ...exact, sourceSnapshotId: "source-different", lookup: "recorded-exact-world-id", reasonCode: "SAME_WORLD_DIFFERENT_SOURCE" },
+      { ...exact, graphSnapshotId: "graph-different", lookup: "recorded-exact-world-id", reasonCode: "SAME_WORLD_DIFFERENT_GRAPH" },
+      { ...exact, nodeId: "A", graphSnapshotId: "graph-node-bypass", lookup: "recorded-exact-world-id", reasonCode: "NODE_ID_MUST_NOT_OVERRIDE_ENDPOINT" },
+      { ...exact, lookup: "recorded-source-graph-pair", reasonCode: "SAME_ENDPOINT_WRONG_LOOKUP" },
+      { ...endpoint, worldModelId: "unrecorded-world", lookup: "recorded-source-graph-pair", reasonCode: "LEGACY_PAIR_MUST_NOT_GAIN_WORLD_ID" },
+      { ...endpoint, lookup: "recorded-source-graph-pair", graphSnapshotId: "legacy-other-graph", reasonCode: "LEGACY_DIFFERENT_GRAPH" },
+      { sourceSnapshotId: "source-other", graphSnapshotId: "graph-other", reasonCode: "UNRELATED_PAIR_GAP" },
+      { worldModelId: "world-unrelated", reasonCode: "UNRELATED_INVENTORY_GAP" },
+      { nodeId: "B", reference: { path: "B.json", digest: "b".repeat(64) }, reasonCode: "UNRELATED_SELECTED_RECORD_GAP" },
+      { reasonCode: "UNSCOPED_GLOBAL_GAP" }
+    ] } };
+  const ui = explorerDom(input(graph)), body = ui.ids.get("context-lineage-body");
+  assert(body.textContent.includes("SOURCE_READ_PERMISSION_DENIED"));
+  assert(body.textContent.includes("RETAINED_SOURCE_SNAPSHOT_LOOKUP_BUDGET_REACHED")); assert(body.textContent.includes("128 inspected / 140 retained"));
+  assert(body.textContent.includes("World ID not recorded")); assert(body.textContent.includes("REQUESTED_EXACT_WORLD_NOT_FOUND"));
+  assert(body.textContent.includes("world-recorded"));
+  for (const reason of ["SAME_WORLD_DIFFERENT_SOURCE", "SAME_WORLD_DIFFERENT_GRAPH", "NODE_ID_MUST_NOT_OVERRIDE_ENDPOINT", "SAME_ENDPOINT_WRONG_LOOKUP", "LEGACY_PAIR_MUST_NOT_GAIN_WORLD_ID", "LEGACY_DIFFERENT_GRAPH"])
+    assert(!body.textContent.includes(reason), `${reason} must not leak below the selected comparison`);
+  assert(!body.textContent.includes("UNRELATED_PAIR_GAP")); assert(!body.textContent.includes("UNRELATED_INVENTORY_GAP")); assert(!body.textContent.includes("UNSCOPED_GLOBAL_GAP"));
+  ui.event(recordButton(ui, "B")); assert(!body.textContent.includes("UNRELATED_SELECTED_RECORD_GAP")); ui.event("only-focus");
+  assert(!body.textContent.includes("SOURCE_READ_PERMISSION_DENIED")); assert(!body.textContent.includes("LOOKUP_BUDGET_REACHED")); assert(!body.textContent.includes("REQUESTED_EXACT_WORLD_NOT_FOUND"));
 });
 
 test("large complete inventory remains reachable, selection/cards are paged not capped, and focus reuses its basis", async t => {
@@ -337,7 +547,7 @@ test("reading cards retain A/B expansion, scroll and pages through C changes, fi
   for (const card of [restoredA, restoredB]) { assert(card.open); assert(card.children.filter(item => item.tagName === "details").every(item => item.open)); const pre = descendants(card).find(item => item.tagName === "pre"); assert.equal(pre.scrollTop, 77); assert.equal(pre.scrollLeft, 9); assert.equal(card.scrollTop, 31); }
   ui.ids.get("search").value = "N103"; ui.event("search", "input"); ui.event("back"); ui.event("forward");
   assert.equal(readingCard(ui, "A"), restoredA); assert.equal(readingCard(ui, "B"), restoredB);
-  ui.ids.get("layer").value = "code"; ui.event("layer", "change"); assert(!readingCard(ui, "A").children.filter(item => item.tagName === "details").some(item => item.open));
+  ui.ids.get("layer").value = "code"; ui.event("layer", "change"); assert.equal(selectionCount(ui), 0); ui.event(recordButton(ui, "Code A")); assert(!readingCard(ui, "A").children.filter(item => item.tagName === "details").some(item => item.open));
   ui.ids.get("layer").value = "project"; ui.event("layer", "change");
   assert.equal(descendants(readingCard(ui, "A")).find(item => item.tagName === "pre").scrollTop, 77);
   ui.event(descendants(readingCard(ui, "A")).find(item => item.tagName === "button" && item.textContent === "Read focus"));
