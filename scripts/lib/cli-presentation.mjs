@@ -1,7 +1,7 @@
 import { resolveOperation } from "./lode-operation-contract.mjs";
 import { organizeSelectedWorkBodies, workBodyTuples } from "./session-work-body-organization.mjs";
 import { isDeepStrictEqual } from "node:util";
-import { formatTerminalGraph, terminalBlock } from "./terminal-graph.mjs";
+import { formatTerminalGraph, inertTerminalText, terminalBlock } from "./terminal-graph.mjs";
 
 const PRODUCT_LABELS = {
   unavailable: "unavailable until Core initialization",
@@ -37,6 +37,17 @@ function compactText(value, maxLength = 180) {
 
 function formatBudget(value) {
   return Number.isFinite(value) ? Number(value).toLocaleString("en-US") : "unknown";
+}
+
+// Configuration is observable here; actual Host loading/connection is not.
+// Keep ordinary work available, including quiet status and preserved files.
+function integrationNotices(value) {
+  const lines = [], integrations = value.project?.integrations || value.integrations || value.hostIntegration || {};
+  const display = text => compactText(inertTerminalText(text), 240);
+  const manual = Object.entries(integrations).filter(([, item]) => item?.status === "manual");
+  if (manual.length) lines.push(`Host configuration: ${manual.map(([client, item]) => `${display(client)} existing files preserved; generated projection ${[item.projection, item.instructionProjection, item.mcpProjection].filter(Boolean).map(display).join(", ") || "not recorded"}`).join("; ")}. Automatic connection was not verified; ordinary work continues.`);
+  if (value.drift?.length) lines.push(`Managed configuration differs: ${value.drift.slice(0, 8).map(item => `${display(item.path || item.kind || "managed artifact")} (${display(item.reason || "changed")})`).join("; ")}${value.drift.length > 8 ? `; ${value.drift.length - 8} more in --json` : ""}. Originals remain untouched; only affected managed operations need follow-up.`);
+  return lines;
 }
 
 function commandGroups(commands) {
@@ -110,17 +121,18 @@ export function formatProjectStatus(value, { doctor = false } = {}) {
     ? "Product candidates need review; ordinary work remains available"
     : "none for ordinary work";
   const integrityAttention = core?.state === "drifted" || (recovery?.lodeActionRequired ?? recovery?.headActionRequired);
+  const notices = integrationNotices(value);
   if (!doctor && !integrityAttention && value.currentProjectDirectionAvailability?.status === "unavailable") {
-    return "Lode Session context remains available; current common direction is unavailable. Continue independent work; only direction-dependent effects or publication need Lode follow-up.\n";
+    return ["Lode Session context remains available; current common direction is unavailable. Continue independent work; only direction-dependent effects or publication need Lode follow-up.", ...notices, ""].join("\n");
   }
   const next = value.nextAction?.id === "work_directly"
     ? "Continue the user's original task."
     : compactText(value.nextAction?.summary || "Continue with the task.");
   if (!doctor && value.presentation?.mode === "quiet") {
-    return `${core?.state === "ready" ? "Lode is ready — continue the task." : "Lode is not initialized; ordinary work remains available."}\n`;
+    return [core?.state === "ready" ? "Lode is ready — continue the task." : "Lode is not initialized; ordinary work remains available.", ...notices, ""].join("\n");
   }
   if (!doctor && value.presentation?.mode === "notice") {
-    return `Lode is ready — ordinary work continues; ${value.attention?.items?.length || 0} optional item(s) are available when relevant.\n`;
+    return [`Lode is ready — ordinary work continues; ${value.attention?.items?.length || 0} optional item(s) are available when relevant.`, ...notices, ""].join("\n");
   }
   const lines = [
     core?.state === "ready" ? "Lode is ready — continue the task." : "Lode needs attention before a Lode-managed mutation.",
@@ -130,6 +142,7 @@ export function formatProjectStatus(value, { doctor = false } = {}) {
     `Product knowledge: ${PRODUCT_LABELS[product?.state] || product?.state || "unknown"}`,
     `Context: ${CONTEXT_LABELS[context?.state] || context?.state || "unknown"}`,
     `User decision: ${value.attention?.userDecisionRequired ? "required for the listed protected decision" : productDecision}`,
+    ...notices,
   ];
   if (integrityAttention) {
     lines.push(core?.state === "drifted"
@@ -196,6 +209,7 @@ export function formatProjectBootstrap(value) {
     `Product knowledge: ${PRODUCT_LABELS[product?.state] || product?.state || "unknown"}`,
     `User decision: ${needsProductReview ? "required before Product candidates can be approved; ordinary work remains available" : "none"}`,
     ...(instructionNotice ? [instructionNotice] : []),
+    ...integrationNotices(value),
     ...(integrityAttention ? [ready
       ? "Recovery notice: inspect the checkpoint before relying on recovery; ordinary work remains available when independent of it."
       : "Integrity notice: inspect the reported Core boundary before a mutating Lode operation."] : []),
@@ -965,7 +979,55 @@ export function formatCliResult(command, value, presentation = {}) {
   if (command === "checkpoint-sync") return formatCheckpointSync(value);
   if (command === "session-work-record") return formatSessionWorkRecord(value);
   if (command === "session-work-read") return formatSessionWorkContext(value) || "No selected Session work evidence is recorded. Ordinary work continues.\n";
+  if (["world-index", "world-status", "world-refresh", "world-refresh-status", "world-refresh-read", "world-docs-build", "world-docs-status", "world-docs-capture", "world-docs-candidates"].includes(command)) return formatWorldSummary(command, value);
   return `${JSON.stringify(value, null, 2)}\n`;
+}
+
+function formatWorldSummary(command, value) {
+  const documents = command.startsWith("world-docs-"), snapshot = value?.snapshot;
+  const projection = value?.projection?.projection || value?.projection || {};
+  const candidate = value?.candidateSet;
+  const lines = [`${documents ? "World documents" : "World"}: ${compactText(inertTerminalText(value?.status || "status not returned"))}.`];
+  const fact = (label, content) => { if (content != null && content !== "") lines.push(terminalBlock(label, content).trimEnd()); };
+  fact("World snapshot", snapshot?.worldModelId || value?.worldModelId || value?.worldModel?.worldModelId || value?.currentWorldModelId);
+  fact("World freshness", value?.worldModelStatus || (command === "world-status" ? value?.status : null));
+  fact("Graph snapshot", snapshot?.temporalProvenanceGraph?.graphSnapshotId || value?.graphSnapshotId || value?.worldModel?.graphSnapshotId);
+  const counts = snapshot?.summary || projection.summary;
+  if (counts) {
+    const entries = Object.entries(counts).filter(([, count]) => Number.isSafeInteger(count) && count >= 0);
+    fact("Counts", entries.slice(0, 16).map(([key, count]) => `${key}: ${count}`).join("; "));
+    if (entries.length > 16) fact("Omitted count fields", entries.length - 16);
+  }
+  for (const key of ["added", "changed", "removed"]) if (Array.isArray(value?.changes?.[key])) {
+    const paths = value.changes[key];
+    fact(`Source ${key}`, `${paths.length}${paths.length ? `; ${paths.slice(0, 6).map(item => compactText(inertTerminalText(typeof item === "string" ? item : item.path), 160)).join("; ")}` : ""}${paths.length > 6 ? `; ${paths.length - 6} more in --json` : ""}`);
+  }
+  const flags = Object.entries(value?.changes || {}).filter(([, changed]) => changed === true).map(([key]) => key);
+  if (flags.length) fact("Changed domains", flags.join("; "));
+  fact("Document projection", value?.documentProjectionId || projection.documentProjectionId);
+  const locations = value?.projection?.publishedLocations || projection.publishedLocations;
+  if (Array.isArray(locations)) {
+    fact("Published document paths", `${locations.length}; ${locations.slice(0, 3).map(item => compactText(inertTerminalText(item.relativePath || item.location), 180)).join("; ")}${locations.length > 3 ? `; ${locations.length - 3} more in --json` : ""}`);
+  }
+  const drift = value?.projection?.drift || projection.drift;
+  if (Array.isArray(drift)) fact("Document differences", `${drift.length}${drift.length ? `; ${drift.slice(0, 6).map(item => `${compactText(inertTerminalText(item.relativePath), 160)} (${compactText(inertTerminalText(item.changeType), 40)})`).join("; ")}` : ""}${drift.length > 6 ? `; ${drift.length - 6} more in --json` : ""}`);
+  fact("Candidate set", candidate?.candidateSetId);
+  if (Array.isArray(candidate?.candidates)) fact("Unreviewed document candidates", candidate.candidates.length);
+  if (value?.projection?.candidateRequired || projection.candidateRequired || candidate?.requiresReviewDecision) lines.push("Document changes need their existing review before Canon application; independent work continues.");
+  fact("Refresh receipt", value?.receipt?.refreshReceiptId || value?.pointer?.refreshReceiptId);
+  fact("Post-refresh documents", value?.postRefreshProjection?.status);
+  fact("Evidence gap", value?.reasonCode || value?.postRefreshProjection?.reasonCode);
+  fact("Saved result", value?.receiptFile || value?.file || value?.projection?.projectionLocation || projection.projectionLocation);
+  lines.push("Derived evidence only; counts do not prove semantic sufficiency, approval or execution success.");
+  const mutating = ["world-index", "world-refresh", "world-docs-build", "world-docs-capture"].includes(command);
+  if (mutating) lines.push("Raw output is available with --json on the original command; do not repeat a mutation solely to inspect details. Read-only checks: world-status / world-docs-status --json.");
+  else {
+    const id = command === "world-docs-candidates" ? candidate?.candidateSetId : command === "world-refresh-read" ? value?.receipt?.refreshReceiptId : null;
+    const argument = id && /^[A-Za-z0-9][A-Za-z0-9._:-]*$/u.test(id) ? ` ${command === "world-docs-candidates" ? "--candidate-set" : "--receipt"} "${id}"` : "";
+    lines.push(id && !argument ? "Full original result: add --json to the original command with its exact arguments."
+      : `Full original result: lode-agent ${command} "<project>"${argument} --json`);
+  }
+  return `${lines.join("\n")}\n`;
 }
 
 function formatWorkerPreparation(value) {

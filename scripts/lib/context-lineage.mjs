@@ -36,26 +36,47 @@ export async function explainContextLineage({ root, project, storage, selection 
   // Reuse the safe local World reader only when an already recorded ChangeSet
   // needs exact snapshot metadata. Never choose the configured external store.
   let snapshots = null;
+  const snapshotKey = endpoint => JSON.stringify([endpoint?.sourceSnapshotId, endpoint?.graphSnapshotId]);
+  const endpointKey = endpoint => JSON.stringify([endpoint?.worldModelId || null, endpoint?.sourceSnapshotId, endpoint?.graphSnapshotId]);
   function snapshotsFor(changes) {
     if (snapshots) return snapshots;
     snapshots = new Map();
     const adapter = new LocalJsonWorldModelStoreAdapter({ projectRoot: root, storage });
     adapter.readPointer = () => null; // explicit historical IDs, no current selection/read
-    const snapshotKey = endpoint => JSON.stringify([endpoint.sourceSnapshotId, endpoint.graphSnapshotId]);
-    const wanted = new Set(changes.flatMap(change => [change.before, change.after]).filter(Boolean).map(snapshotKey));
+    const endpoints = [...new Map(changes.flatMap(change => [change.before, change.after]).filter(Boolean).map(endpoint => [endpointKey(endpoint), endpoint])).values()];
+    const pendingPairs = endpoints.filter(endpoint => !endpoint.worldModelId);
+    const matches = (snapshot, endpoint) => snapshotKey(snapshot.temporalProvenanceGraph) === snapshotKey(endpoint);
+    const read = id => {
+      safeGraphFile(root, path.relative(root, adapter.snapshotLocation(id)).replaceAll("\\", "/"));
+      return readWorldModelForDiscovery({ root, worldModelId: id, storeAdapter: adapter }).snapshot;
+    };
+    // A recorded World ID is a direct address, independent of inventory order.
+    // Older ChangeSets contain only a Source/Graph pair: never manufacture a
+    // World ID from either member of that pair or choose today's pointer.
+    for (const endpoint of endpoints.filter(item => item.worldModelId)) {
+      try {
+        const snapshot = read(endpoint.worldModelId);
+        if (!matches(snapshot, endpoint)) throw Object.assign(new Error("Recorded snapshot pair differs from World"), { code: "RETAINED_SOURCE_SNAPSHOT_PAIR_MISMATCH" });
+        snapshots.set(endpointKey(endpoint), snapshot);
+      } catch (error) { gaps.push({ ...endpoint, lookup: "recorded-exact-world-id", reasonCode: error.code || "RETAINED_SOURCE_SNAPSHOT_UNAVAILABLE" }); }
+    }
+    if (!pendingPairs.length) return snapshots;
     try {
       safeGraphFile(root, relativeProjectArtifact(storage, "world-model", "snapshots"));
       const ids = adapter.listSnapshotIds();
+      let inspected = 0;
       for (const id of ids.slice(0, 128)) {
-        safeGraphFile(root, path.relative(root, adapter.snapshotLocation(id)).replaceAll("\\", "/"));
+        inspected++;
         try {
-          const { snapshot } = readWorldModelForDiscovery({ root, worldModelId: id, storeAdapter: adapter });
-          const key = snapshotKey(snapshot.temporalProvenanceGraph);
-          if (wanted.has(key)) snapshots.set(key, snapshot);
+          const snapshot = read(id);
+          for (const endpoint of pendingPairs) if (!snapshots.has(endpointKey(endpoint)) && matches(snapshot, endpoint)) snapshots.set(endpointKey(endpoint), snapshot);
         } catch (error) { gaps.push({ worldModelId: id, reasonCode: error.code || "RETAINED_SOURCE_SNAPSHOT_UNAVAILABLE" }); }
-        if ([...wanted].every(key => snapshots.has(key))) break;
+        if (pendingPairs.every(endpoint => snapshots.has(endpointKey(endpoint)))) break;
       }
-      if ([...wanted].some(key => !snapshots.has(key))) gaps.push({ reasonCode: "REQUESTED_RETAINED_SOURCE_SNAPSHOT_UNAVAILABLE", inspectedSnapshotLimit: 128 });
+      for (const endpoint of pendingPairs.filter(item => !snapshots.has(endpointKey(item)))) gaps.push({ ...endpoint, lookup: "recorded-source-graph-pair",
+        reasonCode: ids.length > inspected ? "RETAINED_SOURCE_SNAPSHOT_LOOKUP_BUDGET_REACHED" : "REQUESTED_RETAINED_SOURCE_SNAPSHOT_NOT_FOUND",
+        inspectedSnapshotCount: inspected, retainedSnapshotCount: ids.length, uninspectedSnapshotCount: Math.max(0, ids.length - inspected), inspectedSnapshotLimit: 128,
+        absenceEstablished: false });
     } catch (error) { gaps.push({ reasonCode: error.code || "RETAINED_SOURCE_SNAPSHOTS_UNAVAILABLE" }); }
     return snapshots;
   }
@@ -77,8 +98,8 @@ export async function explainContextLineage({ root, project, storage, selection 
       const recorded = document.changes.filter(change => change.path === relative);
       if (!recorded.length) continue;
       const retained = snapshotsFor(changes.map(item => item.document));
-      const before = retained.get(JSON.stringify([document.before.sourceSnapshotId, document.before.graphSnapshotId]));
-      const after = retained.get(JSON.stringify([document.after.sourceSnapshotId, document.after.graphSnapshotId]));
+      const before = retained.get(endpointKey(document.before));
+      const after = retained.get(endpointKey(document.after));
       const exact = (snapshot, endpoint) => {
         if (!snapshot || snapshot.temporalProvenanceGraph.graphSnapshotId !== endpoint.graphSnapshotId) return null;
         return snapshot.files.find(file => file.path === relative) || null;
@@ -95,6 +116,10 @@ export async function explainContextLineage({ root, project, storage, selection 
       const a = await bindVersion(before, oldFile), b = await bindVersion(after, newFile);
       const comparison = compareExactSourceVersions(a?.text !== undefined ? a : null, b?.text !== undefined ? b : null, project.projectId);
       comparisons.push({ ...comparison, scope: "recorded-changeset-snapshot-pair", changeSet: reference(node), recordedRevisionChanges: recorded,
+        snapshotLookup: Object.fromEntries([["before", document.before, before], ["after", document.after, after]].map(([side, endpoint, resolved]) => [side, {
+          requested: endpoint, resolvedWorldModelId: resolved?.worldModelId || null,
+          method: endpoint.worldModelId ? "recorded-exact-world-id" : "bounded-source-graph-pair-lookup", worldIdRecorded: Boolean(endpoint.worldModelId),
+        }])),
         recordedResultPacketId: document.resultPacketId, recordedReviewDecisionId: document.reviewDecisionId,
         currentMatchesRecordedAfter: b?.digest && current.digest ? current.digest === b.digest : null,
         attribution: "Recorded ChangeSet association is not proof that this Run caused every byte change.",
@@ -114,7 +139,7 @@ export async function explainContextLineage({ root, project, storage, selection 
       })() : null;
       comparisons.push({ ...compareExactSourceVersions(previous.text !== undefined ? previous : null, current.text !== undefined ? current : null, project.projectId), scope: "cited-revision-versus-observed-current-bytes",
         ...(retainedOriginal ? { retainedOriginal } : {}),
-        citedReference: ref, ...(previous.status === "unavailable" ? { gap: previous } : {}) });
+        citedReference: ref, gaps: [previous, current].filter(version => version.status === "unavailable"), ...(previous.status === "unavailable" ? { gap: previous } : {}) });
     }
     // Explicit work-chain links can expose two cited source versions even
     // without a Run/World. The link does NOT assign request-before/fulfilled-

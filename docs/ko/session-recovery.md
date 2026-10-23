@@ -330,3 +330,19 @@ fresh process가 통합하고, 독립적인 Codex/OpenCode labeled process가 �
 상이한 integration과 non-accept review도
 다룹니다. Git repository, GraphDB, WorkspaceHost, Herdr process 또는 provider session
 resume은 필요하지 않습니다.
+
+## 제한된 발화 참조와 native 연결 부재
+
+선택적인 로컬 발화 참조는 비밀값을 가린 평문 P5 힌트입니다. 암호화·전체 대화·
+지시문·P2 복구 정본이 아닙니다. 발화 전용 저장 경로는 POSIX에서 디렉터리 0700,
+임시 파일 0600으로 생성하고 소유한 일반 파일인지 검사하며 안전하지 않은 링크는
+거부합니다. 기존 참조도 제한된 크기로 읽어 재가림한 뒤 사용합니다. 가림은 알려진
+자격 증명 패턴에 대한 최선의 처리이며 모든 비밀값을 탐지한다는 보장은 아닙니다.
+Windows의 상속 ACL 비공개성은 이 POSIX mode나 Windows fixture만으로 입증되지
+않았습니다. 선택적 저장 실패는 해당 힌트만 생략하며 일반 직접 작업은 막지 않습니다.
+
+Claude native 호출자 연결이 없을 때 Project 기본 Session을 통해 다른 논리
+Session을 조용히 고르지 않습니다. 정확한 논리 Session을 명시한 요청과 명시적인
+initialize/resume은 계속 사용할 수 있습니다. 최근 시각이나 다른 호출자로부터
+old→new native ID 연속성을 추정하지 않습니다. 합성 라우팅 검사는 실제 Claude
+`/clear`의 ID 변경이나 ID 간 자동 복원 성공을 의미하지 않습니다.

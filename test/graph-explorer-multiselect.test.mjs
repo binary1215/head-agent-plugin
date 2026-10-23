@@ -147,8 +147,12 @@ test("multiple exact file pairs stay open with their roles, partial/missing stat
   ui.event("file-next"); assert.match(ui.ids.get("comparison-position").textContent, /File 2\/2/); assert(ui.stats.scrolled);
   ui.event("change-next"); assert.match(ui.ids.get("comparison-position").textContent, /changed region 1\/4/);
   ui.event("change-next"); assert.match(ui.ids.get("comparison-position").textContent, /changed region 2\/4/);
+  const excerpt = descendants(ui.ids.get("context-lineage-body")).find(element => element.tagName === "details" && element.children[0]?.textContent === "Exact before / after excerpts");
+  excerpt.open = true; const exactPre = descendants(excerpt).find(element => element.tagName === "pre"); exactPre.scrollTop = 39; exactPre.scrollLeft = 8;
   const panel = ui.ids.get("context-lineage-body"); ui.event(recordButton(ui, "A")); assert.equal(ui.ids.get("context-lineage-body"), panel); assert.match(ui.ids.get("comparison-position").textContent, /changed region 2\/4/);
   ui.event(recordButton(ui, "C")); assert(ui.ids.get("context-lineage-body").textContent.includes("deletion/rename not established")); assert(ui.ids.get("context-lineage-body").textContent.includes("not an empty diff"));
+  assert(ui.ids.get("context-lineage-body").contains(excerpt)); assert(excerpt.open); assert.equal(exactPre.scrollTop, 39); assert.equal(exactPre.scrollLeft, 8);
+  assert.match(ui.ids.get("comparison-position").textContent, /changed region 2\/4/);
   assert.doesNotMatch(ui.ids.get("selection-cards").textContent, /\u001b/); assert(ui.ids.get("selection-cards").textContent.includes("<svg"));
   ui.event("wide-reading"); assert.equal(ui.document.documentElement.dataset.readingWide, "true"); assert.equal(selectionCount(ui), 3);
   assert.equal(JSON.stringify(snapshot), before);
@@ -160,11 +164,45 @@ test("Project/layer/revision selections and their cameras remain separate even w
     { nodeId: "Z", name: "Code Z", kind: "File", path: "same.mjs", revisionId: "other-revision" }], edges: [edge("A", "Z", "code-link", "IMPORTS")], status: "current" };
   const before = JSON.stringify(snapshot), ui = explorerDom(snapshot); ui.event(recordButton(ui, "B")); ui.event("zoom-in"); ui.flush();
   const projectBox = camera(ui); ui.ids.get("layer").value = "code"; ui.event("layer", "change");
-  assert.equal(selectionCount(ui), 1); assert(ui.ids.get("selection-cards").textContent.includes("Code A"));
+  assert.equal(selectionCount(ui), 0); assert.match(ui.ids.get("layer-info").textContent, /No unique exact source identity/);
+  ui.event(recordButton(ui, "Code A")); assert.equal(selectionCount(ui), 1);
   ui.event(recordButton(ui, "Code Z")); assert.equal(selectionCount(ui), 2);
   ui.ids.get("layer").value = "project"; ui.event("layer", "change");
   assert.equal(selectionCount(ui), 2); assert.equal(camera(ui), projectBox); assert(!ui.ids.get("selection-cards").textContent.includes("Code Z"));
   assert.equal(JSON.stringify(snapshot), before);
+});
+
+test("layer transition follows only one exact file revision, never a path-only or duplicate candidate", () => {
+  const digest = "a".repeat(64), snapshot = input({ nodes: [{ nodeId: "A", name: "Project file", kind: "FileRevision", path: "src/a.mjs", digest }], edges: [] });
+  snapshot.codeGraph = { nodes: [{ nodeId: "wrong", name: "Old bytes", kind: "File", path: "src/a.mjs", digest: "b".repeat(64) },
+    { nodeId: "right", name: "Exact bytes", kind: "File", path: "src/a.mjs", digest }], edges: [], status: "current" };
+  const ui = explorerDom(snapshot); ui.ids.get("layer").value = "code"; ui.event("layer", "change");
+  assert.equal(selectionCount(ui), 1); assert(ui.ids.get("selection-cards").textContent.includes("Exact bytes")); assert(!ui.ids.get("selection-cards").textContent.includes("Old bytes"));
+  snapshot.codeGraph.nodes.push({ ...snapshot.codeGraph.nodes[1], nodeId: "duplicate" });
+  const ambiguous = explorerDom(snapshot); ambiguous.ids.get("layer").value = "code"; ambiguous.event("layer", "change"); assert.equal(selectionCount(ambiguous), 0);
+  assert.equal(ambiguous.ids.get("records").children.length, 3, "Ambiguous records remain explicit choices");
+});
+
+test("hidden selected records have an explicit restore action and reading/map jumps keep selection", () => {
+  const ui = explorerDom(input({ nodes: nodes("A", "B"), edges: [edge("A", "B")] }));
+  ui.ids.get("search").value = "not-found"; ui.event("search", "input"); ui.ids.get("hide-nonmatches").checked = true; ui.event("hide-nonmatches", "change");
+  assert.match(ui.ids.get("graph").textContent, /hidden by the current filters/); assert.match(ui.ids.get("restore-scope").textContent, /Show 1 hidden selection/);
+  ui.event("jump-reading"); assert.equal(ui.stats.scrolled.id, "reading-heading"); assert.equal(ui.stats.focused, "reading-heading");
+  ui.event("jump-map"); assert.equal(ui.stats.scrolled.id, "graph"); ui.event("restore-scope"); assert(nodeElement(ui, "A")); assert.equal(selectionCount(ui), 1);
+});
+
+test("separate changed regions keep exact offsets and distinct pair disclosure never leaks", () => {
+  const a = "a".repeat(64), b = "b".repeat(64), c = "c".repeat(64), graph = { nodes: nodes("A", "B"), edges: [] };
+  const pair = (id, digest, lines) => ({ status: "observed", scope: "recorded-changeset-snapshot-pair", changeSet: { nodeId: id }, before: { digest }, after: { digest: b },
+    diff: { changed: true, regions: lines.map(startLine => ({ before: { startLine, text: "old", omittedLines: 1000 }, after: { startLine, text: "new", omittedLines: 1000 } })) } });
+  graph.contextLineage = { events: [], files: [{ path: "same.mjs", associations: [], comparisons: [pair("A", a, [10, 1000]), pair("B", c, [20])] }], recordedReasons: [], canonChanges: [] };
+  const ui = explorerDom(input(graph)), root = ui.ids.get("context-lineage-body");
+  assert(root.textContent.includes("− 1000/· old")); assert(root.textContent.includes("+ ·/1000 new"));
+  const excerptsA = descendants(root).filter(item => item.tagName === "details" && item.children[0]?.textContent === "Exact before / after excerpts"); excerptsA[0].open = true;
+  ui.event("change-next"); ui.event("change-next"); assert.match(ui.ids.get("comparison-position").textContent, /changed region 2\/2/);
+  ui.event(recordButton(ui, "B")); const excerptsB = descendants(root).filter(item => item.tagName === "details" && item.children[0]?.textContent === "Exact before / after excerpts" && !excerptsA.includes(item));
+  assert.equal(excerptsB.length, 1); assert.equal(excerptsB[0].open, false); assert(excerptsA[0].open); assert.match(ui.ids.get("comparison-position").textContent, /changed region 2\/3/);
+  ui.event("jump-diff"); assert.equal(ui.stats.scrolled.id, "context-lineage"); assert(ui.ids.get("context-lineage").open);
 });
 
 test("large complete inventory remains reachable, selection/cards are paged not capped, and focus reuses its basis", async t => {
@@ -337,7 +375,7 @@ test("reading cards retain A/B expansion, scroll and pages through C changes, fi
   for (const card of [restoredA, restoredB]) { assert(card.open); assert(card.children.filter(item => item.tagName === "details").every(item => item.open)); const pre = descendants(card).find(item => item.tagName === "pre"); assert.equal(pre.scrollTop, 77); assert.equal(pre.scrollLeft, 9); assert.equal(card.scrollTop, 31); }
   ui.ids.get("search").value = "N103"; ui.event("search", "input"); ui.event("back"); ui.event("forward");
   assert.equal(readingCard(ui, "A"), restoredA); assert.equal(readingCard(ui, "B"), restoredB);
-  ui.ids.get("layer").value = "code"; ui.event("layer", "change"); assert(!readingCard(ui, "A").children.filter(item => item.tagName === "details").some(item => item.open));
+  ui.ids.get("layer").value = "code"; ui.event("layer", "change"); assert.equal(selectionCount(ui), 0); ui.event(recordButton(ui, "Code A")); assert(!readingCard(ui, "A").children.filter(item => item.tagName === "details").some(item => item.open));
   ui.ids.get("layer").value = "project"; ui.event("layer", "change");
   assert.equal(descendants(readingCard(ui, "A")).find(item => item.tagName === "pre").scrollTop, 77);
   ui.event(descendants(readingCard(ui, "A")).find(item => item.tagName === "button" && item.textContent === "Read focus"));

@@ -62,8 +62,10 @@ of declaration/line text, not a full AST, exact body proof, rename lineage or
 behavioral equivalence judgment.
 
 Before/after code and document excerpts are readable without opening JSON.
-Excerpts use the differing line envelope, surrounding context and explicit
-omission counts; unchanged lines inside that envelope are not individually
+Excerpts prioritize separated changed regions and surrounding context within
+the shared per-side line/UTF-8 byte budget. Each region retains its own original
+line numbers; separated text is never presented as one contiguous source range.
+Omitted lines and regions remain explicit. Unchanged context is not individually
 claimed as edits. Canon comparisons use exact retained model originals and
 their actual recorded review rationale, not structural graph ID differences.
 Known original record fields have readable bodies; raw originals, unknown fields,
@@ -77,8 +79,12 @@ diff, lazy fetch, network, hook, Git mutation or automatic parser installation i
 used. A matching blob is a byte location, not a unique commit, Run owner or reason.
 Existing source-reference byte bounds remain; local history reads inspect at most
 16 path commits and 24 commands per query. A recorded ChangeSet may inspect a
-bounded page of up to 128 existing snapshots for its exact pair. These are
-optional-view resource bounds; any omitted or unavailable portion stays unknown.
+bounded page of up to 128 existing snapshots for its exact pair. When an exact
+World ID was actually recorded, it is read directly and its Source/Graph pair
+is verified first. Legacy pair-only records do not acquire an invented World ID;
+an exhausted scan is distinguished from an absent match. This does not solve
+all legacy history beyond that bounded window or introduce a new writer/store.
+Any omitted or unavailable portion stays unknown.
 
 Non-Git, Run-free, absent/stale World and missing original-source histories still
 permit available context and normal work. The view does not collect transcripts,

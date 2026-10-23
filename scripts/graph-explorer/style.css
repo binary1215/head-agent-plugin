@@ -35,7 +35,8 @@ html[data-reading-wide=true] main{grid-template-columns:220px minmax(0,1fr);grid
 .selection-card{margin:0}.selection-card>summary{font-size:1rem;color:var(--text);overflow-wrap:anywhere}.selection-card[open]>summary{margin-bottom:10px}
 .node[data-pinned=true] .map-card-header:after{content:none}.node[data-pinned=true] .card-frame{stroke-dasharray:2 3}
 .map-card-body{max-height:min(420px,55vh);overflow:auto;overscroll-behavior:contain}
-.node[data-pinned=true] .map-card-header:after{content:"PIN";position:absolute;right:0;top:0;font-size:.7rem;color:var(--focus)}
+.map-card-header{min-height:44px}.node[data-pinned=true] .map-card-header:after{content:"PIN";position:absolute;right:0;top:28px;font-size:.7rem;line-height:1;color:var(--focus);pointer-events:none}
+.reading-jump{display:flex;gap:6px;flex-wrap:wrap;padding:6px 12px}.reading-jump button{font-size:12px}#reading-heading,#graph,#overview,#context-lineage{scroll-margin-top:12px}
 .map-measure{position:fixed;left:-10000px;top:0;visibility:hidden;pointer-events:none}
 .record-group{pointer-events:none}.record-group rect{fill:#7999bb08;stroke:#7999bb66;stroke-dasharray:6 5;stroke-width:1.5}.group-caption{fill:#b5c9df;font-size:12px;paint-order:stroke;stroke:#101722;stroke-width:4}
 .record-membership ul{max-height:18rem;overflow:auto}.record-membership button{max-width:100%;text-align:left;overflow-wrap:anywhere}

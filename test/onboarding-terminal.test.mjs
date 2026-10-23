@@ -100,6 +100,23 @@ test("cited A/B roles and recorded after remain distinct when later current byte
   assert(formatTerminalGraph(value, { columns: 120 }).includes("Recorded after differs from current"));
 });
 
+test("terminal keeps separate changed regions, exact detail anchors and actionable unavailable reasons", () => {
+  const value = graph(); value.basis.worldModelId = "world-model-" + "a".repeat(24);
+  value.contextLineage = { files: [{ path: "src/action.mjs", currentObservation: { reasonCode: "SOURCE_BYTE_BOUND", explanation: "Current source bytes are unavailable." }, comparisons: [{ status: "unknown", reasonCode: "EXACT_SOURCE_PAIR_UNAVAILABLE",
+    gaps: [{ path: "src/action.mjs", reasonCode: "EACCES" }, { reasonCode: "LOCAL_GIT_READ_BUDGET_REACHED" }],
+    diff: { changed: true, before: { startLine: 7, text: "old early" }, after: { startLine: 7, text: "new early" }, regions: [
+      { before: { startLine: 7, text: "old early" }, after: { startLine: 7, text: "new early" } },
+      { before: { startLine: 997, text: "old late" }, after: { startLine: 997, text: "new late", omittedLines: 10, omittedRanges: [{ startLine: 1000, endLine: 1009 }] } },
+    ], coverage: { omittedRegionCount: 3 } } }] }], gaps: [{ reasonCode: "RETAINED_SOURCE_SNAPSHOT_LOOKUP_BUDGET_REACHED", uninspectedSnapshotCount: 40 }] };
+  const before = JSON.stringify(value), text = formatTerminalGraph(value, { columns: 240 });
+  for (const term of ["region 2/2, line 997", "new late", "lines 1000-1009", "3 further changed regions", "Read [1] details", '--anchors "a" --depth 0 --details', '--world-model "world-model-',
+    "SOURCE_BYTE_BOUND", "Exact source exceeds the byte bound", "Read permission denied", "narrow the selected paths or anchors", "40 snapshots not inspected", "the requested pair may remain outside it"]) assert(text.includes(term), term);
+  assert.equal(JSON.stringify(value), before);
+  value.nodes[0].nodeId = 'untrusted\"; echo bad';
+  const unsafe = formatTerminalGraph(value, { columns: 240 });
+  assert(!unsafe.includes('--anchors "untrusted')); assert(unsafe.includes("quote for your shell"));
+});
+
 function cli(t, args, cwd, env, redirect = null, entry = "scripts/lode.mjs") {
   const full = [path.join(pluginRoot, entry), ...args];
   t.diagnostic(JSON.stringify({ event: "planned-child", command: process.execPath, args: full, parent: process.pid, cwd, ports: [] }));

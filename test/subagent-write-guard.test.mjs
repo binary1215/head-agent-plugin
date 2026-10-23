@@ -7,8 +7,8 @@ import { initializeProject } from "../scripts/lib/lode-core.mjs";
 import { createNativeSessionHostBridge } from "../scripts/lib/session-native-host.mjs";
 import { SESSION_HOST_REQUEST_HELPER } from "../scripts/lib/session-host-request.mjs";
 import { observeNativeHook } from "../scripts/lib/native-session-observations.mjs";
-import { SUBAGENT_STATE_WRITE_REJECTED } from "../scripts/lib/subagent-write-guard.mjs";
-import { dispatch } from "../scripts/mcp-server.mjs";
+import { SUBAGENT_STATE_WRITE_REJECTED, SUBAGENT_WRITE_GUARD_INVALID, diagnoseSubagentWriteGuard, subagentWriteGuardEnabled } from "../scripts/lib/subagent-write-guard.mjs";
+import { dispatch, catalogTools } from "../scripts/mcp-server.mjs";
 import plugin from "../scripts/opencode-plugin.mjs";
 
 const pluginRoot = path.resolve(import.meta.dirname, "..");
@@ -29,6 +29,42 @@ function project(t) {
 }
 
 const rejected = response => response?.error?.message?.includes(SUBAGENT_STATE_WRITE_REJECTED) === true;
+
+test("guard configuration typos warn without changing default-off or blocking ordinary work", () => {
+  const messages = [], warn = message => messages.push(message);
+  for (const value of [undefined, null, "", "off", "enforce"]) {
+    const environment = { LODE_SUBAGENT_WRITE_GUARD: value };
+    assert.deepEqual(diagnoseSubagentWriteGuard(environment), { enabled: value === "enforce", valid: true });
+    assert.equal(subagentWriteGuardEnabled(environment, { warn }), value === "enforce");
+  }
+  assert.deepEqual(messages, []);
+  for (const value of ["ENFORCE", "enforce ", "true", "synthetic-secret-do-not-echo"]) {
+    const environment = { LODE_SUBAGENT_WRITE_GUARD: value }, count = messages.length;
+    assert.equal(diagnoseSubagentWriteGuard(environment).code, SUBAGENT_WRITE_GUARD_INVALID);
+    assert.equal(subagentWriteGuardEnabled(environment, { warn }), false);
+    assert.equal(subagentWriteGuardEnabled(environment, { warn }), false);
+    assert.equal(messages.length, count + 1, "Repeated calls do not flood stderr.");
+    assert.match(messages.at(-1), /protection is OFF/);
+    assert.equal(messages.at(-1).includes(value), false, "Untrusted environment content is not printed.");
+  }
+  assert.equal(subagentWriteGuardEnabled({}, { warn }), false);
+  assert.equal(subagentWriteGuardEnabled({ LODE_SUBAGENT_WRITE_GUARD: "ENFORCE" }, { warn() { throw new Error("stderr unavailable"); } }), false);
+  subagentWriteGuardEnabled({}, { warn });
+});
+
+test("every effectful catalog operation rejects a child before its handler, direct and routed", async t => {
+  const { root, canon, environment } = project(t), before = canon();
+  const effectful = catalogTools.filter(tool => tool.annotations?.readOnlyHint !== true);
+  assert.ok(effectful.length >= 54, "Do not silently shrink existing write coverage.");
+  for (const tool of effectful) for (const routed of [false, true]) {
+    const response = await dispatch({ jsonrpc: "2.0", id: tool.name, method: "tools/call", params: {
+      name: routed ? "lode_tools_call" : tool.name,
+      arguments: routed ? { name: tool.name, arguments: { project_root: root } } : { project_root: root },
+    } }, { surface: "managed-maintenance", caller: { subagent: true }, hostEnvironment: environment(true) });
+    assert.equal(rejected(response), true, `${tool.name}, routed=${routed}: ${JSON.stringify(response)}`);
+  }
+  assert.deepEqual(canon(), before, "No operation handler reached canonical writes.");
+});
 
 function claudeWire(root, name, args, id, routed = false) {
   const request = {

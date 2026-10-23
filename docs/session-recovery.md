@@ -356,3 +356,20 @@ cannot author that move. The verifier also covers interruption before/after chec
 publication, independent writers, divergent integration and non-accept review.
 It requires no Git repository, GraphDB, WorkspaceHost, Herdr process, or provider
 session resume.
+
+## Bounded prompt references and absent native correlation
+
+Optional local prompt references are redacted plaintext P5 hints, not encryption,
+a transcript, an instruction or a P2 recovery source. The prompt-only store uses
+0700 directories and 0600 staging files on POSIX, checks owned regular entries
+and rejects unsafe links. Existing references are bounded and re-masked before
+reuse. These are best-effort credential patterns, not a universal secret detector.
+Windows inherited ACL privacy has not been established by POSIX mode flags or
+the Windows fixture; do not interpret the mode tests as a Windows ACL guarantee.
+Unavailable optional storage suppresses that hint, not ordinary direct work.
+
+An absent Claude native-caller binding cannot silently choose another logical
+Session through the Project default. Exact explicit logical routes and explicit
+initialize/resume remain available. No old-to-new native-ID correlation is guessed
+from recency or a different caller. Synthetic routing tests do not prove actual
+Claude `/clear` ID changes or automatic cross-ID restoration.

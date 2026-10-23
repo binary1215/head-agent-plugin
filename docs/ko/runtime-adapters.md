@@ -60,7 +60,28 @@ bounded status map(O(A))만 사용하며 새 SDK·인증을 만들지 않습니�
 항목은 non-idle 항목 부재이지 종료가 아닙니다. Code-mode와 OpenCode 계보/P3 진입은
 이 경로에 포함되지 않습니다.
 
-생성되는 클라이언트 실행 줄은 이식 가능합니다. Claude Code `.mcp.json`은 설치가 프로젝트 밖이면 `node`와 `${CLAUDE_PLUGIN_ROOT}/scripts/mcp-server.mjs`를, 프로젝트 안이면 상대 `scripts/mcp-server.mjs`를 사용합니다. Codex 프로젝트 초기화는 MCP 경로를 쓰지 않습니다. 플러그인 `.mcp.json`은 `node`와 `scripts/mcp-server.mjs`, `cwd` `.`를 유지하고 hook은 `${PLUGIN_ROOT}`를 확장합니다. OpenCode `opencode.json`은 `node`와 `{env:LODE_PLUGIN_ROOT}/scripts/mcp-server.mjs`를 사용합니다. OpenCode 설정 치환과 플러그인 `config` hook이 그 placeholder를 이 패키지의 메모리 안 경로로 해석합니다. 이 공유 파일에는 절대 Node 바이너리나 설치 경로를 넣지 않습니다. `.lode/generated/manifest.json`의 `pluginRoot`는 설치 이동을 알아보기 위한 호스트 설치 정체성입니다. 기본 graph-explorer HTML은 이 기계에서 재생성할 수 있도록 로컬 `project.root`와 `regenerate.argv`를 유지하고, `--share`는 그 생성 경로를 뺍니다. 기본 HTML은 로컬 보고서이며 공유 산출물이 아닙니다.
+마켓플레이스 실행 줄은 이식성을 유지합니다. 로드된 Claude 플러그인 안의
+`${CLAUDE_PLUGIN_ROOT}`는 Host가 제공하는 정상적인 플러그인 경로입니다.
+반면 명시적인 CLI 초기화가 만드는 Claude 프로젝트 설정은 `node`와 선택한
+패키지에서 검증한 절대 MCP 경로·작업 디렉터리를 사용하며, 플러그인 전용 변수가
+있다고 가정하지 않습니다. 사용자 소유 설정은 보존합니다. 설치 선택 변경은
+명시적인 resume/설치 정합화 때 반영되며 자동 Host reload는 아닙니다. 이 로컬
+Claude 설정을 다른 기계로 복사할 수 있는 이식형 파일로 간주하면 안 됩니다.
+
+Codex 프로젝트 초기화는 MCP 경로를 쓰지 않습니다. 플러그인 `.mcp.json`은
+`node`, `scripts/mcp-server.mjs`, `cwd` `.`를 유지하고 hook은 `${PLUGIN_ROOT}`를
+확장합니다. OpenCode `opencode.json`도 `node`와
+`{env:LODE_PLUGIN_ROOT}/scripts/mcp-server.mjs`를 유지합니다. config hook은 이를
+메모리 안에서 해석하며 공유 파일에 절대 설치 경로나 Node 경로를 쓰지 않습니다.
+`.lode/generated/manifest.json`의 `pluginRoot`는 로컬 설치 정체성입니다.
+기본 graph-explorer HTML은 로컬 `project.root`와 `regenerate.argv`를 유지하며
+`--share`는 이 재생성 경로를 제외합니다.
+
+선택 사항인 `LODE_SUBAGENT_WRITE_GUARD`는 기본 off입니다. 정확한 `enforce`만
+켜지며, 비어 있지 않은 잘못된 값은 값을 노출하지 않고 stderr에 경고합니다.
+일반 작업을 막거나 다른 보호 정책을 몰래 활성화하지 않습니다. 확인된 하위
+에이전트의 쓰기는 선택적 Session 연결 안내보다 먼저 차단하지만, 부모 호출에
+새 권한을 부여하거나 Session을 자동 연결하지는 않습니다.
 
 로컬 소스형·소유 OS helper 검증은 실제 설치 Host의 event 전달·모델 도구 선택·긴
 compaction UX·전체 활동 파악의 증거가 아닙니다. Codex 현재 대화/turn 상태는 필요할

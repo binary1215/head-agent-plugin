@@ -193,3 +193,127 @@ test('review regression: prompt references are Project scoped and survive explic
   assert.match(takeUserPromptReference({...caller,root:moved}),/same Project after move/);
   assert.equal(takeUserPromptReference({...caller,root,force:true}),'','Same Project reference is consumed once.');
 });
+
+const promptDirectory = environment => path.join(environment.HEAD_AGENT_OPERATIONAL_STATE_ROOT, "user-prompt-reference");
+const promptFile = environment => path.join(promptDirectory(environment), fs.readdirSync(promptDirectory(environment)).find(name => name.endsWith(".json")));
+
+test("privacy regression: credential masks cover case, temporary and truncated secrets without masking ordinary prose", t => {
+  const { root, environment } = fixture(t);
+  const cases = [
+    ["lowercase bearer", "bearer abcdefghijklmnop", "abcdefghijklmnop"],
+    ["mixed-case header", "AUTHORIZATION: bEaReR abcd", "abcd"],
+    ["basic", "basic dXNlcjpwYXNz", "dXNlcjpwYXNz"],
+    ["basic sentence", "Basic dXNlcjpwYXNz.", "dXNlcjpwYXNz"],
+    ["password JSON", '{"password":"synthetic-local-secret"}', "synthetic-local-secret"],
+    ["password assignment", "PASSWORD = synthetic-secret", "synthetic-secret"],
+    ["quoted whitespace", 'client_secret: "synthetic secret with spaces"', "synthetic secret"],
+    ["temporary AWS", "ASIAABCDEFGHIJKLMNOP", "ASIAABCDEFGHIJKLMNOP"],
+    ["GitHub OAuth", "gho_abcdefghijklmnopqrstuvwxyz", "gho_abcdefghijklmnopqrstuvwxyz"],
+    ["truncated token", "sk-ant-oat01-abcd", "sk-ant-oat01-abcd"],
+    ["partial PEM", "-----BEGIN PRIVATE KEY-----\nsynthetic-partial-body", "synthetic-partial-body"],
+    ["long PEM", "-----BEGIN RSA PRIVATE KEY-----\n" + "synthetic-private-body".repeat(450) + "\n-----END RSA PRIVATE KEY-----", "synthetic-private-body"],
+    ["truncated quoted password", 'password="synthetic-truncated-secret', "synthetic-truncated-secret"],
+  ];
+  for (const [name, text, secret] of cases) {
+    const caller = { root, runtime: "claude", nativeSessionId: name, environment };
+    assert.equal(captureUserPrompt({ ...caller, text }).captured, true, name);
+    const stored = fs.readdirSync(promptDirectory(environment)).map(file => fs.readFileSync(path.join(promptDirectory(environment), file), "utf8")).join("");
+    assert.equal(stored.includes(secret), false, name + " must be masked on disk");
+    const output = takeUserPromptReference({ ...caller, force: true });
+    assert.equal(output.includes(secret), false, name + " must be masked on reuse");
+    assert.match(output, /\[redacted-(?:token|private-key)\]/, name);
+  }
+  const ordinary = "Discuss password rotation, Basic authentication, Basic Implementation guidance and Bearer Identity documentation. We discuss bearer authentication. Keep feature: password-reset, source IDs, Korean 문맥, AsiaPacific and exact product wording.";
+  const caller = { root, runtime: "claude", nativeSessionId: "ordinary", environment };
+  captureUserPrompt({ ...caller, text: ordinary });
+  assert.ok(takeUserPromptReference({ ...caller, force: true }).includes(ordinary));
+});
+
+test("privacy regression: legacy prompt bodies are bounded and re-masked at freeze and forced reuse", t => {
+  const { root, environment } = fixture(t);
+  const caller = { root, runtime: "codex", nativeSessionId: "legacy", environment };
+  for (const force of [false, true]) {
+    captureUserPrompt({ ...caller, text: "placeholder" });
+    const file = promptFile(environment);
+    const legacy = { kind: "UserPromptReference", version: 1, reinject: false, prompts: [
+      { messageId: "one", text: "password=synthetic-legacy-secret\n" + "ordinary ".repeat(300) },
+      { messageId: "two", text: "-----BEGIN PRIVATE KEY-----\nsynthetic-legacy-key" },
+    ] };
+    fs.writeFileSync(file, JSON.stringify(legacy));
+    if (!force) {
+      assert.equal(freezeUserPromptReference(caller).frozen, true);
+      assert.equal(fs.readFileSync(file, "utf8").includes("synthetic-legacy-secret"), false);
+    }
+    const output = takeUserPromptReference({ ...caller, force });
+    assert.equal(output.includes("synthetic-legacy-secret"), false);
+    assert.equal(output.includes("synthetic-legacy-key"), false);
+    assert.ok(output.length <= 2 * USER_PROMPT_REFERENCE_LIMITS.characters + 512);
+    assert.equal(fs.existsSync(file), false);
+  }
+});
+
+test("privacy regression: prompt-only directory and atomic staging request private modes from creation", t => {
+  const { root, environment } = fixture(t);
+  const caller = { root, runtime: "codex", nativeSessionId: "modes", environment };
+  const originalOpen = fs.openSync;
+  const stages = [];
+  t.mock.method(fs, "openSync", function(file, flags, mode) {
+    const descriptor = originalOpen.call(this, file, flags, mode);
+    if (String(file).endsWith(".tmp") && String(file).includes("user-prompt-reference")) {
+      stages.push({ mode, actual: fs.fstatSync(descriptor).mode & 0o777 });
+    }
+    return descriptor;
+  });
+  assert.equal(captureUserPrompt({ ...caller, text: "private synthetic text" }).captured, true);
+  assert.equal(stages.length, 1);
+  assert.equal(stages[0].mode, 0o600, "the staging file must never start with default public permissions");
+  if (process.platform !== "win32") {
+    assert.equal(stages[0].actual, 0o600);
+    assert.equal(fs.statSync(promptDirectory(environment)).mode & 0o777, 0o700);
+    assert.equal(fs.statSync(promptFile(environment)).mode & 0o777, 0o600);
+    fs.chmodSync(promptDirectory(environment), 0o755);
+    fs.chmodSync(promptFile(environment), 0o644);
+    assert.equal(freezeUserPromptReference(caller).frozen, true);
+    assert.equal(fs.statSync(promptDirectory(environment)).mode & 0o777, 0o700);
+    assert.equal(fs.statSync(promptFile(environment)).mode & 0o777, 0o600);
+  }
+  assert.deepEqual(fs.readdirSync(promptDirectory(environment)).filter(file => file.endsWith(".tmp")), []);
+});
+
+test("privacy regression: linked directories and non-regular or multiply-linked files are not read, changed or followed", t => {
+  const { root, base, environment } = fixture(t);
+  const caller = { root, runtime: "codex", nativeSessionId: "unsafe", environment };
+  captureUserPrompt({ ...caller, text: "placeholder" });
+  const file = promptFile(environment), directory = promptDirectory(environment);
+  const outside = path.join(base, "outside.json");
+  fs.renameSync(file, outside);
+  fs.linkSync(outside, file);
+  const original = fs.readFileSync(outside, "utf8"), mode = fs.statSync(outside).mode;
+  assert.equal(captureUserPrompt({ ...caller, text: "must not replace a hardlink" }).captured, false);
+  assert.equal(takeUserPromptReference({ ...caller, force: true }), "");
+  assert.equal(fs.readFileSync(outside, "utf8"), original);
+  assert.equal(fs.statSync(outside).mode, mode);
+  fs.unlinkSync(file);
+  fs.mkdirSync(file);
+  assert.equal(captureUserPrompt({ ...caller, text: "must not replace a directory" }).captured, false);
+  fs.rmdirSync(file);
+  fs.rmdirSync(directory);
+  const target = path.join(base, "outside-directory"); fs.mkdirSync(target);
+  fs.symlinkSync(target, directory, process.platform === "win32" ? "junction" : "dir");
+  assert.equal(captureUserPrompt({ ...caller, text: "must not follow a directory link" }).captured, false);
+  assert.equal(takeUserPromptReference({ ...caller, force: true }), "");
+  assert.deepEqual(fs.readdirSync(target), []);
+  fs.unlinkSync(directory);
+});
+
+test("privacy regression: oversized legacy files are not injected and caller/agent isolation remains exact", t => {
+  const { root, environment } = fixture(t);
+  const caller = { root, runtime: "codex", nativeSessionId: "parent", environment };
+  captureUserPrompt({ ...caller, text: "parent-only reference" });
+  assert.equal(takeUserPromptReference({ ...caller, nativeSessionId: "different", force: true }), "");
+  assert.equal(takeUserPromptReference({ ...caller, agentId: "child", force: true }), "");
+  const file = promptFile(environment);
+  fs.writeFileSync(file, " ".repeat(USER_PROMPT_REFERENCE_LIMITS.bytes + 1));
+  assert.equal(freezeUserPromptReference(caller).frozen, false);
+  assert.equal(takeUserPromptReference({ ...caller, force: true }), "");
+});

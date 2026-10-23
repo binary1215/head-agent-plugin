@@ -40,16 +40,21 @@ test("synthetic home installs stay out of Claude, Codex, and OpenCode launch doc
   assert.equal(inside.document.command, "node");
 });
 
-test("init output for all three clients has no personal home path or absolute launch path", async (t) => {
+test("only explicit local Claude installation projection names the selected package; portable clients remain path-free", async (t) => {
   const root = tempProject(t);
   initializeProject({ root, pluginRoot, runtimes: clients });
-  assert.deepEqual(findHomePathFindings({ root, allowlist: [".lode/project.json", ".lode/generated/manifest.json"] }), []);
+  assert.deepEqual(findHomePathFindings({ root, allowlist: [".lode/project.json", ".lode/generated/manifest.json", ".mcp.json", ".lode/generated/claude.mcp.json"] }), []);
   const claude = JSON.parse(fs.readFileSync(path.join(root, ".mcp.json"), "utf8"));
   const opencode = JSON.parse(fs.readFileSync(path.join(root, "opencode.json"), "utf8"));
   const generatedClaude = JSON.parse(fs.readFileSync(path.join(root, ".lode", "generated", "claude.mcp.json"), "utf8"));
   const generatedOpenCode = JSON.parse(fs.readFileSync(path.join(root, ".lode", "generated", "opencode.json"), "utf8"));
-  for (const document of [claude, opencode, generatedClaude, generatedOpenCode]) {
+  for (const document of [opencode, generatedOpenCode]) {
     assert.deepEqual(absoluteLaunchValues(document), []);
+  }
+  for (const document of [claude, generatedClaude]) {
+    assert.deepEqual(document.mcpServers.lode.args, [path.join(fs.realpathSync(pluginRoot), "scripts", "mcp-server.mjs")]);
+    assert.equal(document.mcpServers.lode.cwd, fs.realpathSync(pluginRoot));
+    assert.equal(JSON.stringify(document).includes("CLAUDE_PLUGIN_ROOT"), false);
   }
   assert.equal(fs.existsSync(path.join(root, "AGENTS.md")), true);
   assert.equal(fs.readFileSync(path.join(root, "AGENTS.md"), "utf8").includes(pluginRoot), false);
@@ -65,4 +70,29 @@ test("init output for all three clients has no personal home path or absolute la
   assert.equal(shared.regenerate.argv, undefined);
   assert.equal(JSON.stringify(shared).includes(process.execPath), false);
   assert.equal(JSON.stringify(shared).includes(fs.realpathSync(root)), false);
+});
+
+test("installed Claude roots with spaces work without Host environment or cwd/PATH fallbacks", t => {
+  const base = tempProject(t), selected = path.join(base, "selected package with spaces"), replacement = path.join(base, "replacement package");
+  for (const root of [selected, replacement]) {
+    fs.mkdirSync(path.join(root, "scripts"), { recursive: true });
+    fs.writeFileSync(path.join(root, "scripts", "mcp-server.mjs"), "// synthetic MCP entry\n");
+  }
+  for (const pluginRoot of [selected, replacement]) {
+    const { document, pathForm } = portableMcpDocument({ client: "claude", pluginRoot, projection: "installed-project" });
+    assert.equal(pathForm, "installed-project");
+    assert.deepEqual(document, { command: "node", args: [path.join(fs.realpathSync(pluginRoot), "scripts", "mcp-server.mjs")], cwd: fs.realpathSync(pluginRoot), env: {} });
+  }
+  for (const pluginRoot of [undefined, "", ".", "relative/package"]) {
+    assert.throws(() => portableMcpDocument({ client: "claude", pluginRoot, projection: "installed-project" }), { code: "INVALID_INSTALLED_MCP_ROOT" });
+  }
+  assert.throws(() => portableMcpDocument({ client: "claude", pluginRoot: path.join(base, "absent"), projection: "installed-project" }), { code: "ENOENT" });
+  assert.equal(portableMcpDocument({ client: "claude", pluginRoot: selected }).document.args[0], "${CLAUDE_PLUGIN_ROOT}/scripts/mcp-server.mjs", "Marketplace/portable contract is unchanged.");
+});
+
+test("Claude initialization preserves existing user-owned MCP bytes", t => {
+  const root = tempProject(t), file = path.join(root, ".mcp.json"), content = '{"mcpServers":{"user_owned":{"command":"preserve-me"}}}\n';
+  fs.writeFileSync(file, content);
+  initializeProject({ root, pluginRoot, runtimes: ["claude"] });
+  assert.equal(fs.readFileSync(file, "utf8"), content);
 });

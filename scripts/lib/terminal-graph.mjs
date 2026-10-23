@@ -51,6 +51,28 @@ export function formatTerminalGraph(value, { columns, diagnostics = false } = {}
   const row = text => out.push(...wrap(inline(text), width, "", "  "));
   const block = (label, text) => { if (text != null) out.push(terminalBlock(label, text, width).slice(0, -1)); };
   const list = (label, items) => { if (Array.isArray(items)) for (const item of items) block(label, typeof item === "string" ? item : JSON.stringify(item)); };
+  const gap = item => {
+    if (!item) return;
+    const code = item.reasonCode || "SOURCE_UNAVAILABLE";
+    const explanations = {
+      ENOENT: "Path not found in this read; deletion or rename is not established.",
+      EACCES: "Read permission denied; no alternate read bypass was used.",
+      EPERM: "The local operation was denied; no alternate read bypass was used.",
+      SOURCE_BYTE_BOUND: "Exact source exceeds the byte bound; no truncated original was compared.",
+      SOURCE_READ_DRIFT: "Source changed during the read; retry the same exact selection when stable.",
+      LOCAL_GIT_READ_BUDGET_REACHED: "Local history command budget exhausted; narrow the selected paths or anchors and retry.",
+      LOCAL_GIT_READ_TIMEOUT: "Local Git read timed out; retry or inspect the exact original locally.",
+      LOCAL_GIT_OUTPUT_BYTE_BOUND: "Local Git output exceeded its byte bound; no partial blob was compared.",
+      LOCAL_GIT_UNAVAILABLE: "Local Git could not be started; retained historical bytes were not verified.",
+      LOCAL_GIT_NOT_A_REPOSITORY: "This folder was not recognized as a Git repository; no local historical bytes were supplied.",
+      LOCAL_GIT_COMMAND_FAILED: "Local Git could not supply the requested evidence; absence is not established.",
+      RETAINED_SOURCE_SNAPSHOT_LOOKUP_BUDGET_REACHED: "Retained snapshot lookup exhausted its inspection budget; the requested pair may remain outside it.",
+      REQUESTED_RETAINED_SOURCE_SNAPSHOT_NOT_FOUND: "No verified match in the retained local inventory; historical absence is not established.",
+      WORLD_MODEL_SNAPSHOT_MISSING: "The recorded exact World snapshot is missing locally; no different snapshot was substituted.",
+      EXACT_HISTORICAL_BYTES_NOT_RETAINED_IN_BOUNDED_HISTORY: "Exact historical bytes were not found in the bounded local history; older evidence may exist elsewhere.",
+    };
+    block("Evidence gap", [code, item.path, explanations[code], item.uninspectedSnapshotCount ? `${item.uninspectedSnapshotCount} snapshots not inspected` : null].filter(Boolean).join("; "));
+  };
   for (const [i, node] of value.nodes.entries()) if (node?.nodeId) refs.set(node.nodeId, [...(refs.get(node.nodeId) || []), `[${i + 1}]`]);
   const ref = id => refs.get(id)?.length === 1 ? refs.get(id)[0] : `${refs.has(id) ? "ambiguous" : "outside selection"}: ${inline(id)}`;
   const sessionRef = id => {
@@ -129,6 +151,13 @@ export function formatTerminalGraph(value, { columns, diagnostics = false } = {}
     if (!node.workContent && !node.directionEvidence && node.excerpt) block("Selected excerpt", node.excerpt);
     const originalPath = node.sourceReference?.path || node.origin?.path;
     if (typeof originalPath === "string" && !/^\.(?:head|lode)\//u.test(originalPath)) block("Original reference", originalPath);
+    // Reuse the existing exact-anchor command, never turn an ordinal into an
+    // identity or print untrusted strings as executable shell syntax.
+    if (typeof node.nodeId === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]*$/u.test(node.nodeId)) {
+      const world = value.basis?.worldModelId;
+      block(`Read [${i + 1}] details (replace <project> with this Project folder)`,
+        `lode-agent graph-query "<project>" --anchors "${node.nodeId}" --depth 0 --details${/^world-model-[a-f0-9]{24}$/u.test(world || "") ? ` --world-model "${world}"` : ""}`);
+    } else if (node.nodeId) block("Exact anchor for graph-query --anchors (quote for your shell)", node.nodeId);
   }
   const context = value.contextLineage;
   if (context) {
@@ -145,7 +174,10 @@ export function formatTerminalGraph(value, { columns, diagnostics = false } = {}
     }
     for (const file of context.files || []) {
       row(""); block("Recorded code context", file.path);
-      if (file.currentObservation) block("Current source observation", file.currentObservation.explanation);
+      if (file.currentObservation) {
+        block("Current source observation", file.currentObservation.explanation);
+        gap({ path: file.path, reasonCode: file.currentObservation.reasonCode });
+      }
       for (const candidate of file.renameEvidence?.candidates || []) block("Historical rename candidate (not confirmed continuity)",
         `${candidate.path}; current path, logical identity and cause remain unverified.`);
       if (file.renameEvidence) block("Historical move lookup scope", file.renameEvidence.status === "observed-most-recent-path-change-only"
@@ -161,13 +193,19 @@ export function formatTerminalGraph(value, { columns, diagnostics = false } = {}
           if (original.omittedLines || original.textTruncated) row(`  Partial historical excerpt: ${original.omittedLines} omitted lines; text truncated ${Boolean(original.textTruncated)}.`);
         }
         for (const symbol of pair.symbols || []) block("Declaration observation (not behavior equivalence)", `${symbol.after?.qualifiedName || symbol.before?.qualifiedName}: ${symbol.observation}${symbol.locationChanged ? "; line location moved" : ""}`);
-        if (pair.diff?.changed) for (const side of ["before", "after"]) {
-          const excerpt = pair.diff[side];
-          const label = pair.labels?.[side] || (side === "before" ? "Recorded/cited source" : pair.scope === "recorded-changeset-snapshot-pair" ? "Recorded after (not necessarily current)" : "Observed current source");
-          block(`${label} - line ${excerpt.startLine}`, excerpt.text);
-          if (excerpt.omittedLines || excerpt.textTruncated) row(`  Partial excerpt: ${excerpt.omittedLines || 0} omitted lines; text truncated ${Boolean(excerpt.textTruncated)}.`);
+        if (pair.diff?.changed) {
+          const regions = pair.diff.regions?.length ? pair.diff.regions : [{ before: pair.diff.before, after: pair.diff.after }];
+          for (const [index, region] of regions.entries()) for (const side of ["before", "after"]) {
+            const excerpt = region[side]; if (!excerpt) continue;
+            const label = pair.labels?.[side] || (side === "before" ? "Recorded/cited source" : pair.scope === "recorded-changeset-snapshot-pair" ? "Recorded after (not necessarily current)" : "Observed current source");
+            block(`${label} - region ${index + 1}/${regions.length}, line ${excerpt.startLine}`, excerpt.text);
+            if (excerpt.omittedLines || excerpt.textTruncated) row(`  Partial excerpt: ${excerpt.omittedLines || 0} omitted lines; text truncated ${Boolean(excerpt.textTruncated)}.`);
+            for (const omitted of excerpt.omittedRanges || []) row(`  Not shown: lines ${omitted.startLine}-${omitted.endLine}.`);
+          }
+          if (pair.diff.coverage?.omittedRegionCount) row(`  ${pair.diff.coverage.omittedRegionCount} further changed regions not shown; exact originals remain separate.`);
         }
-        if (pair.reasonCode || pair.gap) block("Evidence gap", pair.reasonCode || pair.gap.reasonCode);
+        const pairGaps = [pair.reasonCode ? { reasonCode: pair.reasonCode } : null, pair.gap, ...(pair.gaps || [])].filter(Boolean);
+        for (const item of [...new Map(pairGaps.map(item => [JSON.stringify([item.reasonCode, item.path, item.expectedDigest]), item])).values()]) gap(item);
       }
       block("Unrecorded intervals", file.unrecordedIntervals);
     }
@@ -184,7 +222,7 @@ export function formatTerminalGraph(value, { columns, diagnostics = false } = {}
       if (delta.omittedChangeCount) row(`  ${delta.omittedChangeCount} further changes not included.`);
     }
     if (context.status === "unavailable") block("Context unavailable; independent work continues", context.reasonCode || "Unknown reason");
-    for (const gap of context.gaps || []) block("Evidence gap", gap.reasonCode);
+    for (const item of context.gaps || []) gap(item);
   }
   row(""); row(`Selection: ${inline(value.coverage?.state || value.status || "coverage unknown")}; not proof of completeness or absence.`);
   if (value.truncated || value.coverage?.inventoryBoundReached || value.omittedMatchCount) row(`Partial bounds: truncated ${Boolean(value.truncated)}; inventory bound ${Boolean(value.coverage?.inventoryBoundReached)}; omitted matches ${value.omittedMatchCount || 0}.`);

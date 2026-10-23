@@ -8,15 +8,83 @@ function lineComparison(before, after) {
   const a = before.split("\n"), b = after.split("\n"); let start = 0, end = 0;
   while (start < a.length && start < b.length && a[start] === b[start]) start++;
   while (end < a.length - start && end < b.length - start && a[a.length - end - 1] === b[b.length - end - 1]) end++;
-  const excerpt = lines => {
-    const from = Math.max(0, start - 3), to = Math.min(lines.length, lines.length - end + 3), selected = lines.slice(from, to);
-    // Bounded display only. Excluded lines remain in the exact original, not
-    // a claim that other changes are irrelevant or the task is sufficient.
-    const included = selected.slice(0, 160), text = included.join("\n");
-    return { startLine: from + 1, endLine: from + included.length, text: text.slice(0, 32 * 1024),
-      omittedLines: Math.max(0, selected.length - included.length), textTruncated: text.length > 32 * 1024 };
+  // Unique unchanged lines are conservative alignment anchors, not an AST or
+  // minimal edit script. Their monotone subsequence avoids a quadratic full-file
+  // LCS and lets a later changed island share the display budget with the first.
+  const positions = (lines, to) => {
+    const map = new Map();
+    for (let i = start; i < to; i++) map.set(lines[i], map.has(lines[i]) ? -1 : i);
+    return map;
   };
-  return { kind: "bounded-line-comparison-not-semantic-diff", changed: before !== after, before: excerpt(a), after: excerpt(b), commonPrefixLines: start, commonSuffixLines: end };
+  const aEnd = a.length - end, bEnd = b.length - end;
+  const left = positions(a, aEnd), right = positions(b, bEnd), anchors = [];
+  for (let i = start; i < aEnd; i++) if (left.get(a[i]) === i && right.get(a[i]) >= 0) anchors.push([i, right.get(a[i])]);
+  const tails = [], previous = new Int32Array(anchors.length).fill(-1);
+  for (let i = 0; i < anchors.length; i++) {
+    let low = 0, high = tails.length;
+    while (low < high) { const mid = (low + high) >>> 1; if (anchors[tails[mid]][1] < anchors[i][1]) low = mid + 1; else high = mid; }
+    if (low) previous[i] = tails[low - 1]; tails[low] = i;
+  }
+  const aligned = [];
+  for (let i = tails.at(-1) ?? -1; i >= 0; i = previous[i]) aligned.push(anchors[i]);
+  aligned.reverse(); aligned.push([aEnd, bEnd]);
+  let cursorA = start, cursorB = start;
+  const ranges = [];
+  for (const [nextA, nextB] of aligned) {
+    let fromA = cursorA, fromB = cursorB, toA = nextA, toB = nextB;
+    while (fromA < toA && fromB < toB && a[fromA] === b[fromB]) { fromA++; fromB++; }
+    while (toA > fromA && toB > fromB && a[toA - 1] === b[toB - 1]) { toA--; toB--; }
+    if (fromA < toA || fromB < toB) {
+      const range = { before: [Math.max(0, fromA - 3), Math.min(a.length, toA + 3)], after: [Math.max(0, fromB - 3), Math.min(b.length, toB + 3)], changedBefore: fromA, changedAfter: fromB };
+      const prior = ranges.at(-1);
+      if (prior && range.before[0] <= prior.before[1] && range.after[0] <= prior.after[1]) {
+        prior.before[1] = range.before[1]; prior.after[1] = range.after[1];
+      } else ranges.push(range);
+    }
+    cursorA = nextA + 1; cursorB = nextB + 1;
+  }
+  // At most 160 regions can receive a line on each side. When there are more,
+  // sample across the entire changed extent, explicitly retaining omissions.
+  const selected = ranges.length <= 160 ? ranges : Array.from({ length: 160 }, (_, i) => ranges[Math.floor(i * (ranges.length - 1) / 159)]);
+  const excerpt = (lines, range, changedFrom, lineBudget, byteBudget) => {
+    const [rangeFrom, rangeTo] = range;
+    const from = Math.max(rangeFrom, Math.min(changedFrom, rangeTo - lineBudget));
+    const to = Math.min(rangeTo, from + lineBudget), included = [];
+    let used = 0, textTruncated = false;
+    for (let i = from; i < to; i++) {
+      const separator = included.length ? 1 : 0, bytes = Buffer.byteLength(lines[i], "utf8");
+      if (used + separator + bytes > byteBudget) {
+        // Only a prefix of this exact line is shown. Never split a UTF-8 code
+        // point or relabel the next region as adjacent to this source location.
+        const available = byteBudget - used - separator;
+        if (available > 0) {
+          let prefix = "", size = 0;
+          for (const char of lines[i]) { const width = Buffer.byteLength(char, "utf8"); if (size + width > available) break; prefix += char; size += width; }
+          if (prefix) included.push(prefix);
+        }
+        textTruncated = true; break;
+      }
+      included.push(lines[i]); used += separator + bytes;
+    }
+    return { startLine: from + 1, endLine: from + included.length, text: included.join("\n"),
+      omittedLines: rangeTo - rangeFrom - included.length, textTruncated,
+      omittedRanges: [[rangeFrom, from], [from + included.length, rangeTo]].filter(([x, y]) => y > x).map(([x, y]) => ({ startLine: x + 1, endLine: y })) };
+  };
+  const regions = selected.map((range, index) => {
+    const lines = Math.floor(160 / selected.length) + (index < 160 % selected.length ? 1 : 0);
+    const bytes = Math.floor(32768 / selected.length) + (index < 32768 % selected.length ? 1 : 0);
+    return { before: excerpt(a, range.before, range.changedBefore, lines, bytes), after: excerpt(b, range.after, range.changedAfter, lines, bytes) };
+  });
+  const empty = { startLine: start + 1, endLine: start, text: "", omittedLines: 0, textTruncated: false };
+  const coverage = side => ({ includedLines: regions.reduce((sum, region) => sum + Math.max(0, region[side].endLine - region[side].startLine + 1), 0),
+    includedBytes: regions.reduce((sum, region) => sum + Buffer.byteLength(region[side].text, "utf8"), 0),
+    omittedLines: ranges.reduce((sum, range) => sum + range[side][1] - range[side][0], 0) - regions.reduce((sum, region) => sum + Math.max(0, region[side].endLine - region[side].startLine + 1), 0),
+    textTruncated: regions.some(region => region[side].textTruncated) });
+  return { kind: "bounded-line-comparison-not-semantic-diff", changed: before !== after,
+    before: regions[0]?.before || empty, after: regions[0]?.after || empty, regions,
+    coverage: { before: coverage("before"), after: coverage("after"), changedRegionCount: ranges.length, includedRegionCount: regions.length,
+      omittedRegionCount: ranges.length - regions.length, maxLinesPerSide: 160, maxBytesPerSide: 32768, alignment: "unique-unchanged-line-anchors-not-minimal-or-semantic-diff" },
+    commonPrefixLines: start, commonSuffixLines: end };
 }
 
 // A bounded lexical check, not a semantic equivalence or AST claim. Preserve

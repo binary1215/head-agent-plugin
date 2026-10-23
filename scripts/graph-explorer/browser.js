@@ -19,8 +19,11 @@
   let scopeCache = null, cardsCache = null, comparisonsCache = null, connectionResult = null, connectionKey = null;
   let jobSerial = 0, busy = false, jobKind = null, drawnNodeIds = new Set(), comparisonFiles = [], changeHunks = [], fileCursor = 0, changeCursor = -1, rootPage = 0;
   const historyCounts = new WeakMap(), edgeKeys = new WeakMap();
+  const comparisonStates = new WeakMap();
   const filterIds = ["search", "hide-nonmatches", "axis", "view", "include-history", "relation-filter", "kind-filter"];
-  const yieldWork = () => new Promise(resolve => requestAnimationFrame(resolve));
+  // Yield to input without paying a whole display frame for every 512 edges.
+  // The first paint/disclosure still uses requestAnimationFrame separately.
+  const yieldWork = () => typeof globalThis.scheduler?.yield === "function" ? globalThis.scheduler.yield() : new Promise(resolve => requestAnimationFrame(resolve));
   const label = node => displayText(explorerCards.title(node));
   const isCode = node => $("layer").value === "code" || /^(File|Symbol|Source|Directory|Dependency|ExternalDependency)/.test(node.kind || "");
   const relation = edge => {
@@ -162,6 +165,10 @@
     metricFrame = requestAnimationFrame(() => { metricFrame = null; if (!busy && !jobKind && !drag && mapMode !== "overview") resizeCards().catch(calculationFailed); });
   }
   const deferredInitial = () => Boolean(document.body && typeof getComputedStyle === "function");
+  function screenCapacity() {
+    const e = model.current ? model.extent(model.current) : { left: 155, right: 155, top: 44, bottom: 84 };
+    return Math.max(1, Math.ceil(box[2] / (e.left + e.right + 18)) * Math.ceil(box[3] / (e.top + e.bottom + 18)));
+  }
   function startNeighborhood(node, reset = false) {
     const options = { placeNeighbors: !deferredInitial() };
     if (reset) model.reset(node.nodeId, options); else model.visit(node.nodeId, true, options);
@@ -171,17 +178,20 @@
     modelMetrics.set(model, metrics().key);
   }
   async function prepareNeighborhood() {
-    const target = model, basis = metrics().key, ids = [...model.visible].filter(id => !model.positions.has(id) && inEvidenceScope(model.nodes.get(id)));
+    const target = model, basis = metrics().key, unplaced = [...model.visible].filter(id => !model.positions.has(id) && inEvidenceScope(model.nodes.get(id)));
+    // This is a first-screen layout budget, never an evidence/inventory limit.
+    // Explicit selection/Expand/Explored map can prepare every remaining card.
+    const ids = unplaced.slice(0, screenCapacity());
     if (!ids.length) return;
     cancelWork(false); const serial = ++jobSerial; jobKind = "initial"; $("cancel-work").disabled = false;
     $("operation-status").textContent = `Preparing ${ids.length} direct-neighbor card positions. All metadata, reading and explicit exploration remain available; preparation can be cancelled.`;
     // Initial preparation is not a busy gate. A user operation can supersede it.
     await yieldWork();
     if (serial !== jobSerial || target !== model) return;
-    const applied = await target.placeBatch(ids, { cancelled: () => serial !== jobSerial || target !== model || metrics().key !== basis, yieldWork });
+    const applied = await target.placeBatch(ids, { cancelled: () => serial !== jobSerial || target !== model || metrics().key !== basis, yieldWork, yieldBeforeCommit: true });
     if (serial !== jobSerial || target !== model) return;
     jobKind = null; $("cancel-work").disabled = true;
-    $("operation-status").textContent = applied ? "Direct-neighbor positions prepared; earlier cards, camera and reading state retained."
+    $("operation-status").textContent = applied ? `First-screen direct-neighbor positions prepared; ${unplaced.length - ids.length} further positions remain on demand via selection, Expand or Explored map. All metadata and relationships retained.`
       : "Direct-neighbor preparation superseded; only committed positions shown. Unplaced records remain searchable and readable; Focus or Explored map can place them.";
     render();
   }
@@ -191,7 +201,7 @@
     const ids = [...target.positions.keys()];
     cancelWork(false); const serial = ++jobSerial; busy = true; jobKind = "geometry"; $("cancel-work").disabled = false;
     $("operation-status").textContent = "Measuring changed card sizes; existing positions retained until the adjustment completes…";
-    const applied = await target.remeasure(ids, { cancelled: () => serial !== jobSerial || target !== model || metrics().key !== basis, yieldWork });
+    const applied = await target.remeasure(ids, { cancelled: () => serial !== jobSerial || target !== model || metrics().key !== basis, yieldWork, yieldBeforeCommit: true });
     if (!applied) {
       if (serial === jobSerial && target === model) {
         busy = false; jobKind = null; $("cancel-work").disabled = true;
@@ -323,13 +333,16 @@
     ctx.setTransform(dpr * camera.scale, 0, 0, dpr * camera.scale, dpr * (camera.left - box[0] * camera.scale), dpr * (camera.top - box[1] * camera.scale));
     ctx.strokeStyle = "#627b9e"; ctx.globalAlpha = .22; ctx.beginPath();
     let edges = 0;
-    for (const edge of activeGraph.edges) {
+    const window = overview.window(box);
+    for (const edge of window.edges) {
       if (!scopeCache.shownIds.has(edge.from) || !scopeCache.shownIds.has(edge.to) || !edgeInScope(edge)) continue;
       const a = overview.points.get(edge.from), b = overview.points.get(edge.to);
       if (a && b) { ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); edges++; }
     }
     ctx.stroke(); ctx.globalAlpha = 1;
-    for (const node of found) {
+    for (const id of window.nodes) {
+      if (!scopeCache.shownIds.has(id)) continue;
+      const node = model.nodes.get(id);
       const point = overview.points.get(node.nodeId); if (!point) continue;
       if (point.x < box[0] || point.x > box[0] + box[2] || point.y < box[1] || point.y > box[1] + box[3]) continue;
       ctx.fillStyle = model.chosen.has(node.nodeId) ? "#ffffff" : connectionResult?.nodes.has(node.nodeId) ? "#96e4c0" : $("search").value && foundIds.has(node.nodeId) ? "#f2d674" : historical(node) ? "#a38baa" : isCode(node) ? "#80baff" : "#eabd87";
@@ -514,8 +527,8 @@
       for (const element of [group.children[0], group.children[1]]) for (const [name, value] of Object.entries({ x: -extent.left + 2, y: -extent.top + 2, width, height })) element.setAttribute(name, value);
       children.push(group);
     }
-    if (!shown.length) { if (!cache.empty) cache.empty = svg("text", { x: 60, y: 90, class: "empty" }); cache.empty.textContent = selected?.kind === "node" && !inEvidenceScope(selected.value)
-      ? "Selected record is outside the current evidence scope. Change scope or choose a result; it has not been removed."
+    if (!shown.length) { if (!cache.empty) cache.empty = svg("text", { x: 60, y: 90, class: "empty" }); cache.empty.textContent = selected?.kind === "node" && !inDisplayScope(selected.value)
+      ? "Selected record is hidden by the current filters. Use Show selected scope; the selection has not been removed."
       : scope.length ? "Selected context is off-screen. Use Focus selection or pan." : "Choose a starting record from the list. Empty coverage does not prove absence."; children.push(cache.empty); }
     for (const [id, group] of cache.nodes) if (!shownIds.has(id) && openedMap().has(id)) {
       const body = group.children[1].children[0].children[1]; mapScroll().set(id, { top: body.scrollTop || 0, left: body.scrollLeft || 0 });
@@ -526,7 +539,7 @@
     for (const key of cache.groups.keys()) if (!visibleGroups.has(key)) cache.groups.delete(key);
     const hidden = [...intended].filter(id => !scopeIds.has(id)).length, offscreen = scope.length - shown.length;
     const unplaced = scope.filter(node => !model.positions.has(node.nodeId)).length;
-    $("status").textContent = `${mapMode === "focus" ? "Selected & direct connections" : "Explored map"}: ${shown.length} on screen, ${offscreen - unplaced} off-screen, ${unplaced} positions not prepared, ${hidden} unavailable/outside evidence scope / ${activeGraph.nodes.length} exported. Search narrows the list and overview; eligible selected context stays visible.${selected?.kind === "node" && !inEvidenceScope(selected.value) ? " Selected record is outside the current evidence scope; it has not been removed." : ""}${activeGraph.reasonCode ? ` ${activeGraph.reasonCode}` : ""}`;
+    $("status").textContent = `${mapMode === "focus" ? "Selected & direct connections" : "Explored map"}: ${shown.length} on screen, ${offscreen - unplaced} off-screen, ${unplaced} positions not prepared, ${hidden} unavailable/outside evidence scope / ${activeGraph.nodes.length} exported. Search narrows the list and overview; eligible selected context stays visible.${selected?.kind === "node" && !inDisplayScope(selected.value) ? " Selected record is hidden by current filters; use Show selected scope to restore it." : ""}${activeGraph.reasonCode ? ` ${activeGraph.reasonCode}` : ""}`;
     setBox();
     if (deferredInitial()) geometryChanged();
   }
@@ -534,6 +547,7 @@
     const values = selectionValues(), focusedKey = selected ? recordKey(selected.value) : null;
     const hidden = values.filter(value => value.nodeId ? !inDisplayScope(value) : !edgeInScope(value)).length;
     $("selection-count").textContent = `${values.length} selected · ${hidden} outside current evidence scope`;
+    $("restore-scope").textContent = hidden ? `Show ${hidden} hidden selection${hidden === 1 ? "" : "s"}` : "Show selected scope";
     $("clear-selection").disabled = values.length === 0; $("only-focus").disabled = !selected;
     $("collapse").disabled = model.steps.length === 0 || busy; $("connect-selection").disabled = model.chosen.size < 2 || busy;
     const pageCount = Math.max(1, Math.ceil(values.length / PAGE_SIZE)); cardPage = Math.min(cardPage, pageCount - 1);
@@ -656,10 +670,10 @@
   async function runExpansion() {
     cancelWork(false); const serial = ++jobSerial, basis = metrics().key; busy = true; jobKind = "expand"; $("cancel-work").disabled = false;
     $("operation-status").textContent = "Finding the next unexpanded boundary…"; renderSelectionCards();
-    const result = await model.expandWave({ key: operationKey(), allowed: operationNode, edgeAllowed: edgeInScope, cancelled: () => serial !== jobSerial || metrics().key !== basis, yieldWork,
+    const result = await model.expandWave({ key: operationKey(), allowed: operationNode, edgeAllowed: edgeInScope, cancelled: () => serial !== jobSerial || metrics().key !== basis, yieldWork, placementLimit: screenCapacity(),
       progress: value => { $("operation-status").textContent = `Examining boundary: ${value.examinedEdges} actual relationships; not yet committed.`; } });
     if (serial !== jobSerial) return; if (result.status === "cancelled") { supersededCalculation(serial); return; } busy = false; jobKind = null; $("cancel-work").disabled = true;
-    $("operation-status").textContent = `${result.status}: ${result.added || 0} newly exposed records · ${result.edges || 0} actual relationships · ${result.frontier || 0} next-boundary records. Camera, mode, prior positions and selection retained.`;
+    $("operation-status").textContent = `${result.status}: ${result.added || 0} newly exposed records · ${result.edges || 0} actual relationships · ${result.frontier || 0} next-boundary records. Camera, mode, prior positions and selection retained. First-screen positions prepared; remaining records stay searchable/readable and can be positioned with selection or Explored map.`;
     remember(`Expand ${result.added || 0}`); render();
   }
   async function runConnections() {
@@ -819,9 +833,15 @@
   function renderContextLineage() {
     const context = activeGraph.contextLineage, panel = $("context-lineage"), body = $("context-lineage-body"); panel.hidden = !context;
     if (comparisonsCache?.model === model && comparisonsCache.version === model.selectionVersion && comparisonsCache.edgeVersion === edgeVersion) return;
+    const previousFile = comparisonFiles[fileCursor]?.dataset.sourcePath, previousHunk = changeHunks[changeCursor];
+    if (!comparisonStates.has(activeGraph)) comparisonStates.set(activeGraph, new Map());
+    const pairStates = comparisonStates.get(activeGraph);
+    for (const entries of pairStates.values()) for (const entry of entries.values()) {
+      entry.scroll = []; const walk = element => { if (element.scrollTop || element.scrollLeft) entry.scroll.push([element, element.scrollTop, element.scrollLeft]); for (const child of element.children) walk(child); }; walk(entry.body);
+    }
     comparisonsCache = { model, version: model.selectionVersion, edgeVersion }; body.replaceChildren();
     comparisonFiles = []; changeHunks = []; fileCursor = 0; changeCursor = -1; $("comparison-files").replaceChildren(); comparisonPosition();
-    $("show-code-diff").hidden = true;
+    $("show-code-diff").hidden = true; $("jump-diff").disabled = true;
     if (!context) return;
     body.append(text("p", "Recorded reasons, byte changes and associations are different evidence. No historical cause or current permission is inferred.", "hint"));
     if (context.status === "unavailable") { body.append(text("p", context.reasonCode || "Context unavailable", "hint")); return; }
@@ -857,17 +877,33 @@
       body.append(text("p", "File-level context; not automatically the reason for each symbol."));
       for (const association of file.associations || []) if (selectedIds.has(association.nodeId)) relatedIds.add(association.nodeId);
       for (const pair of pairs) {
+        // The decoded exact pair object is immutable snapshot identity. A path,
+        // node selection or merely equal-looking text is not a comparison key.
+        if (!pairStates.has(pair)) pairStates.set(pair, new Map());
+        const entries = pairStates.get(pair), retained = entries.get(file.path);
+        if (pair.recordedReviewDecisionId) relatedIds.add(pair.recordedReviewDecisionId);
+        const linkedText = `Linked selected records: ${values.filter(value => pairMatches(value, file, pair)).map(value => value.nodeId ? label(value) : relation(value)).join(" · ")}`;
+        if (retained) {
+          retained.linked.textContent = displayText(linkedText); body.append(retained.body);
+          for (const [element, top, left] of retained.scroll || []) { element.scrollTop = top; element.scrollLeft = left; }
+          if (retained.hunks.length) { $("show-code-diff").hidden = false; $("jump-diff").disabled = false; }
+          for (const element of retained.hunks) changeHunks.push({ element, file: fileIndex, pair });
+          continue;
+        }
+        const parent = body;
+        {
+        const body = text("section", "", "comparison-pair"); parent.append(body);
+        const firstHunk = changeHunks.length;
         if (pair.retainedOriginal) {
           const original = pair.retainedOriginal;
           body.append(text("h4", "Exact cited historical source — current path unavailable, not an after-version"), text("pre", original.text));
           if (original.omittedLines || original.textTruncated) body.append(text("p", `Partial historical excerpt: ${original.omittedLines} omitted lines; text truncated ${Boolean(original.textTruncated)}.`, "hint"));
         }
-        if (pair.recordedReviewDecisionId) relatedIds.add(pair.recordedReviewDecisionId);
         body.append(text("p", `${pair.status} · file bytes ${pair.fileBytes || "unknown"} · ${pair.scope}`));
         const scopeLabel = pair.scope === "recorded-changeset-snapshot-pair" ? "Recorded snapshot before / after — not request fulfillment"
           : pair.scope === "explicit-work-chain-citation-pair-not-request-boundary" ? "Cited version A / B — not a request boundary"
             : "Cited revision / export-observed current — not live";
-        body.append(text("h4", scopeLabel), text("p", `Linked selected records: ${values.filter(value => pairMatches(value, file, pair)).map(value => value.nodeId ? label(value) : relation(value)).join(" · ")}`, "hint"));
+        const linked = text("p", linkedText, "hint"); body.append(text("h4", scopeLabel), linked);
         for (const side of ["before", "after"]) body.append(text("p", `${side}: ${pair[side]?.revisionId || pair[side]?.digest || "Version bytes unavailable"} · time not retained in this comparison`, "comparison-basis"));
         const provenance = text("details", ""); provenance.append(text("summary", "Exact comparison provenance"), text("pre", JSON.stringify({ scope: pair.scope, retainedOriginal: pair.retainedOriginal ? { ...pair.retainedOriginal, text: undefined } : undefined, renameEvidence: file.renameEvidence, before: pair.before, after: pair.after, citedReference: pair.citedReference, changeSet: pair.changeSet, leftRecord: pair.leftRecord, rightRecord: pair.rightRecord, recordedResultPacketId: pair.recordedResultPacketId, recordedReviewDecisionId: pair.recordedReviewDecisionId }, null, 2))); body.append(provenance);
         const list = text("ul", ""); list.className = "record-facts";
@@ -875,31 +911,38 @@
         body.append(list);
         if (pair.currentMatchesRecordedAfter === false) body.append(text("p", "Recorded after differs from current. Later changes remain separate.", "hint"));
         if (pair.diff && !pair.diff.changed) body.append(text("p", "No byte differences in this included comparison. Other versions or intervals may differ.", "hint"));
-        if (pair.diff?.changed && typeof pair.diff.before?.text === "string" && typeof pair.diff.after?.text === "string") {
-          $("show-code-diff").hidden = false;
-          const delta = explorerModel.lineDelta(pair.diff.before, pair.diff.after), pre = text("pre", "");
+        const regions = pair.diff?.regions || (pair.diff?.before && pair.diff?.after ? [{ before: pair.diff.before, after: pair.diff.after }] : []);
+        if (pair.diff?.changed && regions.length) {
+          $("show-code-diff").hidden = false; $("jump-diff").disabled = false;
           body.append(text("h3", "Bounded excerpt changes"), text("p", "− removed / + added. Line numbers belong to their respective exact excerpts; not a full-file or semantic comparison.", "hint"));
+          if (pair.diff.coverage) body.append(text("p", `Included ${pair.diff.coverage.includedRegionCount}/${pair.diff.coverage.changedRegionCount} changed regions; ${pair.diff.coverage.omittedRegionCount} regions omitted. Excerpts are separate source-contiguous regions, not joined file text.`, "comparison-partial"));
+          for (const region of regions) {
+          if (typeof region.before?.text !== "string" || typeof region.after?.text !== "string") continue;
+          const delta = explorerModel.lineDelta(region.before, region.after), pre = text("pre", "");
           for (const side of ["before", "after"]) {
-            const excerpt = pair.diff[side];
+            const excerpt = region[side];
             if (excerpt.omittedLines || excerpt.textTruncated) body.append(text("p", `Partial comparison excerpt (${side}): ${excerpt.omittedLines ?? "unknown"} omitted lines; text truncated: ${excerpt.textTruncated === true ? "yes" : "no"}. More remains outside this included comparison.`, "comparison-partial"));
           }
           let hunk = null;
           for (const line of delta.lines) {
             if (line.kind === "context") hunk = null;
-            else if (!hunk) { hunk = text("span", "", "change-hunk"); hunk.tabIndex = -1; changeHunks.push({ element: hunk, file: fileIndex }); pre.append(hunk); }
+            else if (!hunk) { hunk = text("span", "", "change-hunk"); hunk.tabIndex = -1; changeHunks.push({ element: hunk, file: fileIndex, pair }); pre.append(hunk); }
             const row = text("span", `${line.kind === "removed" ? "−" : line.kind === "added" ? "+" : " "} ${line.beforeLine ?? "·"}/${line.afterLine ?? "·"} ${line.text}`, `diff-line ${line.kind}`);
             (hunk || pre).append(row);
           }
           if (delta.reasonCode) body.append(text("p", delta.reasonCode, "hint")); else body.append(pre);
           const excerpts = text("details", ""); excerpts.append(text("summary", "Exact before / after excerpts"));
           for (const [side, title] of [["before", "Recorded/cited source"], ["after", pair.scope === "recorded-changeset-snapshot-pair" ? "Recorded after — not necessarily current" : pair.scope === "explicit-work-chain-citation-pair-not-request-boundary" ? "Cited version B — not necessarily current" : "Export-observed current source — not live"]]) {
-            const excerpt = pair.diff[side]; excerpts.append(text("h3", `${pair.labels?.[side] || title} · line ${excerpt.startLine}`), text("pre", excerpt.text));
+            const excerpt = region[side]; excerpts.append(text("h3", `${pair.labels?.[side] || title} · line ${excerpt.startLine}`), text("pre", excerpt.text));
             if (excerpt.omittedLines || excerpt.textTruncated) excerpts.append(text("p", "Partial comparison excerpt; more remains in the exact source.", "hint"));
           }
           body.append(excerpts);
+          }
         }
         if (pair.reasonCode || pair.gap) body.append(text("p", pair.reasonCode || pair.gap.reasonCode, "hint"));
         for (const gap of pair.gaps || []) body.append(text("p", gap.reasonCode || "Source bytes unavailable", "hint"));
+        entries.set(file.path, { body, linked, hunks: changeHunks.slice(firstHunk).map(item => item.element) });
+        }
       }
       body.append(text("p", file.unrecordedIntervals, "hint"));
     }
@@ -925,6 +968,10 @@
       if (delta.omittedChangeCount) body.append(text("p", `${delta.omittedChangeCount} further changes omitted from this view.`, "hint"));
     }
     if (!candidates.length && !relatedIds.size) body.append(text("p", "Select a source or recorded review to follow its available context.", "hint"));
+    const retainedFile = comparisonFiles.findIndex(section => section.dataset.sourcePath === previousFile);
+    if (retainedFile >= 0) fileCursor = retainedFile;
+    changeCursor = previousHunk ? changeHunks.findIndex(item => item.element === previousHunk.element && item.pair === previousHunk.pair) : -1;
+    if (changeCursor >= 0) fileCursor = changeHunks[changeCursor].file;
     comparisonPosition();
   }
   function render() {
@@ -957,6 +1004,7 @@
   $("records-prev").addEventListener("click", () => { listPage--; renderList(visibleMatches); });
   $("records-next").addEventListener("click", () => { listPage++; renderList(visibleMatches); });
   $("layer").addEventListener("change", () => {
+    const previousSelection = selected?.kind === "node" ? selected.value : null;
     if (cardsCache?.graph) {
       if (!readingStates.has(cardsCache.graph)) readingStates.set(cardsCache.graph, new Map());
       for (const entry of cardsCache.entries.values()) if (entry.scopeIdentity) readingStates.get(cardsCache.graph).set(entry.scopeIdentity, savedReading(entry));
@@ -977,7 +1025,19 @@
     $("legend-left").textContent = next === "code" ? "Structural evidence" : "Code & sources"; $("legend-right").textContent = next === "code" ? "Existing imports & calls" : "Purpose & work";
     $("layer-info").textContent = next === "code" ? "Complete verified structural metadata; no synthetic Project joins. Non-current evidence is labelled separately." : "Project purpose, work and retained lineage. No Session is selected by this map.";
     $("coverage").textContent = `${activeGraph.coverage?.state || activeGraph.status || "unavailable"} · snapshot, not live`;
-    const first = matches()[0]; if (!retained && first) { startNeighborhood(first); model.choose(first.nodeId); selected = { kind: "node", value: first }; focusCamera(true); remember(`Start ${shorten(label(first), 24)}`); } render();
+    const reference = value => ({ path: value?.path || value?.sourceReference?.path, digest: value?.digest || value?.fileDigest || value?.sourceReference?.digest });
+    const previousReference = reference(previousSelection);
+    const exact = matches().filter(node => {
+      const current = reference(node);
+      if (!previousReference.path || !previousReference.digest || previousReference.path !== current.path || previousReference.digest !== current.digest) return false;
+      const file = value => /^(?:File|FileRevision|Source|SourceFile)$/.test(value?.kind || "");
+      if (file(previousSelection) && file(node)) return true;
+      return previousSelection?.kind === node.kind && previousSelection?.qualifiedName && previousSelection.qualifiedName === node.qualifiedName;
+    });
+    const first = exact.length === 1 ? exact[0] : null;
+    if (!retained && first) { startNeighborhood(first); model.choose(first.nodeId); selected = { kind: "node", value: first }; focusCamera(true); remember(`Exact source ${shorten(label(first), 24)}`); }
+    else if (!retained) $("layer-info").append(text("p", "No unique exact source identity matches the previous selection in this layer. Choose a record below; names, paths alone and coincident IDs are not an automatic link.", "hint"));
+    render();
     if (!retained && first) prepareNeighborhood().catch(calculationFailed); geometryChanged();
   });
   const calculationFailed = error => { cancelWork(false); $("operation-status").textContent = `Calculation failed (${error?.name || "unknown"}); no partial result is presented as complete.`; render(); };
@@ -1002,6 +1062,8 @@
   $("restore-scope").addEventListener("click", () => { cancelWork(); $("axis").value = $("view").value = $("relation-filter").value = $("kind-filter").value = "all"; $("hide-nonmatches").checked = false;
     if (selectionValues().some(historical)) $("include-history").checked = true; scopeCache = null; remember("Show selected scope"); render(); });
   $("wide-reading").addEventListener("click", () => { const wide = document.documentElement.dataset.readingWide !== "true"; document.documentElement.dataset.readingWide = String(wide); $("wide-reading").setAttribute("aria-pressed", String(wide)); $("wide-reading").textContent = wide ? "Compact reading area" : "Widen reading area"; redrawCamera(); });
+  $("jump-reading").addEventListener("click", () => { $("reading-heading").scrollIntoView({ block: "start" }); $("reading-heading").focus(); });
+  $("jump-map").addEventListener("click", () => { const map = mapMode === "overview" ? $("overview") : $("graph"); map.scrollIntoView({ block: "start" }); map.focus(); });
   $("cards-prev").addEventListener("click", () => { cardPage--; renderSelectionCards(); }); $("cards-next").addEventListener("click", () => { cardPage++; renderSelectionCards(); });
   $("roots-prev").addEventListener("click", () => { rootPage--; renderSelectionCards(); }); $("roots-next").addEventListener("click", () => { rootPage++; renderSelectionCards(); });
   for (const [id, delta] of [["file-prev", -1], ["file-next", 1]]) $(id).addEventListener("click", () => {
@@ -1013,6 +1075,7 @@
     changeCursor = Math.max(0, Math.min(changeHunks.length - 1, changeCursor + delta)); const target = changeHunks[changeCursor]; if (target) { fileCursor = target.file; target.element.scrollIntoView({ block: "nearest" }); target.element.focus(); } comparisonPosition();
   });
   $("show-code-diff").addEventListener("click", () => { $("context-lineage").open = true; $("context-lineage").scrollIntoView({ block: "nearest" }); });
+  $("jump-diff").addEventListener("click", () => { $("context-lineage").open = true; $("context-lineage").setAttribute("tabindex", "-1"); $("context-lineage").scrollIntoView({ block: "start" }); $("context-lineage").focus(); });
   function cancelGesture() {
     if (drag) { box = [...drag.box]; if (drag.id && drag.original) { if (drag.overview) overviewModel().move(drag.id, drag.original.x, drag.original.y); else model.move(drag.id, drag.original.x, drag.original.y); if (!drag.wasPinned) model.pinned.delete(drag.id); } }
     drag = null; hide($("selection-box"), true); suppressClick = false; setBox(); redrawCamera();

@@ -36,7 +36,11 @@ test("search filters results/overview without hiding selected eligible context o
     assert(!/-\d+ off-screen/.test(ui.ids.get("status").textContent));
   }
   ui.ids.get("axis").value = "context"; ui.event("axis", "change");
-  assert.equal(drawn().length, 0); assert.match(ui.ids.get("status").textContent, /outside the current evidence scope/);
+  assert.equal(drawn().length, 0);
+  assert.match(ui.ids.get("status").textContent, /Selected record is hidden by current filters/);
+  ui.event("restore-scope");
+  assert(drawn().includes("alpha"));
+  assert(ui.ids.get("selected-title").textContent.includes("Alpha"));
   assert.equal(ui.ids.get("include-history").checked, false);
   ui.ids.get("axis").value = "all"; ui.event("axis", "change");
   ui.ids.get("view").value = "product"; ui.event("view", "change"); assert.equal(drawn().length, 0);
@@ -166,7 +170,7 @@ test("missing current citation is currently absent, not an inferred deletion, re
   assert.equal(comparison.before, null); assert.equal(comparison.after, null);
   assert.equal(comparison.diff, undefined); assert.equal(comparison.retainedOriginal, undefined);
   assert.deepEqual(comparison.symbols, []); assert.equal(comparison.citedReference.digest, sha(source));
-  assert.equal(comparison.gap.reasonCode, "HISTORICAL_BYTES_NOT_AVAILABLE_LOCALLY");
+  assert.equal(comparison.gap.reasonCode, "LOCAL_GIT_NOT_A_REPOSITORY");
   assert.equal(graph.contextLineage.sourceReads.localGitCommands, 1);
   assert.equal(graph.contextLineage.sourceReads.writes, false);
   assert.match(formatCliResult("graph-query", graph).replace(/\s*\|\s*/g, " ").replace(/\s+/g, " "), /does not establish deletion, rename/);

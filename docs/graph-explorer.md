@@ -256,7 +256,22 @@ selection tools. Their controls and all exported metadata remain available.
 Cards replace the former circle labels; glyphs are not squeezed to fit a fixed
 caption width. Source/VM tests, including explicitly modeled font/width changes,
 do not prove actual browser layout, mobile reading, 200% text, real gestures or
-performance. Actual GUI verification remains separately pending.
+performance. The previously accepted synthetic-reader GUI scope does not prove
+this follow-up's new layout, mobile or large-graph behavior; those require
+separate actual browser verification.
+
+Additional selection retains an exact comparison pair's open diff, file, changed
+region and scroll state; another pair does not inherit them. Layer navigation
+uses exact source identity rather than selecting an unrelated first record.
+Hidden selections remain named with a restore action. Reading/diff/map jumps
+reduce narrow-screen travel without expanding all cards by default.
+
+Initial placement prioritizes the current viewport. The complete metadata and
+direct-neighbor inventory remain accessible; explicit expansion and explored-map
+placement still reach them. Initial and resized batches yield before atomic
+commit, so cancellation or changed font metrics cannot publish partial geometry.
+Overview geometry caching and offscreen-edge culling change drawing cost, not
+which relationships exist. Source/model tests are not a 60fps or memory claim.
 
 When the current path is not found, an exact cited digest can still locate
 bounded historical raw Git bytes locally. The excerpt is separate from an

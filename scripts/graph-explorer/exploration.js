@@ -7,7 +7,7 @@ const explorerModel = (() => {
     let focusId = null, steps = [], frontier = [], processed = new Set(), expansionKey = null, selectionVersion = 0;
     const searchText = new Map();
     const cells = new Map(), occupied = new Map();
-    const extents = new Map(), adjacency = new Map();
+    const extents = new Map(), adjacency = new Map(), neighborCache = new Map();
     const live = { positions, cells, occupied, extents, maxLeft: 155, maxRight: 155, maxTop: 44, maxBottom: 84 };
     let geometryVersion = 0;
     function extent(id, space = live) {
@@ -22,7 +22,13 @@ const explorerModel = (() => {
     }
     let cursor = -1;
     const links = id => adjacency.get(id) || [];
-    const neighbors = id => [...new Set(links(id).flatMap(edge => [edge.from, edge.to]))].filter(other => other !== id && nodes.has(other));
+    const neighbors = id => {
+      if (!neighborCache.has(id)) {
+        const found = new Set(); for (const edge of links(id)) { const other = edge.from === id ? edge.to : edge.from; if (other !== id && nodes.has(other)) found.add(other); }
+        neighborCache.set(id, [...found]);
+      }
+      return neighborCache.get(id);
+    };
     function cellKeys(id, point, space = live) {
       const e = extent(id, space), keys = [];
       const left = Math.floor((point.x - e.left) / 320), right = Math.floor((point.x + e.right) / 320);
@@ -154,7 +160,7 @@ const explorerModel = (() => {
       for (const field of ["maxLeft", "maxRight", "maxTop", "maxBottom"]) live[field] = space[field];
       geometryVersion++; return true;
     }
-    async function placeBatch(ids, { cancelled = () => false, yieldWork = async () => {} } = {}) {
+    async function placeBatch(ids, { cancelled = () => false, yieldWork = async () => {}, yieldBeforeCommit = false } = {}) {
       const space = draft(), basis = geometryVersion;
       const additions = [...ids].filter(id => nodes.has(id) && !positions.has(id));
       for (let i = 0; i < additions.length; i++) { extent(additions[i], space); if (i % 32 === 31) { await yieldWork(); if (cancelled() || basis !== geometryVersion) return false; } }
@@ -166,6 +172,7 @@ const explorerModel = (() => {
         fans.get(key)(id);
         if (i % 256 === 255) { await yieldWork(); if (cancelled()) return false; }
       }
+      if (yieldBeforeCommit) { await yieldWork(); if (cancelled() || basis !== geometryVersion) return false; }
       return !cancelled() && commit(space, basis);
     }
     async function remeasure(ids, { cancelled = () => false, yieldWork = async () => {}, yieldBeforeCommit = false, onCommit = () => {}, area = null } = {}) {
@@ -199,7 +206,7 @@ const explorerModel = (() => {
       if (yieldBeforeCommit) { await yieldWork(); if (cancelled() || basis !== geometryVersion) return false; }
       const applied = !cancelled() && commit(space, basis); if (applied) onCommit(); return applied;
     }
-    async function expandWave({ key = "", allowed = () => true, edgeAllowed = () => true, cancelled = () => false, yieldWork = async () => {}, progress = () => {} } = {}) {
+    async function expandWave({ key = "", allowed = () => true, edgeAllowed = () => true, cancelled = () => false, yieldWork = async () => {}, progress = () => {}, placementLimit = Infinity } = {}) {
       const scope = JSON.stringify([[...chosen], key]);
       const before = { frontier: [...frontier], processed: [...processed], expansionKey };
       let pending = expansionKey === scope ? [...frontier] : [...chosen].filter(id => allowed(nodes.get(id)));
@@ -222,7 +229,7 @@ const explorerModel = (() => {
         if ([...contributed].some(id => !visible.has(id))) break;
       }
       const additions = [...contributed].filter(id => !visible.has(id));
-      if (!await placeBatch([...contributed].filter(id => !positions.has(id)), { cancelled, yieldWork })) return { status: "cancelled" };
+      if (!await placeBatch([...contributed].filter(id => !positions.has(id)).slice(0, placementLimit), { cancelled, yieldWork })) return { status: "cancelled" };
       if (cancelled()) return { status: "cancelled" };
       frontier = pending; processed = visited; expansionKey = scope;
       const step = { kind: "expand", nodes: contributed, edges, before, added: additions.length, examinedEdges: reads };
@@ -282,6 +289,7 @@ const explorerModel = (() => {
   }
   function overview(graph, axisFor = () => "context") {
     const points = new Map(), cells = new Map(), groups = [[], []];
+    let edgeCells = null, wideEdges = null;
     for (const node of graph.nodes) groups[axisFor(node) === "code" ? 0 : 1].push(node);
     const both = groups.every(group => group.length);
     for (let groupIndex = 0; groupIndex < groups.length; groupIndex++) {
@@ -313,8 +321,46 @@ const explorerModel = (() => {
       const group = cells.get(oldKey); if (group) { const index = group.indexOf(id); if (index >= 0) group.splice(index, 1); if (!group.length) cells.delete(oldKey); }
       points.set(id, { x, y }); const key = `${Math.floor(x / 8)},${Math.floor(y / 8)}`;
       if (!cells.has(key)) cells.set(key, []); cells.get(key).push(id);
+      edgeCells = null;
     }
-    return { points, hit, move };
+    function window(box) {
+      // Cached geometry only. Every original edge stays in the inventory;
+      // very long segments use an overflow list rather than unbounded tiles.
+      if (!edgeCells) {
+        edgeCells = new Map(); wideEdges = [];
+        for (const edge of graph.edges) {
+          const a = points.get(edge.from), b = points.get(edge.to); if (!a || !b) continue;
+          const left = Math.floor(Math.min(a.x, b.x) / 64), right = Math.floor(Math.max(a.x, b.x) / 64), top = Math.floor(Math.min(a.y, b.y) / 64), bottom = Math.floor(Math.max(a.y, b.y) / 64);
+          if ((right - left + 1) * (bottom - top + 1) > 64) { wideEdges.push(edge); continue; }
+          for (let x = left; x <= right; x++) for (let y = top; y <= bottom; y++) {
+            const key = `${x},${y}`; if (!edgeCells.has(key)) edgeCells.set(key, []); edgeCells.get(key).push(edge);
+          }
+        }
+      }
+      const [x, y, width, height] = box, right = x + width, bottom = y + height;
+      const query = (index, step) => {
+        const result = new Set(), leftCell = Math.floor(x / step), rightCell = Math.floor(right / step), topCell = Math.floor(y / step), bottomCell = Math.floor(bottom / step);
+        if ((rightCell - leftCell + 1) * (bottomCell - topCell + 1) > index.size * 2) {
+          for (const group of index.values()) for (const value of group) result.add(value);
+        } else for (let cx = leftCell; cx <= rightCell; cx++) for (let cy = topCell; cy <= bottomCell; cy++) for (const value of index.get(`${cx},${cy}`) || []) result.add(value);
+        return result;
+      };
+      const nodes = [...query(cells, 8)].filter(id => { const p = points.get(id); return p.x >= x && p.x <= right && p.y >= y && p.y <= bottom; });
+      const candidates = query(edgeCells, 64); for (const edge of wideEdges) candidates.add(edge);
+      const edges = [...candidates].filter(edge => {
+        const a = points.get(edge.from), b = points.get(edge.to);
+        // Liang–Barsky clipping retains segments crossing the viewport even
+        // when both endpoints are outside. It never creates a relationship.
+        let from = 0, to = 1;
+        for (const [p, q] of [[a.x - b.x, a.x - x], [b.x - a.x, right - a.x], [a.y - b.y, a.y - y], [b.y - a.y, bottom - a.y]]) {
+          if (!p) { if (q < 0) return false; continue; }
+          const t = q / p; if (p < 0) from = Math.max(from, t); else to = Math.min(to, t); if (from > to) return false;
+        }
+        return true;
+      });
+      return { nodes, edges };
+    }
+    return { points, hit, move, window };
   }
   function viewport(box, rect) {
     const scale = Math.min(rect.width / box[2], rect.height / box[3]);
