@@ -364,8 +364,15 @@ a transcript, an instruction or a P2 recovery source. The prompt-only store uses
 0700 directories and 0600 staging files on POSIX, checks owned regular entries
 and rejects unsafe links. Existing references are bounded and re-masked before
 reuse. These are best-effort credential patterns, not a universal secret detector.
-Windows inherited ACL privacy has not been established by POSIX mode flags or
-the Windows fixture; do not interpret the mode tests as a Windows ACL guarantee.
+On Windows, the dedicated prompt directory and regular single-link files use a
+protected DACL limited to the current token SID and SYSTEM. A hidden, bounded
+Windows PowerShell/.NET check re-reads that ACL before success; POSIX mode flags
+are not used as Windows proof. Verification is reused only for the same filesystem
+entry within one synchronous operation, never across callers/turns. No general
+operational directory ACL is changed. Missing verifier, unowned entries or unsafe
+links suppress capture/reuse rather than claim private storage. This adds local
+helper-start cost and does not protect against the same user, administrators or
+kernel access, encrypt records, or reverse any prior exposure.
 Unavailable optional storage suppresses that hint, not ordinary direct work.
 
 An absent Claude native-caller binding cannot silently choose another logical

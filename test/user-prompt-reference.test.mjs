@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import childProcess from "node:child_process";
 import test from "node:test";
 import { initializeProject } from "../scripts/lib/lode-core.mjs";
 import { createNativeObservationStore } from "../scripts/lib/native-session-observations.mjs";
@@ -196,6 +197,70 @@ test('review regression: prompt references are Project scoped and survive explic
 
 const promptDirectory = environment => path.join(environment.HEAD_AGENT_OPERATIONAL_STATE_ROOT, "user-prompt-reference");
 const promptFile = environment => path.join(promptDirectory(environment), fs.readdirSync(promptDirectory(environment)).find(name => name.endsWith(".json")));
+
+function windowsAclFixture(t, file, action) {
+  const script = String.raw`$ErrorActionPreference='Stop';$r=[Console]::In.ReadToEnd()|ConvertFrom-Json;$item=Get-Item -LiteralPath $r.path -Force;$sid=[Security.Principal.WindowsIdentity]::GetCurrent().User;$system=[Security.Principal.SecurityIdentifier]::new('S-1-5-18');
+if($r.action -eq 'broaden'){$acl=if($item.PSIsContainer){[Security.AccessControl.DirectorySecurity]::new()}else{[Security.AccessControl.FileSecurity]::new()};$acl.SetOwner($sid);$acl.SetAccessRuleProtection($true,$false);$inherit=if($item.PSIsContainer){[Security.AccessControl.InheritanceFlags]'ContainerInherit,ObjectInherit'}else{[Security.AccessControl.InheritanceFlags]::None};foreach($who in @($sid,$system,[Security.Principal.SecurityIdentifier]::new('S-1-1-0'))){$acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($who,[Security.AccessControl.FileSystemRights]::FullControl,$inherit,[Security.AccessControl.PropagationFlags]::None,[Security.AccessControl.AccessControlType]::Allow))};$item.SetAccessControl($acl)};
+$acl=$item.GetAccessControl();$rules=@($acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier]));[ordered]@{ownerCurrent=$acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -eq $sid.Value;protected=$acl.AreAccessRulesProtected;rules=$rules.Count;untrusted=@($rules|Where-Object {$_.AccessControlType -eq 'Allow' -and $_.IdentityReference.Value -notin @($sid.Value,$system.Value)}).Count;sddl=$acl.Sddl}|ConvertTo-Json -Compress`;
+  const executable = path.join(process.env.SystemRoot || "C:\\Windows", "System32/WindowsPowerShell/v1.0/powershell.exe");
+  t.diagnostic(JSON.stringify({ event: "planned-synthetic-acl", executable, cwd: path.dirname(file), parent: process.pid, file, action, ports: [], windowsHide: true }));
+  const result = childProcess.spawnSync(executable, ["-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", script], {
+    cwd: path.dirname(file), windowsHide: true, shell: false, encoding: "utf8", input: JSON.stringify({ path: file, action }), timeout: 5000,
+  });
+  t.diagnostic(JSON.stringify({ event: "synthetic-acl-exited", pid: result.pid, parent: process.pid, status: result.status, ports: [] }));
+  assert.equal(result.status, 0, result.stderr); return JSON.parse(result.stdout);
+}
+
+test("Windows ACL privacy: broad inheritance and existing prompt paths are narrowed before plaintext, including stage and final", { skip: process.platform !== "win32" }, t => {
+  const { root, environment } = fixture(t), operational = environment.HEAD_AGENT_OPERATIONAL_STATE_ROOT;
+  fs.mkdirSync(operational); const parentBefore = windowsAclFixture(t, operational, "broaden"); assert.equal(parentBefore.untrusted, 1);
+  const caller = { root, runtime: "codex", nativeSessionId: "windows-acl", environment };
+  const spawn = childProcess.spawnSync;
+  t.mock.method(childProcess, "spawnSync", function(executable, args, options) {
+    t.diagnostic(JSON.stringify({ event: "planned-private-acl", executable, cwd: options?.cwd, parent: process.pid, ports: [], windowsHide: options?.windowsHide }));
+    const result = spawn.call(this, executable, args, options);
+    t.diagnostic(JSON.stringify({ event: "private-acl-exited", pid: result.pid, status: result.status, output: result.stdout === "private" ? "private" : "synthetic-inspection-json", error: result.stderr, parent: process.pid, ports: [] }));
+    return result;
+  });
+  const open = fs.openSync, write = fs.writeFileSync, stages = new Map(); let stageChecks = 0;
+  t.mock.method(fs, "openSync", function(file, ...args) { const fd = open.call(this, file, ...args); if (String(file).endsWith(".tmp") && String(file).includes("user-prompt-reference")) stages.set(fd, file); return fd; });
+  t.mock.method(fs, "writeFileSync", function(file, ...args) {
+    if (stages.has(file)) {
+      const acl = windowsAclFixture(t, stages.get(file), "inspect"); stageChecks++;
+      t.diagnostic(JSON.stringify({ stageAclBeforePlaintext: { untrusted: acl.untrusted, protected: acl.protected, ownerCurrent: acl.ownerCurrent } }));
+      assert.equal(acl.untrusted, 0); assert.equal(acl.protected, true); assert.equal(acl.ownerCurrent, true);
+    }
+    return write.call(this, file, ...args);
+  });
+  const started = performance.now(); assert.equal(captureUserPrompt({ ...caller, text: "Synthetic private prompt only" }).captured, true);
+  t.diagnostic(`Capture including independent stage ACL inspection: ${Math.round(performance.now() - started)}ms`);
+  for (const file of [promptDirectory(environment), promptFile(environment)]) {
+    const acl = windowsAclFixture(t, file, "inspect"); assert.equal(acl.untrusted, 0); assert.equal(acl.protected, true); assert.equal(acl.ownerCurrent, true); assert.equal(acl.rules, 2);
+    windowsAclFixture(t, file, "broaden");
+  }
+  const freezeStarted = performance.now(); assert.equal(freezeUserPromptReference(caller).frozen, true);
+  t.diagnostic(`Freeze including independent stage ACL inspection: ${Math.round(performance.now() - freezeStarted)}ms`);
+  for (const file of [promptDirectory(environment), promptFile(environment)]) assert.equal(windowsAclFixture(t, file, "inspect").untrusted, 0);
+  assert.equal(windowsAclFixture(t, operational, "inspect").sddl, parentBefore.sddl, "General operational parent ACL must not change");
+  assert(stageChecks >= 2); assert.deepEqual(fs.readdirSync(promptDirectory(environment)).filter(name => name.endsWith(".tmp")), []);
+  t.diagnostic(`Synthetic capture + freeze + independent ACL inspections: ${Math.round(performance.now() - started)}ms; not provider/Host latency.`);
+});
+
+test("Windows ACL privacy: failed verification never claims capture or leaves an owned empty stage", { skip: process.platform !== "win32" }, t => {
+  const { root, environment } = fixture(t), caller = { root, runtime: "codex", nativeSessionId: "windows-failure", environment };
+  const spawn = childProcess.spawnSync; let stageFailure = false, verifierUnavailable = false;
+  t.mock.method(childProcess, "spawnSync", function(executable, args, options) {
+    if (verifierUnavailable) return { status: 1, stdout: "", stderr: "Synthetic unavailable ACL verifier" };
+    const request = options?.input && JSON.parse(options.input);
+    if (request?.path?.endsWith(".tmp")) { stageFailure = true; return { status: 1, stdout: "", stderr: "Synthetic ACL failure" }; }
+    return spawn.call(this, executable, args, options);
+  });
+  assert.equal(captureUserPrompt({ ...caller, text: "Must never be written before verified private ACL" }).captured, false);
+  assert(stageFailure); assert.deepEqual(fs.readdirSync(promptDirectory(environment)), []);
+  verifierUnavailable = true;
+  assert.equal(captureUserPrompt({ ...caller, text: "No fallback permission claim" }).captured, false);
+  assert.equal(freezeUserPromptReference(caller).frozen, false); assert.equal(takeUserPromptReference({ ...caller, force: true }), "");
+});
 
 test("privacy regression: credential masks cover case, temporary and truncated secrets without masking ordinary prose", t => {
   const { root, environment } = fixture(t);
