@@ -373,6 +373,11 @@ operational directory ACL is changed. Missing verifier, unowned entries or unsaf
 links suppress capture/reuse rather than claim private storage. This adds local
 helper-start cost and does not protect against the same user, administrators or
 kernel access, encrypt records, or reverse any prior exposure.
+Existing directory/file checks share one fixed helper request; a new stage is
+checked separately before plaintext. Helpers share one five-second monotonic
+budget per public operation, and a failed check is not retried within that call.
+Hooks still wait synchronously for this optional work; it is not a no-overhead or
+nonblocking performance guarantee.
 Unavailable optional storage suppresses that hint, not ordinary direct work.
 
 An absent Claude native-caller binding cannot silently choose another logical

@@ -53,8 +53,9 @@ function callerFile(root, runtime, nativeSessionId, agentId, environment, create
     try { fs.mkdirSync(directory, { mode: 0o700 }); }
     catch (error) { if (error.code !== "EEXIST") throw error; }
   }
-  privateDirectory(directory, permissions);
-  return path.join(directory, digest + ".json");
+  const file = path.join(directory, digest + ".json");
+  privateDirectory(directory, permissions, fs.existsSync(file) ? file : null);
+  return file;
 }
 
 // Dedicated P5 plaintext storage only. Never change permissions of the general
@@ -63,13 +64,14 @@ function callerFile(root, runtime, nativeSessionId, agentId, environment, create
 const WINDOWS_PRIVATE_ACL = String.raw`
 $ErrorActionPreference='Stop'
 try {
-  $request=[Console]::In.ReadToEnd() | ConvertFrom-Json
+  $requests=[Console]::In.ReadToEnd() | ConvertFrom-Json
+  $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User
+  $system=[Security.Principal.SecurityIdentifier]::new('S-1-5-18')
+  foreach ($request in @($requests)) {
   $item=Get-Item -LiteralPath $request.path -Force
   if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {throw 'reparse'}
   $directory=$request.kind -eq 'directory'
   if ($directory -ne $item.PSIsContainer) {throw 'type'}
-  $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User
-  $system=[Security.Principal.SecurityIdentifier]::new('S-1-5-18')
   $acl=$item.GetAccessControl()
   if ($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -ne $sid.Value) {throw 'owner'}
   function PrivateAcl($value) {
@@ -98,34 +100,54 @@ try {
   if (($verified.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or $directory -ne $verified.PSIsContainer) {throw 'changed'}
   $acl=$verified.GetAccessControl()
   if ($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -ne $sid.Value -or -not (PrivateAcl $acl)) {throw 'unverified'}
+  }
   [Console]::Out.Write('private')
 } catch {[Console]::Error.Write($_.Exception.Message);exit 1}
 `;
 
-function windowsPrivate(file, kind, permissions) {
+const privatePermissions = () => ({ checked: new Set(), deadline: performance.now() + 5000, failed: false });
+
+function windowsPrivate(file, kind, permissions, existingFile = null) {
   // Never accept a general artifact path, arbitrary script or caller body.
-  if (kind === "directory" ? path.basename(file) !== "user-prompt-reference"
-    : path.basename(path.dirname(file)) !== "user-prompt-reference" || !/^(?:[a-f0-9]{64}\.json|\.[a-f0-9]{64}\.json\.[a-f0-9-]{36}\.tmp)$/.test(path.basename(file))) throw new Error("Unsafe prompt ACL target.");
-  const stat = fs.lstatSync(file), identity = JSON.stringify([kind, stat.dev, stat.ino]);
+  if (permissions.failed) throw new Error("Private prompt ACL verification already failed.");
+  const requests = [{ path: file, kind }, ...(existingFile ? [{ path: existingFile, kind: "file" }] : [])];
+  if (existingFile && (kind !== "directory" || path.dirname(existingFile) !== file)) throw new Error("Unsafe prompt ACL batch.");
+  const pending = requests.map(request => {
+    const directory = request.kind === "directory", target = request.path;
+    if (directory ? path.basename(target) !== "user-prompt-reference"
+      : path.basename(path.dirname(target)) !== "user-prompt-reference" || !/^(?:[a-f0-9]{64}\.json|\.[a-f0-9]{64}\.json\.[a-f0-9-]{36}\.tmp)$/.test(path.basename(target))) throw new Error("Unsafe prompt ACL target.");
+    const stat = fs.lstatSync(target);
+    if (stat.isSymbolicLink() || (directory ? !stat.isDirectory() : !stat.isFile() || stat.nlink !== 1)) throw new Error("Unsafe prompt ACL entry.");
+    return { request, stat, identity: JSON.stringify([request.kind, stat.dev, stat.ino]) };
+  }).filter(item => !permissions.checked.has(item.identity));
   // Local to one synchronous capture/freeze/take. Never cache ACLs across turns
   // or callers. Renaming a verified stage within this directory keeps its DACL;
   // each filesystem use still rejects links/replacements by exact entry ID.
-  if (permissions.has(identity)) return;
+  if (!pending.length) return;
+  const remaining = Math.floor(permissions.deadline - performance.now());
+  if (remaining <= 0) { permissions.failed = true; throw new Error("Private prompt operation deadline exceeded."); }
   const executable = path.join(process.env.SystemRoot || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
-  const result = childProcess.spawnSync(executable, ["-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", WINDOWS_PRIVATE_ACL], {
-    cwd: path.dirname(file), windowsHide: true, shell: false, input: JSON.stringify({ path: file, kind }), encoding: "utf8", timeout: 5000, maxBuffer: 4096,
-  });
-  if (result.error || result.status !== 0 || result.stdout.trim() !== "private") throw new Error("Private prompt ACL unavailable.");
-  if (!sameEntry(stat, fs.lstatSync(file))) throw new Error("Prompt ACL target changed.");
-  permissions.add(identity);
+  try {
+    const result = childProcess.spawnSync(executable, ["-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", WINDOWS_PRIVATE_ACL], {
+      cwd: path.dirname(file), windowsHide: true, shell: false, input: JSON.stringify(pending.map(item => item.request)), encoding: "utf8", timeout: remaining, maxBuffer: 4096,
+    });
+    if (result.error || result.status !== 0 || result.stdout.trim() !== "private" || performance.now() > permissions.deadline) throw new Error("Private prompt ACL unavailable.");
+    for (const item of pending) {
+      const entry = fs.lstatSync(item.request.path);
+      if (!sameEntry(item.stat, entry) || entry.isSymbolicLink()
+        || (item.request.kind === "directory" ? !entry.isDirectory() : !entry.isFile() || entry.nlink !== 1)) throw new Error("Prompt ACL target changed.");
+    }
+    // Batch success is all-or-nothing; never cache a partly verified request.
+    for (const item of pending) permissions.checked.add(item.identity);
+  } catch (error) { permissions.failed = true; throw error; }
 }
 
-function privateDirectory(directory, permissions) {
+function privateDirectory(directory, permissions, existingFile = null) {
   const stat = fs.lstatSync(directory);
   if (!stat.isDirectory() || stat.isSymbolicLink()
     || typeof process.getuid === "function" && stat.uid !== process.getuid()) throw new Error("Unsafe prompt directory.");
   if (process.platform !== "win32") fs.chmodSync(directory, 0o700);
-  else windowsPrivate(directory, "directory", permissions);
+  else windowsPrivate(directory, "directory", permissions, existingFile);
 }
 
 function sameEntry(a, b) { return a.dev === b.dev && a.ino === b.ino; }
@@ -245,7 +267,7 @@ function writeState(file, state, permissions) {
 export function captureUserPrompt({ root, runtime, nativeSessionId, agentId = null, text, messageId = null, environment = process.env } = {}) {
   const next = boundText(typeof text === "string" ? text : "");
   if (!next) return { captured: false };
-  let file; const permissions = new Set();
+  let file; const permissions = privatePermissions();
   try { file = callerFile(root, runtime, nativeSessionId, agentId, environment, true, permissions); }
   catch { return { captured: false }; }
   if (!file) return { captured: false };
@@ -264,7 +286,7 @@ export function captureUserPrompt({ root, runtime, nativeSessionId, agentId = nu
 }
 
 export function freezeUserPromptReference({ root, runtime, nativeSessionId, agentId = null, environment = process.env } = {}) {
-  let file; const permissions = new Set();
+  let file; const permissions = privatePermissions();
   try { file = callerFile(root, runtime, nativeSessionId, agentId, environment, false, permissions); }
   catch { return { frozen: false }; }
   const state = readState(file, permissions);
@@ -276,7 +298,7 @@ export function freezeUserPromptReference({ root, runtime, nativeSessionId, agen
 }
 
 export function takeUserPromptReference({ root, runtime, nativeSessionId, agentId = null, environment = process.env, force = false } = {}) {
-  let file; const permissions = new Set();
+  let file; const permissions = privatePermissions();
   try { file = callerFile(root, runtime, nativeSessionId, agentId, environment, false, permissions); }
   catch { return ""; }
   const state = readState(file, permissions);

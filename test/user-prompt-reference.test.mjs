@@ -215,8 +215,10 @@ test("Windows ACL privacy: broad inheritance and existing prompt paths are narro
   const { root, environment } = fixture(t), operational = environment.HEAD_AGENT_OPERATIONAL_STATE_ROOT;
   fs.mkdirSync(operational); const parentBefore = windowsAclFixture(t, operational, "broaden"); assert.equal(parentBefore.untrusted, 1);
   const caller = { root, runtime: "codex", nativeSessionId: "windows-acl", environment };
-  const spawn = childProcess.spawnSync;
+  const spawn = childProcess.spawnSync; let privateCalls = 0;
   t.mock.method(childProcess, "spawnSync", function(executable, args, options) {
+    const request = JSON.parse(options.input);
+    if (Array.isArray(request) && request.every(item => item.kind)) privateCalls++;
     t.diagnostic(JSON.stringify({ event: "planned-private-acl", executable, cwd: options?.cwd, parent: process.pid, ports: [], windowsHide: options?.windowsHide }));
     const result = spawn.call(this, executable, args, options);
     t.diagnostic(JSON.stringify({ event: "private-acl-exited", pid: result.pid, status: result.status, output: result.stdout === "private" ? "private" : "synthetic-inspection-json", error: result.stderr, parent: process.pid, ports: [] }));
@@ -233,12 +235,14 @@ test("Windows ACL privacy: broad inheritance and existing prompt paths are narro
     return write.call(this, file, ...args);
   });
   const started = performance.now(); assert.equal(captureUserPrompt({ ...caller, text: "Synthetic private prompt only" }).captured, true);
+  assert.equal(privateCalls, 2, "New capture needs one directory request and one new-stage request");
   t.diagnostic(`Capture including independent stage ACL inspection: ${Math.round(performance.now() - started)}ms`);
   for (const file of [promptDirectory(environment), promptFile(environment)]) {
     const acl = windowsAclFixture(t, file, "inspect"); assert.equal(acl.untrusted, 0); assert.equal(acl.protected, true); assert.equal(acl.ownerCurrent, true); assert.equal(acl.rules, 2);
     windowsAclFixture(t, file, "broaden");
   }
-  const freezeStarted = performance.now(); assert.equal(freezeUserPromptReference(caller).frozen, true);
+  const freezeStarted = performance.now(), callsBeforeFreeze = privateCalls; assert.equal(freezeUserPromptReference(caller).frozen, true);
+  assert.equal(privateCalls - callsBeforeFreeze, 2, "Existing directory/file are batched; only the stage needs another request");
   t.diagnostic(`Freeze including independent stage ACL inspection: ${Math.round(performance.now() - freezeStarted)}ms`);
   for (const file of [promptDirectory(environment), promptFile(environment)]) assert.equal(windowsAclFixture(t, file, "inspect").untrusted, 0);
   assert.equal(windowsAclFixture(t, operational, "inspect").sddl, parentBefore.sddl, "General operational parent ACL must not change");
@@ -252,7 +256,7 @@ test("Windows ACL privacy: failed verification never claims capture or leaves an
   t.mock.method(childProcess, "spawnSync", function(executable, args, options) {
     if (verifierUnavailable) return { status: 1, stdout: "", stderr: "Synthetic unavailable ACL verifier" };
     const request = options?.input && JSON.parse(options.input);
-    if (request?.path?.endsWith(".tmp")) { stageFailure = true; return { status: 1, stdout: "", stderr: "Synthetic ACL failure" }; }
+    if ((Array.isArray(request) ? request : [request]).some(item => item?.path?.endsWith(".tmp"))) { stageFailure = true; return { status: 1, stdout: "", stderr: "Synthetic ACL failure" }; }
     return spawn.call(this, executable, args, options);
   });
   assert.equal(captureUserPrompt({ ...caller, text: "Must never be written before verified private ACL" }).captured, false);
@@ -260,6 +264,26 @@ test("Windows ACL privacy: failed verification never claims capture or leaves an
   verifierUnavailable = true;
   assert.equal(captureUserPrompt({ ...caller, text: "No fallback permission claim" }).captured, false);
   assert.equal(freezeUserPromptReference(caller).frozen, false); assert.equal(takeUserPromptReference({ ...caller, force: true }), "");
+});
+
+test("Windows ACL privacy: one public-operation deadline bounds remaining helpers and a failed batch cannot become capture success", { skip: process.platform !== "win32" }, t => {
+  const { root, environment } = fixture(t), caller = { root, runtime: "codex", nativeSessionId: "deadline", environment };
+  assert.equal(captureUserPrompt({ ...caller, text: "Synthetic batch failure baseline" }).captured, true);
+  const file = promptFile(environment), spawn = childProcess.spawnSync; let now = 0, calls = 0, phase = "partial-batch";
+  t.mock.method(childProcess, "spawnSync", function(executable, args, options) {
+    calls++; assert(options.timeout > 0 && options.timeout <= 5000);
+    if (phase === "partial-batch") {
+      const requests = JSON.parse(options.input); assert.equal(requests.length, 2);
+      fs.unlinkSync(file); // Exact generated synthetic P5 file only: disappear after preflight.
+    }
+    const result = spawn.call(this, executable, args, options); if (phase === "deadline") now = 6000; return result;
+  });
+  assert.equal(captureUserPrompt({ ...caller, text: "A partly checked ACL batch is not success" }).captured, false);
+  assert.equal(calls, 1, "Batch failure cannot be retried into a successful prompt write");
+  phase = "deadline"; calls = 0; t.mock.method(performance, "now", () => now);
+  assert.equal(captureUserPrompt({ ...caller, text: "No success after an exhausted operation budget" }).captured, false);
+  assert.equal(calls, 1, "No second helper may start after the shared deadline");
+  assert.deepEqual(fs.readdirSync(promptDirectory(environment)), []);
 });
 
 test("privacy regression: credential masks cover case, temporary and truncated secrets without masking ordinary prose", t => {
