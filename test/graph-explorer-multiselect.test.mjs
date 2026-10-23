@@ -4,6 +4,10 @@ import test from "node:test";
 import vm from "node:vm";
 import crypto from "node:crypto";
 import { explorerDom, visibleText } from "./helpers/graph-explorer-dom-fixture.mjs";
+import { fixture as workFixture, snapshot as inputSnapshot } from "./helpers/session-work-linkage-fixture.mjs";
+import { buildGraphExplorerSnapshot } from "../scripts/lib/graph-explorer.mjs";
+import { queryProjectGraph } from "../scripts/lib/project-graph.mjs";
+import { normalizeEvidenceAnchors } from "../scripts/lib/product-policy-records.mjs";
 
 const source = fs.readFileSync(new URL("../scripts/graph-explorer/exploration.js", import.meta.url), "utf8");
 const factory = () => vm.runInNewContext(source + "\nexplorerModel");
@@ -19,6 +23,87 @@ const selectionCount = ui => Number(ui.ids.get("selection-count").textContent.ma
 const cards = vm.runInNewContext(fs.readFileSync(new URL("../scripts/graph-explorer/cards.js", import.meta.url), "utf8") + "\nexplorerCards");
 const descendants = element => [element, ...element.children.flatMap(descendants)];
 const readingCard = (ui, id) => ui.ids.get("selection-cards").children.find(item => item.getAttribute("data-record") === `node:${id}`);
+
+test("supported summary-free work writer content reaches expanded map and reading cards without false missing-body claims", async t => {
+  const f = workFixture(t), cases = [["observedWork", "Observed work", "Synthetic recorded observation <not HTML>"],
+    ["suggestedFollowUp", "Suggested follow-up (historical; not permission)", "Synthetic follow-up is not approval"],
+    ["pending", "Pending", "Synthetic pending action is not complete"]];
+  const saved = cases.map(([field, , value]) => f.save({ [field]: [value] }));
+  const before = inputSnapshot(f.base), data = await buildGraphExplorerSnapshot({ root: f.root });
+  for (const [i, [, heading, value]] of cases.entries()) {
+    const node = data.graph.nodes.find(node => node.evidenceDigest === saved[i].evidence.evidenceDigest);
+    assert(node); assert.equal(node.workContent.summary, null);
+    const ui = explorerDom({ ...data, graph: { ...data.graph, initialNodeId: node.nodeId } });
+    assert(!visibleText(nodeElement(ui, node.nodeId)).includes(value), "Default map remains title-only");
+    ui.event(nodeElement(ui, node.nodeId).querySelectorAll("[data-card-control]")[0]); await ui.settle();
+    const map = visibleText(nodeElement(ui, node.nodeId));
+    assert(map.includes(heading) && map.includes(value), `Expanded map must read ${heading} already exported by the supported writer`);
+    assert(!map.includes("Body not included"));
+    const card = readingCard(ui, node.nodeId); card.open = true;
+    const reading = visibleText(card); assert(reading.includes(heading) && reading.includes(value));
+    assert.match(reading, /Agent-authored work; not a captured user utterance/);
+    assert(!reading.includes("Body not included"));
+  }
+  assert.deepEqual(inputSnapshot(f.base), before, "Card display and export must not change originals or authority");
+});
+
+test("supported partial work reader excerpts retain exact field coordinates and text in expanded cards", async t => {
+  const f = workFixture(t);
+  const saved = [f.save({ summary: "PartialNeedle summary — not approval. ".repeat(1300) }),
+    f.save({ summary: "PartialNeedle judgment", judgments: [{ assessment: "Recorded assessment. ".repeat(80),
+      reason: "Recorded reason — not approval. ".repeat(1300), alternatives: ["Recorded alternative. ".repeat(600)] }] })];
+  const before = inputSnapshot(f.base), projected = await queryProjectGraph({ root: f.root, query: "PartialNeedle", view: "work", details: false });
+  const partials = projected.nodes.filter(node => node.workContentExcerpts?.length); assert.equal(partials.length, 2, "Real reader must produce summary and structured partial excerpts");
+  for (const node of partials) {
+    const original = saved.find(item => item.evidence.evidenceDigest === node.evidenceDigest).evidence.content;
+    for (const excerpt of node.workContentExcerpts) {
+      let text = original[excerpt.field];
+      if (excerpt.index != null) text = text[excerpt.index];
+      if (excerpt.subfield) text = text[excerpt.subfield];
+      if (excerpt.alternativeIndex != null) text = text[excerpt.alternativeIndex];
+      assert.equal(excerpt.text, text.slice(excerpt.start, excerpt.end));
+    }
+    const data = input({ nodes: projected.nodes, edges: projected.edges }); data.project.projectId = node.projectId; data.graph.initialNodeId = node.nodeId;
+    const ui = explorerDom(data); ui.event(nodeElement(ui, node.nodeId).querySelectorAll("[data-card-control]")[0]); await ui.settle();
+    const map = visibleText(nodeElement(ui, node.nodeId)); assert.match(map, /Partial exported content/);
+    const card = readingCard(ui, node.nodeId); card.open = true; const reading = visibleText(card);
+    for (const excerpt of node.workContentExcerpts) {
+      assert(reading.includes(excerpt.text), "Included exact excerpt must be readable, not only in Raw JSON");
+      assert(reading.includes(`workContent.${excerpt.field}`)); assert(reading.includes(`[${excerpt.start}, ${excerpt.end}) / ${excerpt.totalCharacters}`));
+    }
+    assert.match(reading, /Partial exported content.*not a captured user utterance/s);
+    if (node.workContentExcerpts.some(entry => entry.subfield === "reason")) assert(!reading.includes("No recorded reason included for this record."));
+    assert(!reading.includes("Body not included"));
+  }
+  assert.deepEqual(inputSnapshot(f.base), before);
+});
+
+test("empty cards explain a reference or metadata once without guessing original availability or dropping diagnostics", async () => {
+  const [anchor] = normalizeEvidenceAnchors([{ kind: "user-request", reference: "conversation:synthetic-reference" }]);
+  const cases = [
+    { kind: "ProductPolicyEvidence", evidenceKind: anchor.kind, reference: anchor.reference, summary: anchor.summary, expected: /Reference-only evidence/ },
+    { kind: "Unknown", detailCoverage: "metadata-only", detailReasonCode: "DETAIL_NOT_INCLUDED_FOR_THIS_SELECTION", expected: /metadata-only projection/ },
+    ...["ORIGINAL_BYTE_BOUND", "EXACT_REVISION_NOT_ON_DISK", "EACCES"].map(reasonCode => ({ kind: "Unknown", reasonCode, expected: /No supported display text/ })),
+  ];
+  for (const [i, record] of cases.entries()) {
+    const node = { nodeId: "A", name: "User request", sourceReference: { path: `synthetic-${i}.json`, digest: "a".repeat(64) },
+      unknownDiagnostic: { retained: "synthetic unknown field" }, ...record }, data = input({ nodes: [node], edges: [] });
+    if (record.reasonCode) data.originals[JSON.stringify([node.sourceReference.path, node.sourceReference.digest])] = {
+      status: record.reasonCode === "ORIGINAL_BYTE_BOUND" ? "omitted" : "unavailable", reasonCode: record.reasonCode };
+    const unchanged = JSON.stringify(data), descriptor = cards.create(data, data.graph, "project").describe(node);
+    const ui = explorerDom(data); ui.event(nodeElement(ui, "A").querySelectorAll("[data-card-control]")[0]); await ui.settle();
+    const map = visibleText(nodeElement(ui, "A"));
+    const emptyNotice = descriptor.emptyNotice || "Body not included in this export.";
+    assert.equal(map.split(emptyNotice).length - 1, 1, "Missing-text notice appears once per expanded map card");
+    assert.match(map, record.expected);
+    const card = readingCard(ui, "A"); card.open = true; const reading = visibleText(card);
+    assert.equal(reading.split(emptyNotice).length - 1, 1); assert.match(reading, record.expected);
+    assert(card.textContent.includes("synthetic unknown field"), "Raw unknown diagnostics remain available");
+    if (record.reasonCode) assert(card.textContent.includes(record.reasonCode), "Exact original omission/error reason is distinct from absent display text");
+    if (record.reference) assert(!descriptor.body, "A reference must never become invented user speech");
+    assert.equal(JSON.stringify(data), unchanged);
+  }
+});
 
 test("boundary expansion actually advances, retains stable positions, and folding removes only its contribution", async () => {
   const graph = { nodes: nodes("A", "B", "C", "D"), edges: [edge("A", "B"), edge("B", "C"), edge("C", "D")] };
@@ -244,6 +329,12 @@ test("selected file reports actual reader denial and only exact recorded snapsho
       after: { requested: exact, resolvedWorldModelId: null, method: "recorded-exact-world-id", worldIdRecorded: true } } }] }], gaps: [
       { ...endpoint, lookup: "recorded-source-graph-pair", reasonCode: "RETAINED_SOURCE_SNAPSHOT_LOOKUP_BUDGET_REACHED", inspectedSnapshotCount: 128, retainedSnapshotCount: 140, uninspectedSnapshotCount: 12, inspectedSnapshotLimit: 128, absenceEstablished: false },
       { ...exact, lookup: "recorded-exact-world-id", reasonCode: "REQUESTED_EXACT_WORLD_NOT_FOUND" },
+      { ...exact, sourceSnapshotId: "source-different", lookup: "recorded-exact-world-id", reasonCode: "SAME_WORLD_DIFFERENT_SOURCE" },
+      { ...exact, graphSnapshotId: "graph-different", lookup: "recorded-exact-world-id", reasonCode: "SAME_WORLD_DIFFERENT_GRAPH" },
+      { ...exact, nodeId: "A", graphSnapshotId: "graph-node-bypass", lookup: "recorded-exact-world-id", reasonCode: "NODE_ID_MUST_NOT_OVERRIDE_ENDPOINT" },
+      { ...exact, lookup: "recorded-source-graph-pair", reasonCode: "SAME_ENDPOINT_WRONG_LOOKUP" },
+      { ...endpoint, worldModelId: "unrecorded-world", lookup: "recorded-source-graph-pair", reasonCode: "LEGACY_PAIR_MUST_NOT_GAIN_WORLD_ID" },
+      { ...endpoint, lookup: "recorded-source-graph-pair", graphSnapshotId: "legacy-other-graph", reasonCode: "LEGACY_DIFFERENT_GRAPH" },
       { sourceSnapshotId: "source-other", graphSnapshotId: "graph-other", reasonCode: "UNRELATED_PAIR_GAP" },
       { worldModelId: "world-unrelated", reasonCode: "UNRELATED_INVENTORY_GAP" },
       { nodeId: "B", reference: { path: "B.json", digest: "b".repeat(64) }, reasonCode: "UNRELATED_SELECTED_RECORD_GAP" },
@@ -254,6 +345,8 @@ test("selected file reports actual reader denial and only exact recorded snapsho
   assert(body.textContent.includes("RETAINED_SOURCE_SNAPSHOT_LOOKUP_BUDGET_REACHED")); assert(body.textContent.includes("128 inspected / 140 retained"));
   assert(body.textContent.includes("World ID not recorded")); assert(body.textContent.includes("REQUESTED_EXACT_WORLD_NOT_FOUND"));
   assert(body.textContent.includes("world-recorded"));
+  for (const reason of ["SAME_WORLD_DIFFERENT_SOURCE", "SAME_WORLD_DIFFERENT_GRAPH", "NODE_ID_MUST_NOT_OVERRIDE_ENDPOINT", "SAME_ENDPOINT_WRONG_LOOKUP", "LEGACY_PAIR_MUST_NOT_GAIN_WORLD_ID", "LEGACY_DIFFERENT_GRAPH"])
+    assert(!body.textContent.includes(reason), `${reason} must not leak below the selected comparison`);
   assert(!body.textContent.includes("UNRELATED_PAIR_GAP")); assert(!body.textContent.includes("UNRELATED_INVENTORY_GAP")); assert(!body.textContent.includes("UNSCOPED_GLOBAL_GAP"));
   ui.event(recordButton(ui, "B")); assert(!body.textContent.includes("UNRELATED_SELECTED_RECORD_GAP")); ui.event("only-focus");
   assert(!body.textContent.includes("SOURCE_READ_PERMISSION_DENIED")); assert(!body.textContent.includes("LOOKUP_BUDGET_REACHED")); assert(!body.textContent.includes("REQUESTED_EXACT_WORLD_NOT_FOUND"));

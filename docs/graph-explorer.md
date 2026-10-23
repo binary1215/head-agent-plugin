@@ -78,6 +78,15 @@ Current evidence is the default. Include historical / non-current evidence
 reveals retained records and exact relationships with their original state.
 This switch cannot make them current or authorize an effect.
 
+Expanded cards read recorded observations and suggested follow-ups even when a
+work record has no summary. Map cards show an excerpt; reading cards retain the
+exported structured content and exact partial-excerpt field/range labels. These
+are agent-authored records, not captured user speech or permission. Reference-only
+evidence and metadata-only projections have distinct notices. Exact-original
+omission or read-failure codes remain separate; a missing summary does not prove
+that the original is absent. Snapshot lookup notices match both the lookup method
+and the complete recorded World/Source/Graph endpoint, not World ID alone.
+
 Selected records stay together in individually folded reading cards. Open the
 record you want to read; selecting another does not open every body or replace
 the others. Adding or removing another selection, changing focus/filters,

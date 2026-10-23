@@ -78,12 +78,12 @@
     header.append(text("h3", descriptor.title, "map-card-title"), control);
     const content = text("div", "", "map-card-body"); content.setAttribute("data-card-body", "");
     content.append(text("p", descriptor.kind, "map-card-kind"));
-    content.append(text("p", descriptor.body ? shorten(descriptor.body, 420) : "Body not included in this export.", "map-card-excerpt"));
+    content.append(text("p", descriptor.preview ? shorten(descriptor.preview, 420) : descriptor.emptyNotice, "map-card-excerpt"));
     if (descriptor.conditions.length) content.append(text("p", descriptor.conditions.join(" · "), "map-card-conditions"));
     if (descriptor.groups.length) content.append(text("p", descriptor.groups.slice(0, 2).map(group => `${group.type}: ${group.title}`).join(" · ")
       + (descriptor.groups.length > 2 ? ` · +${descriptor.groups.length - 2} memberships in the reading card` : ""), "map-card-memberships"));
     if (descriptor.source) content.append(text("p", descriptor.source, "map-card-source"));
-    content.append(text("p", descriptor.excerptNotice, "map-card-notice"));
+    if (descriptor.excerptNotice) content.append(text("p", descriptor.excerptNotice, "map-card-notice"));
     const full = button("Read full record", event => { event.stopPropagation(); read(); }); full.setAttribute("data-card-control", ""); content.append(full);
     hide(content, !expanded);
     body.append(header, content); return body;
@@ -102,7 +102,7 @@
     // browsers measure the same HTML/CSS used by visible foreignObject cards.
     let collapsedHeight = 24 + basis.size * Math.min(2, lines(descriptor.title, basis.size)) * 1.4;
     let height = expanded ? 30 + basis.size * (1.4 + Math.min(2, lines(descriptor.title, basis.size)) * 1.4
-      + Math.min(3, lines(shorten(descriptor.body, 420), basis.size)) * 1.45
+      + Math.min(3, lines(shorten(descriptor.preview, 420), basis.size)) * 1.45
       + lines(descriptor.conditions.join(" · "), basis.size * .86) * 1.3
       + (descriptor.groups.length ? lines(descriptor.groups.slice(0, 2).map(group => group.title).join(" · "), basis.size * .86) * 1.3 : 0) + 2.7) : collapsedHeight;
     let measured = false;
@@ -570,7 +570,8 @@
           node && !inDisplayScope(value) || !node && !edgeInScope(value) ? "outside evidence scope — selection retained" : null].filter(item => typeof item === "string" && item);
         const conditionsElement = text("p", conditions.join(" · "), "card-conditions"); card.append(conditionsElement);
         for (const note of descriptor.notes) card.append(text("p", note, "hint"));
-        card.append(text("p", descriptor.body || (node ? "Body not included in this export." : `${label(model.nodes.get(value.from))} → ${label(model.nodes.get(value.to))}`)));
+        if (descriptor.body) card.append(text("p", descriptor.body));
+        else if (!descriptor.hasDisplayText) card.append(text("p", node ? descriptor.emptyNotice : `${label(model.nodes.get(value.from))} → ${label(model.nodes.get(value.to))}`));
         for (const [heading, facts] of descriptor.facts) {
           card.append(text("strong", heading)); const list = text("ul", "", "record-facts");
           for (const fact of facts) {
@@ -579,7 +580,10 @@
             list.append(row);
           } card.append(list);
         }
-        if (!value.rationale && !value.workContent?.judgments?.length) card.append(text("p", "No recorded reason included for this record.", "hint"));
+        for (const excerpt of descriptor.excerpts) card.append(text("strong", excerpt.heading), text("pre", excerpt.text, "record-excerpt"));
+        if (!value.rationale && !value.workContent?.judgments?.length
+          && !(value.workContentExcerpts || []).some(entry => entry.field === "judgments" && entry.subfield === "reason" && entry.text))
+          card.append(text("p", "No recorded reason included for this record.", "hint"));
         const actions = text("div", "", "reading-actions");
         actions.append(button("Read focus", () => node ? selectNode(value) : selectEdge(value)),
           button("Only this", () => {
@@ -896,11 +900,14 @@
       const pairs = (file.comparisons || []).filter(pair => values.some(value => pairMatches(value, file, pair)));
       const endpoints = pairs.flatMap(pair => Object.values(pair.snapshotLookup || {}).map(side => side.requested).filter(Boolean));
       const linkedIds = new Set([...owners.map(value => value.nodeId), ...pairs.flatMap(pair => [pair.changeSet?.nodeId, pair.leftRecord?.nodeId, pair.rightRecord?.nodeId])].filter(Boolean));
-      const relevantGaps = (context.gaps || []).filter(gap => gap.nodeId ? linkedIds.has(gap.nodeId) : endpoints.some(endpoint => endpoint.worldModelId
-        ? gap.worldModelId === endpoint.worldModelId
-        : !gap.worldModelId && endpoint.sourceSnapshotId && endpoint.graphSnapshotId && gap.sourceSnapshotId === endpoint.sourceSnapshotId && gap.graphSnapshotId === endpoint.graphSnapshotId));
+      // Reader lookups are keyed by the complete recorded endpoint, not World
+      // alone. A linked node ID cannot widen a lookup to a different pair.
+      const relevantGaps = (context.gaps || []).filter(gap => gap.lookup ? endpoints.some(endpoint =>
+        gap.lookup === (endpoint.worldModelId ? "recorded-exact-world-id" : "recorded-source-graph-pair")
+        && ["worldModelId", "sourceSnapshotId", "graphSnapshotId"].every(field => (gap[field] || null) === (endpoint[field] || null)))
+        : Boolean(gap.nodeId && linkedIds.has(gap.nodeId)));
       for (const gap of relevantGaps) {
-        const identity = gap.worldModelId ? `Recorded World ${gap.worldModelId}` : gap.sourceSnapshotId && gap.graphSnapshotId
+        const identity = gap.worldModelId ? `Recorded World ${gap.worldModelId} · Source ${gap.sourceSnapshotId} · Graph ${gap.graphSnapshotId}` : gap.sourceSnapshotId && gap.graphSnapshotId
           ? `Source ${gap.sourceSnapshotId} · Graph ${gap.graphSnapshotId} · World ID not recorded` : `Recorded reference ${gap.nodeId}`;
         const budget = Number.isInteger(gap.inspectedSnapshotCount) && Number.isInteger(gap.retainedSnapshotCount)
           ? ` · ${gap.inspectedSnapshotCount} inspected / ${gap.retainedSnapshotCount} retained${Number.isInteger(gap.uninspectedSnapshotCount) ? ` · ${gap.uninspectedSnapshotCount} uninspected` : ""}` : "";
