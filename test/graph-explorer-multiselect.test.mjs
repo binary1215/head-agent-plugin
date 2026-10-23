@@ -205,6 +205,60 @@ test("separate changed regions keep exact offsets and distinct pair disclosure n
   ui.event("jump-diff"); assert.equal(ui.stats.scrolled.id, "context-lineage"); assert(ui.ids.get("context-lineage").open);
 });
 
+test("exact pair navigation returns after complete removal and layer roundtrip without borrowing another pair or file cursor", () => {
+  const a = "a".repeat(64), b = "b".repeat(64), c = "c".repeat(64), graph = { nodes: nodes("A", "B"), edges: [] };
+  const pair = (id, digest) => ({ status: "observed", scope: "recorded-changeset-snapshot-pair", changeSet: { nodeId: id }, before: { digest }, after: { digest: b },
+    diff: { changed: true, before: { startLine: 10, text: "old1\ncontext\nold2" }, after: { startLine: 10, text: "new1\ncontext\nnew2" } } });
+  const file = (path, id, digest) => ({ path, current: { digest: b }, associations: [], comparisons: [pair(id, digest)] });
+  graph.contextLineage = { events: [], files: [file("src/one.mjs", "A", a), file("src/two.mjs", "A", a), file("src/other.mjs", "B", c)], recordedReasons: [], canonChanges: [] };
+  const snapshot = input(graph); snapshot.codeGraph = { nodes: [{ nodeId: "code-two", name: "Code two", kind: "File", path: "src/two.mjs", digest: b }], edges: [], status: "current", contextLineage: graph.contextLineage };
+  const ui = explorerDom(snapshot, { resetDetachedScroll: true }), root = ui.ids.get("context-lineage-body");
+  ui.event("file-next"); for (let i = 0; i < 4; i++) ui.event("change-next");
+  assert.match(ui.ids.get("comparison-position").textContent, /File 2\/2.*changed region 4\/4/);
+  const excerpts = descendants(root).filter(item => item.tagName === "details" && item.children[0]?.textContent === "Exact before / after excerpts"), exact = excerpts[1];
+  exact.open = true; const pre = descendants(exact).find(item => item.tagName === "pre"); pre.scrollTop = 77;
+  ui.event(recordButton(ui, "B")); ui.event("only-focus");
+  assert.match(ui.ids.get("comparison-position").textContent, /File 1\/1.*changed region 0\/2/, "A's cursor must not become B's cursor");
+  const otherExcerpt = descendants(root).find(item => item.tagName === "details" && item.children[0]?.textContent === "Exact before / after excerpts"); assert(!otherExcerpt.open);
+  ui.event(recordButton(ui, "A")); ui.event("only-focus");
+  assert.match(ui.ids.get("comparison-position").textContent, /File 2\/2.*changed region 4\/4/, "Returning exact A pair restores its saved second-file, second-region location");
+  assert(root.contains(exact)); assert(exact.open); assert.equal(pre.scrollTop, 77);
+  ui.ids.get("layer").value = "code"; ui.event("layer", "change"); ui.event(recordButton(ui, "Code two"));
+  assert.match(ui.ids.get("comparison-position").textContent, /File 1\/1.*changed region 0\/2/, "Same source in a different graph cannot inherit Project navigation");
+  ui.event("change-next");
+  ui.ids.get("layer").value = "project"; ui.event("layer", "change");
+  assert.match(ui.ids.get("comparison-position").textContent, /File 2\/2.*changed region 4\/4/);
+  assert.equal(pre.scrollTop, 77);
+  ui.ids.get("layer").value = "code"; ui.event("layer", "change");
+  assert.match(ui.ids.get("comparison-position").textContent, /File 1\/1.*changed region 1\/2/, "Code keeps its own separate saved region");
+  ui.ids.get("layer").value = "project"; ui.event("layer", "change");
+  assert.equal(pre.scrollTop, 77);
+});
+
+test("selected file reports actual reader denial and only exact recorded snapshot lookup gaps", () => {
+  const endpoint = { sourceSnapshotId: "source-requested", graphSnapshotId: "graph-requested" }, exact = { worldModelId: "world-recorded", sourceSnapshotId: "source-after", graphSnapshotId: "graph-after" };
+  const graph = { nodes: nodes("A", "B"), edges: [], contextLineage: { events: [], recordedReasons: [], canonChanges: [], files: [{ path: "src/selected.mjs", associations: [],
+    currentObservation: { status: "current-source-unavailable", reasonCode: "SOURCE_READ_PERMISSION_DENIED", explanation: "Current source unavailable; retained citations remain separate." },
+    comparisons: [{ changeSet: { nodeId: "A" }, status: "unknown", scope: "recorded-changeset-snapshot-pair", snapshotLookup: {
+      before: { requested: endpoint, resolvedWorldModelId: null, method: "bounded-source-graph-pair-lookup", worldIdRecorded: false },
+      after: { requested: exact, resolvedWorldModelId: null, method: "recorded-exact-world-id", worldIdRecorded: true } } }] }], gaps: [
+      { ...endpoint, lookup: "recorded-source-graph-pair", reasonCode: "RETAINED_SOURCE_SNAPSHOT_LOOKUP_BUDGET_REACHED", inspectedSnapshotCount: 128, retainedSnapshotCount: 140, uninspectedSnapshotCount: 12, inspectedSnapshotLimit: 128, absenceEstablished: false },
+      { ...exact, lookup: "recorded-exact-world-id", reasonCode: "REQUESTED_EXACT_WORLD_NOT_FOUND" },
+      { sourceSnapshotId: "source-other", graphSnapshotId: "graph-other", reasonCode: "UNRELATED_PAIR_GAP" },
+      { worldModelId: "world-unrelated", reasonCode: "UNRELATED_INVENTORY_GAP" },
+      { nodeId: "B", reference: { path: "B.json", digest: "b".repeat(64) }, reasonCode: "UNRELATED_SELECTED_RECORD_GAP" },
+      { reasonCode: "UNSCOPED_GLOBAL_GAP" }
+    ] } };
+  const ui = explorerDom(input(graph)), body = ui.ids.get("context-lineage-body");
+  assert(body.textContent.includes("SOURCE_READ_PERMISSION_DENIED"));
+  assert(body.textContent.includes("RETAINED_SOURCE_SNAPSHOT_LOOKUP_BUDGET_REACHED")); assert(body.textContent.includes("128 inspected / 140 retained"));
+  assert(body.textContent.includes("World ID not recorded")); assert(body.textContent.includes("REQUESTED_EXACT_WORLD_NOT_FOUND"));
+  assert(body.textContent.includes("world-recorded"));
+  assert(!body.textContent.includes("UNRELATED_PAIR_GAP")); assert(!body.textContent.includes("UNRELATED_INVENTORY_GAP")); assert(!body.textContent.includes("UNSCOPED_GLOBAL_GAP"));
+  ui.event(recordButton(ui, "B")); assert(!body.textContent.includes("UNRELATED_SELECTED_RECORD_GAP")); ui.event("only-focus");
+  assert(!body.textContent.includes("SOURCE_READ_PERMISSION_DENIED")); assert(!body.textContent.includes("LOOKUP_BUDGET_REACHED")); assert(!body.textContent.includes("REQUESTED_EXACT_WORLD_NOT_FOUND"));
+});
+
 test("large complete inventory remains reachable, selection/cards are paged not capped, and focus reuses its basis", async t => {
   const count = 12000, graph = { nodes: nodes(...Array.from({ length: count }, (_, i) => i === 0 ? "A" : `N${i}`)), edges: Array.from({ length: count - 1 }, (_, i) => edge("A", `N${i + 1}`)) };
   const snapshot = input(graph), before = JSON.stringify(snapshot), started = performance.now(), ui = explorerDom(snapshot), initialMs = ui.initialMs;

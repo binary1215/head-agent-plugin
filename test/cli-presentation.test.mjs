@@ -300,6 +300,38 @@ test("World and document CLI summaries bound human output while preserving the r
   assert(formatCliResult("world-refresh-read", receipt).includes('--receipt "refresh-receipt-abc" --json'));
 });
 
+test("World refresh summary reads actual nested receipt changes and separate blocked or failed document outcomes", () => {
+  // Return nesting/statuses from refreshWorldModelLocked/completePostRefreshProjection,
+  // not the top-level inspectWorldModel.changes or a fabricated reasonCode field.
+  const candidateSetId = "document-change-candidate-set-" + "a".repeat(24);
+  for (const [status, reasonCode, candidate] of [
+    ["blocked-edited-view", "DOCUMENT_CHANGE_CANDIDATES_REQUIRE_REVIEW", candidateSetId],
+    ["failed", "DOCUMENT_PROJECTION_PUBLISH_MISMATCH", null],
+  ]) {
+    const value = { status: "refreshed", receiptFile: "synthetic/refresh-receipt.json",
+      worldModel: { worldModelId: "world-model-" + "b".repeat(24), sourceSnapshotId: "source-snapshot-" + "c".repeat(24), graphSnapshotId: "graph-snapshot-" + "d".repeat(24) },
+      receipt: { kind: "IncrementalRefreshReceipt", status: "refreshed", refreshReceiptId: "incremental-refresh-receipt-" + "e".repeat(24),
+        observedChanges: { added: Array.from({ length: 100 }, (_, i) => `src/added-${i}.mjs`), changed: ["src/action.mjs"], removed: ["src/old.mjs"] } },
+      postRefreshProjection: { status, receiptFile: "synthetic/post-refresh-receipt.json", receipt: { kind: "PostRefreshProjectionReceipt",
+        postRefreshProjectionReceiptId: "post-refresh-projection-receipt-" + "f".repeat(24), outcome: {
+          status, reasonCode, documentProjectionId: null, documentProjectionHash: null, candidateSetId: candidate, candidateSetHash: candidate ? "a".repeat(64) : null,
+        } } },
+    };
+    const before = JSON.stringify(value), output = formatCliResult("world-refresh", value);
+    assert(output.includes("World: refreshed.")); assert(output.includes("Recorded refresh source added")); assert(output.includes("src/added-0.mjs")); assert(output.includes("94 more in --json"));
+    assert(output.includes("src/action.mjs")); assert(output.includes("src/old.mjs")); assert(output.includes(reasonCode)); assert(output.includes(status));
+    assert(output.includes("World refresh remains recorded")); assert(output.length < 3000);
+    if (candidate) {
+      assert(output.includes(candidateSetId));
+      assert(output.includes(`lode-agent world-docs-candidates "<project>" --candidate-set "${candidateSetId}" --json`));
+      assert(output.includes("independent work continues"));
+    } else assert(!output.includes("world-docs-candidates"));
+    assert(!output.includes("World: failed")); assert(!output.includes("World: blocked")); assert.equal(JSON.stringify(value), before);
+    const historical = formatCliResult("world-refresh-read", { status: "verified", receipt: value.receipt });
+    assert(historical.includes("Recorded refresh source changed")); assert(historical.includes("src/action.mjs"));
+  }
+});
+
 test("bootstrap and restore keep the original task and authority boundary visible", () => {
   const bootstrap = formatProjectBootstrap(projectExperience());
   assert.match(bootstrap, /Continue the user's original task in this conversation/u);

@@ -20,6 +20,8 @@
   let jobSerial = 0, busy = false, jobKind = null, drawnNodeIds = new Set(), comparisonFiles = [], changeHunks = [], fileCursor = 0, changeCursor = -1, rootPage = 0;
   const historyCounts = new WeakMap(), edgeKeys = new WeakMap();
   const comparisonStates = new WeakMap();
+  const comparisonFileNavigation = new WeakMap();
+  let comparisonGraph = null, comparisonNavigationSerial = 0;
   const filterIds = ["search", "hide-nonmatches", "axis", "view", "include-history", "relation-filter", "kind-filter"];
   // Yield to input without paying a whole display frame for every 512 edges.
   // The first paint/disclosure still uses requestAnimationFrame separately.
@@ -587,7 +589,7 @@
         if (node && (activeGraph.contextLineage?.files || []).some(file => fileMatches(value, file))) actions.append(button("Recorded code context", () => {
           selectNode(value); $("context-lineage").open = true;
           const at = comparisonFiles.findIndex(section => section.dataset.sourcePath === (value.path || value.sourceReference?.path));
-          if (at >= 0) { fileCursor = at; comparisonFiles[at].scrollIntoView({ block: "nearest" }); comparisonFiles[at].focus(); comparisonPosition(); }
+          if (at >= 0) { fileCursor = at; comparisonFiles[at].scrollIntoView({ block: "nearest" }); comparisonFiles[at].focus(); comparisonPosition("file"); }
           else $("context-lineage").scrollIntoView({ block: "nearest" });
         }));
         card.append(actions);
@@ -825,7 +827,21 @@
     return value.path === file.path || value.sourceReference?.path === file.path || (file.associations || []).some(item => item.nodeId === value.nodeId)
       || (file.comparisons || []).some(pair => pairMatches(value, file, pair));
   }
-  function comparisonPosition() {
+  function comparisonPosition(intent) {
+    // User navigation belongs to this exact exported graph/file/pair, not to
+    // whichever global ordinal happens to occupy the panel on the next render.
+    if (intent && comparisonGraph) {
+      const file = comparisonFiles[fileCursor]?.comparisonFile;
+      if (file) {
+        if (!comparisonFileNavigation.has(comparisonGraph)) comparisonFileNavigation.set(comparisonGraph, new Map());
+        comparisonFileNavigation.get(comparisonGraph).set(file, ++comparisonNavigationSerial);
+        const hunk = changeHunks[changeCursor];
+        if (intent === "hunk" && hunk?.file === fileCursor) {
+          const entry = comparisonStates.get(comparisonGraph)?.get(hunk.pair)?.get(file.path);
+          if (entry) entry.navigation = { element: hunk.element, serial: comparisonNavigationSerial };
+        }
+      }
+    }
     $("comparison-position").textContent = `File ${comparisonFiles.length ? fileCursor + 1 : 0}/${comparisonFiles.length} · changed region ${changeCursor >= 0 ? changeCursor + 1 : 0}/${changeHunks.length}. All included comparisons stay open; missing regions are not reconstructed.`;
     $("file-prev").disabled = fileCursor <= 0; $("file-next").disabled = fileCursor >= comparisonFiles.length - 1;
     $("change-prev").disabled = changeCursor <= 0; $("change-next").disabled = changeCursor >= changeHunks.length - 1;
@@ -833,10 +849,15 @@
   function renderContextLineage() {
     const context = activeGraph.contextLineage, panel = $("context-lineage"), body = $("context-lineage-body"); panel.hidden = !context;
     if (comparisonsCache?.model === model && comparisonsCache.version === model.selectionVersion && comparisonsCache.edgeVersion === edgeVersion) return;
-    const previousFile = comparisonFiles[fileCursor]?.dataset.sourcePath, previousHunk = changeHunks[changeCursor];
+    const previousGraph = comparisonGraph, previousFile = comparisonFiles[fileCursor]?.comparisonFile, previousHunk = changeHunks[changeCursor];
+    comparisonGraph = activeGraph;
     if (!comparisonStates.has(activeGraph)) comparisonStates.set(activeGraph, new Map());
     const pairStates = comparisonStates.get(activeGraph);
-    for (const entries of pairStates.values()) for (const entry of entries.values()) {
+    // Capture the display being left, not the layer being entered. Detached
+    // cached nodes may report scroll zero in a real browser; never overwrite
+    // their last attached reading position with that artificial value.
+    for (const entries of comparisonStates.get(previousGraph)?.values() || []) for (const entry of entries.values()) {
+      if (!body.contains(entry.body)) continue;
       entry.scroll = []; const walk = element => { if (element.scrollTop || element.scrollLeft) entry.scroll.push([element, element.scrollTop, element.scrollLeft]); for (const child of element.children) walk(child); }; walk(entry.body);
     }
     comparisonsCache = { model, version: model.selectionVersion, edgeVersion }; body.replaceChildren();
@@ -861,18 +882,30 @@
     for (const value of values) if (!candidates.some(file => fileMatches(value, file))) body.append(text("p", `${value.nodeId ? label(value) : relation(value)}: No exact code comparison included. This does not mean unchanged.`, "hint"));
     const outerBody = body;
     for (const file of candidates) {
-      const body = text("section", "", "file-comparison"); body.dataset.sourcePath = file.path; outerBody.append(body); comparisonFiles.push(body); body.tabIndex = -1;
+      const body = text("section", "", "file-comparison"); body.dataset.sourcePath = file.path; body.comparisonFile = file; outerBody.append(body); comparisonFiles.push(body); body.tabIndex = -1;
       const fileIndex = comparisonFiles.length - 1, entry = text("li", "");
-      entry.append(button(file.path, () => { panel.open = true; fileCursor = fileIndex; body.scrollIntoView({ block: "nearest" }); body.focus(); comparisonPosition(); })); $("comparison-files").append(entry);
+      entry.append(button(file.path, () => { panel.open = true; fileCursor = fileIndex; body.scrollIntoView({ block: "nearest" }); body.focus(); comparisonPosition("file"); })); $("comparison-files").append(entry);
       const owners = values.filter(value => fileMatches(value, file));
       body.append(text("h3", file.path));
       body.append(text("p", `Selected references: ${owners.map(value => value.nodeId ? label(value) : relation(value)).join(" · ")}`, "hint"));
-      if (file.currentObservation) body.append(text("p", file.currentObservation.explanation, "hint"));
+      if (file.currentObservation) body.append(text("p", [file.currentObservation.reasonCode, file.currentObservation.explanation].filter(Boolean).join(" · "), "hint"));
       for (const candidate of file.renameEvidence?.candidates || []) body.append(text("p", `Historical rename candidate — not confirmed continuity: ${candidate.path}. Current identity and cause remain unverified.`, "hint"));
       if (file.renameEvidence) body.append(text("p", file.renameEvidence.status === "observed-most-recent-path-change-only"
         ? "Move lookup checked only the most recent recorded path change; other moves remain unknown."
         : "Move lookup is partial, unavailable or lacks an exact historical source basis; no absence or continuity established.", "hint"));
       const pairs = (file.comparisons || []).filter(pair => values.some(value => pairMatches(value, file, pair)));
+      const endpoints = pairs.flatMap(pair => Object.values(pair.snapshotLookup || {}).map(side => side.requested).filter(Boolean));
+      const linkedIds = new Set([...owners.map(value => value.nodeId), ...pairs.flatMap(pair => [pair.changeSet?.nodeId, pair.leftRecord?.nodeId, pair.rightRecord?.nodeId])].filter(Boolean));
+      const relevantGaps = (context.gaps || []).filter(gap => gap.nodeId ? linkedIds.has(gap.nodeId) : endpoints.some(endpoint => endpoint.worldModelId
+        ? gap.worldModelId === endpoint.worldModelId
+        : !gap.worldModelId && endpoint.sourceSnapshotId && endpoint.graphSnapshotId && gap.sourceSnapshotId === endpoint.sourceSnapshotId && gap.graphSnapshotId === endpoint.graphSnapshotId));
+      for (const gap of relevantGaps) {
+        const identity = gap.worldModelId ? `Recorded World ${gap.worldModelId}` : gap.sourceSnapshotId && gap.graphSnapshotId
+          ? `Source ${gap.sourceSnapshotId} · Graph ${gap.graphSnapshotId} · World ID not recorded` : `Recorded reference ${gap.nodeId}`;
+        const budget = Number.isInteger(gap.inspectedSnapshotCount) && Number.isInteger(gap.retainedSnapshotCount)
+          ? ` · ${gap.inspectedSnapshotCount} inspected / ${gap.retainedSnapshotCount} retained${Number.isInteger(gap.uninspectedSnapshotCount) ? ` · ${gap.uninspectedSnapshotCount} uninspected` : ""}` : "";
+        body.append(text("p", `Source lookup: ${gap.reasonCode || "CONTEXT_SOURCE_UNAVAILABLE"} · ${identity}${budget}${gap.absenceEstablished === false ? " · absence not established" : ""}`, "comparison-gap"));
+      }
       if (!pairs.length) body.append(text("p", "No exact source comparison for these selected references. Same path alone does not establish a revision pair; unavailable data is not an empty diff.", "hint"));
       body.append(text("p", "File-level context; not automatically the reason for each symbol."));
       for (const association of file.associations || []) if (selectedIds.has(association.nodeId)) relatedIds.add(association.nodeId);
@@ -905,7 +938,7 @@
             : "Cited revision / export-observed current — not live";
         const linked = text("p", linkedText, "hint"); body.append(text("h4", scopeLabel), linked);
         for (const side of ["before", "after"]) body.append(text("p", `${side}: ${pair[side]?.revisionId || pair[side]?.digest || "Version bytes unavailable"} · time not retained in this comparison`, "comparison-basis"));
-        const provenance = text("details", ""); provenance.append(text("summary", "Exact comparison provenance"), text("pre", JSON.stringify({ scope: pair.scope, retainedOriginal: pair.retainedOriginal ? { ...pair.retainedOriginal, text: undefined } : undefined, renameEvidence: file.renameEvidence, before: pair.before, after: pair.after, citedReference: pair.citedReference, changeSet: pair.changeSet, leftRecord: pair.leftRecord, rightRecord: pair.rightRecord, recordedResultPacketId: pair.recordedResultPacketId, recordedReviewDecisionId: pair.recordedReviewDecisionId }, null, 2))); body.append(provenance);
+        const provenance = text("details", ""); provenance.append(text("summary", "Exact comparison provenance"), text("pre", JSON.stringify({ scope: pair.scope, retainedOriginal: pair.retainedOriginal ? { ...pair.retainedOriginal, text: undefined } : undefined, renameEvidence: file.renameEvidence, before: pair.before, after: pair.after, snapshotLookup: pair.snapshotLookup, citedReference: pair.citedReference, changeSet: pair.changeSet, leftRecord: pair.leftRecord, rightRecord: pair.rightRecord, recordedResultPacketId: pair.recordedResultPacketId, recordedReviewDecisionId: pair.recordedReviewDecisionId }, null, 2))); body.append(provenance);
         const list = text("ul", ""); list.className = "record-facts";
         for (const symbol of pair.symbols || []) list.append(text("li", `${symbol.after?.qualifiedName || symbol.before?.qualifiedName}: ${symbol.observation}${symbol.locationChanged ? " · line location changed" : ""}`));
         body.append(list);
@@ -968,10 +1001,22 @@
       if (delta.omittedChangeCount) body.append(text("p", `${delta.omittedChangeCount} further changes omitted from this view.`, "hint"));
     }
     if (!candidates.length && !relatedIds.size) body.append(text("p", "Select a source or recorded review to follow its available context.", "hint"));
-    const retainedFile = comparisonFiles.findIndex(section => section.dataset.sourcePath === previousFile);
+    const retainedFile = previousGraph === activeGraph ? comparisonFiles.findIndex(section => section.comparisonFile === previousFile) : -1;
     if (retainedFile >= 0) fileCursor = retainedFile;
-    changeCursor = previousHunk ? changeHunks.findIndex(item => item.element === previousHunk.element && item.pair === previousHunk.pair) : -1;
-    if (changeCursor >= 0) fileCursor = changeHunks[changeCursor].file;
+    else {
+      const navigatedFiles = comparisonFileNavigation.get(activeGraph);
+      let latest = -1;
+      comparisonFiles.forEach((section, index) => { const serial = navigatedFiles?.get(section.comparisonFile); if (serial > latest) { latest = serial; fileCursor = index; } });
+    }
+    changeCursor = previousGraph === activeGraph && previousHunk ? changeHunks.findIndex(item => item.file === fileCursor && item.element === previousHunk.element && item.pair === previousHunk.pair) : -1;
+    if (changeCursor < 0) {
+      let latest = -1;
+      changeHunks.forEach((item, index) => {
+        if (item.file !== fileCursor) return;
+        const navigation = pairStates.get(item.pair)?.get(comparisonFiles[item.file].comparisonFile.path)?.navigation;
+        if (navigation?.element === item.element && navigation.serial > latest) { latest = navigation.serial; changeCursor = index; }
+      });
+    }
     comparisonPosition();
   }
   function render() {
@@ -1068,11 +1113,11 @@
   $("roots-prev").addEventListener("click", () => { rootPage--; renderSelectionCards(); }); $("roots-next").addEventListener("click", () => { rootPage++; renderSelectionCards(); });
   for (const [id, delta] of [["file-prev", -1], ["file-next", 1]]) $(id).addEventListener("click", () => {
     $("context-lineage").open = true;
-    fileCursor = Math.max(0, Math.min(comparisonFiles.length - 1, fileCursor + delta)); const target = comparisonFiles[fileCursor]; if (target) { target.scrollIntoView({ block: "nearest" }); target.focus(); } comparisonPosition();
+    fileCursor = Math.max(0, Math.min(comparisonFiles.length - 1, fileCursor + delta)); const target = comparisonFiles[fileCursor]; if (target) { target.scrollIntoView({ block: "nearest" }); target.focus(); } comparisonPosition("file");
   });
   for (const [id, delta] of [["change-prev", -1], ["change-next", 1]]) $(id).addEventListener("click", () => {
     $("context-lineage").open = true;
-    changeCursor = Math.max(0, Math.min(changeHunks.length - 1, changeCursor + delta)); const target = changeHunks[changeCursor]; if (target) { fileCursor = target.file; target.element.scrollIntoView({ block: "nearest" }); target.element.focus(); } comparisonPosition();
+    changeCursor = Math.max(0, Math.min(changeHunks.length - 1, changeCursor + delta)); const target = changeHunks[changeCursor]; if (target) { fileCursor = target.file; target.element.scrollIntoView({ block: "nearest" }); target.element.focus(); } comparisonPosition("hunk");
   });
   $("show-code-diff").addEventListener("click", () => { $("context-lineage").open = true; $("context-lineage").scrollIntoView({ block: "nearest" }); });
   $("jump-diff").addEventListener("click", () => { $("context-lineage").open = true; $("context-lineage").setAttribute("tabindex", "-1"); $("context-lineage").scrollIntoView({ block: "start" }); $("context-lineage").focus(); });

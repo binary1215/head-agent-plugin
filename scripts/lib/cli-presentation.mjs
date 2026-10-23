@@ -987,6 +987,9 @@ function formatWorldSummary(command, value) {
   const documents = command.startsWith("world-docs-"), snapshot = value?.snapshot;
   const projection = value?.projection?.projection || value?.projection || {};
   const candidate = value?.candidateSet;
+  const postRefresh = value?.postRefreshProjection, postOutcome = postRefresh?.receipt?.outcome;
+  const changes = value?.receipt?.observedChanges || value?.changes;
+  const sourceLabel = value?.receipt?.observedChanges ? "Recorded refresh source" : "Source";
   const lines = [`${documents ? "World documents" : "World"}: ${compactText(inertTerminalText(value?.status || "status not returned"))}.`];
   const fact = (label, content) => { if (content != null && content !== "") lines.push(terminalBlock(label, content).trimEnd()); };
   fact("World snapshot", snapshot?.worldModelId || value?.worldModelId || value?.worldModel?.worldModelId || value?.currentWorldModelId);
@@ -998,26 +1001,30 @@ function formatWorldSummary(command, value) {
     fact("Counts", entries.slice(0, 16).map(([key, count]) => `${key}: ${count}`).join("; "));
     if (entries.length > 16) fact("Omitted count fields", entries.length - 16);
   }
-  for (const key of ["added", "changed", "removed"]) if (Array.isArray(value?.changes?.[key])) {
-    const paths = value.changes[key];
-    fact(`Source ${key}`, `${paths.length}${paths.length ? `; ${paths.slice(0, 6).map(item => compactText(inertTerminalText(typeof item === "string" ? item : item.path), 160)).join("; ")}` : ""}${paths.length > 6 ? `; ${paths.length - 6} more in --json` : ""}`);
+  for (const key of ["added", "changed", "removed"]) if (Array.isArray(changes?.[key])) {
+    const paths = changes[key];
+    fact(`${sourceLabel} ${key}`, `${paths.length}${paths.length ? `; ${paths.slice(0, 6).map(item => compactText(inertTerminalText(typeof item === "string" ? item : item.path), 160)).join("; ")}` : ""}${paths.length > 6 ? `; ${paths.length - 6} more in --json` : ""}`);
   }
   const flags = Object.entries(value?.changes || {}).filter(([, changed]) => changed === true).map(([key]) => key);
   if (flags.length) fact("Changed domains", flags.join("; "));
-  fact("Document projection", value?.documentProjectionId || projection.documentProjectionId);
+  fact("Document projection", value?.documentProjectionId || projection.documentProjectionId || postOutcome?.documentProjectionId);
   const locations = value?.projection?.publishedLocations || projection.publishedLocations;
   if (Array.isArray(locations)) {
     fact("Published document paths", `${locations.length}; ${locations.slice(0, 3).map(item => compactText(inertTerminalText(item.relativePath || item.location), 180)).join("; ")}${locations.length > 3 ? `; ${locations.length - 3} more in --json` : ""}`);
   }
   const drift = value?.projection?.drift || projection.drift;
   if (Array.isArray(drift)) fact("Document differences", `${drift.length}${drift.length ? `; ${drift.slice(0, 6).map(item => `${compactText(inertTerminalText(item.relativePath), 160)} (${compactText(inertTerminalText(item.changeType), 40)})`).join("; ")}` : ""}${drift.length > 6 ? `; ${drift.length - 6} more in --json` : ""}`);
-  fact("Candidate set", candidate?.candidateSetId);
+  fact("Candidate set", candidate?.candidateSetId || postOutcome?.candidateSetId);
   if (Array.isArray(candidate?.candidates)) fact("Unreviewed document candidates", candidate.candidates.length);
-  if (value?.projection?.candidateRequired || projection.candidateRequired || candidate?.requiresReviewDecision) lines.push("Document changes need their existing review before Canon application; independent work continues.");
+  if (value?.projection?.candidateRequired || projection.candidateRequired || candidate?.requiresReviewDecision || postOutcome?.status === "blocked-edited-view") lines.push("Document changes need their existing review before Canon application; independent work continues.");
   fact("Refresh receipt", value?.receipt?.refreshReceiptId || value?.pointer?.refreshReceiptId);
-  fact("Post-refresh documents", value?.postRefreshProjection?.status);
-  fact("Evidence gap", value?.reasonCode || value?.postRefreshProjection?.reasonCode);
+  fact("Post-refresh documents", postRefresh?.status);
+  fact("Post-refresh document reason", postOutcome?.reasonCode || postRefresh?.reasonCode);
+  if (["refreshed", "unchanged"].includes(value?.receipt?.status) && (postRefresh?.status === "failed" || postRefresh?.status?.startsWith("blocked-"))) lines.push("World refresh remains recorded; this document outcome does not roll it back. Independent work continues.");
+  if (/^document-change-candidate-set-[a-f0-9]{24}$/u.test(postOutcome?.candidateSetId || "")) lines.push(`Read document candidates: lode-agent world-docs-candidates "<project>" --candidate-set "${postOutcome.candidateSetId}" --json`);
+  fact("Evidence gap", value?.reasonCode);
   fact("Saved result", value?.receiptFile || value?.file || value?.projection?.projectionLocation || projection.projectionLocation);
+  fact("Saved post-refresh result", postRefresh?.receiptFile);
   lines.push("Derived evidence only; counts do not prove semantic sufficiency, approval or execution success.");
   const mutating = ["world-index", "world-refresh", "world-docs-build", "world-docs-capture"].includes(command);
   if (mutating) lines.push("Raw output is available with --json on the original command; do not repeat a mutation solely to inspect details. Read-only checks: world-status / world-docs-status --json.");
