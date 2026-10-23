@@ -1,0 +1,121 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact|fork",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/session-host-hook.mjs\" --runtime claude",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/session-host-hook.mjs\" --runtime claude --observe-only",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "manual|auto",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/session-host-hook.mjs\" --runtime claude --observe-only",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/session-host-hook.mjs\" --runtime claude --observe-only",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/session-host-hook.mjs\" --runtime claude --observe-only",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/session-host-hook.mjs\" --runtime claude --observe-only",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/session-host-hook.mjs\" --runtime claude --observe-only",
+            "timeout": 1
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "^mcp__lode__(lode_bounded_worker_apply_result|lode_bounded_worker_cancel|lode_bounded_worker_dispatch|lode_bounded_worker_job_patch|lode_bounded_worker_job_reconcile|lode_bounded_worker_job_status|lode_bounded_worker_prepare|lode_bounded_worker_reconcile|lode_bounded_worker_start|lode_bounded_worker_status|lode_bounded_worker_wait|lode_bounded_worker_wave_abandon|lode_bounded_worker_wave_create|lode_bounded_worker_wave_read|lode_bounded_worker_wave_results|lode_bounded_worker_wave_seal|lode_bounded_worker_wave_status|lode_bounded_worker_wave_wait|lode_checkpoint_basis|lode_checkpoint_diagnose|lode_checkpoint_sync|lode_compact_abort|lode_compact_continue|lode_compact_prepare|lode_compact_status|lode_compact_verify|lode_compaction_lifecycle_step|lode_context_prepare|lode_context_preview|lode_continuity_snapshot|lode_conversation_enter|lode_pending_review|lode_product_operating_status|lode_project_initialize_or_resume|lode_project_status|lode_run_integrate_checkpoint|lode_run_integration|lode_run_start|lode_runtime_adapters|lode_runtime_invocation_authorization|lode_runtime_invocation_lease_status|lode_runtime_invocation_result|lode_runtime_state|lode_session_continue|lode_session_restore|lode_session_work_read|lode_session_work_record|lode_tools_call|lode_tools_read|lode_worker_integration|lode_worker_integration_status|lode_world_model)$",
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "lode",
+            "tool": "lode_session_host_request_prepare",
+            "timeout": 5,
+            "input": {
+              "native_session_id": "${session_id}",
+              "native_agent_id": "${agent_id}",
+              "tool_use_id": "${tool_use_id}",
+              "outer_tool_name": "${tool_name}",
+              "original_arguments": "${tool_input}"
+            }
+          }
+        ]
+      },
+      {
+        "matcher": "^mcp__plugin_lode-agent-core_lode__(lode_bounded_worker_apply_result|lode_bounded_worker_cancel|lode_bounded_worker_dispatch|lode_bounded_worker_job_patch|lode_bounded_worker_job_reconcile|lode_bounded_worker_job_status|lode_bounded_worker_prepare|lode_bounded_worker_reconcile|lode_bounded_worker_start|lode_bounded_worker_status|lode_bounded_worker_wait|lode_bounded_worker_wave_abandon|lode_bounded_worker_wave_create|lode_bounded_worker_wave_read|lode_bounded_worker_wave_results|lode_bounded_worker_wave_seal|lode_bounded_worker_wave_status|lode_bounded_worker_wave_wait|lode_checkpoint_basis|lode_checkpoint_diagnose|lode_checkpoint_sync|lode_compact_abort|lode_compact_continue|lode_compact_prepare|lode_compact_status|lode_compact_verify|lode_compaction_lifecycle_step|lode_context_prepare|lode_context_preview|lode_continuity_snapshot|lode_conversation_enter|lode_pending_review|lode_product_operating_status|lode_project_initialize_or_resume|lode_project_status|lode_run_integrate_checkpoint|lode_run_integration|lode_run_start|lode_runtime_adapters|lode_runtime_invocation_authorization|lode_runtime_invocation_lease_status|lode_runtime_invocation_result|lode_runtime_state|lode_session_continue|lode_session_restore|lode_session_work_read|lode_session_work_record|lode_tools_call|lode_tools_read|lode_worker_integration|lode_worker_integration_status|lode_world_model)$",
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "plugin:lode-agent-core:lode",
+            "tool": "lode_session_host_request_prepare",
+            "timeout": 5,
+            "input": {
+              "native_session_id": "${session_id}",
+              "native_agent_id": "${agent_id}",
+              "tool_use_id": "${tool_use_id}",
+              "outer_tool_name": "${tool_name}",
+              "original_arguments": "${tool_input}"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

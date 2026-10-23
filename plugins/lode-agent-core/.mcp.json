@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "lode": {
+      "command": "node",
+      "args": [
+        "scripts/mcp-server.mjs"
+      ],
+      "cwd": ".",
+      "required": false
+    }
+  }
+}
