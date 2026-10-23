@@ -21,7 +21,7 @@
   const historyCounts = new WeakMap(), edgeKeys = new WeakMap();
   const filterIds = ["search", "hide-nonmatches", "axis", "view", "include-history", "relation-filter", "kind-filter"];
   const yieldWork = () => new Promise(resolve => requestAnimationFrame(resolve));
-  const label = node => displayText(node?.name || node?.title || node?.qualifiedName || node?.objective || node?.purpose || node?.directionEvidence?.goal || node?.workContent?.summary || node?.summary || node?.proposedPolicy?.name || node?.planDelta || node?.outcome || node?.path || node?.statement || node?.assessment || node?.rationale || (node?.kind === "ChangeSet" ? "Recorded source revision changes" : `${node?.kind || "Unnamed record"} · ${String(node?.nodeId || "unknown").slice(-12)}`));
+  const label = node => displayText(explorerCards.title(node));
   const isCode = node => $("layer").value === "code" || /^(File|Symbol|Source|Directory|Dependency|ExternalDependency)/.test(node.kind || "");
   const relation = edge => {
     const code = edge.type || edge.relation;
@@ -36,35 +36,173 @@
   const text = (tag, value, className) => { const el = document.createElement(tag); el.textContent = displayText(value); if (className) el.className = className; return el; };
   const button = (value, action) => { const el = text("button", value); el.type = "button"; el.addEventListener("click", action); return el; };
   const svg = (tag, attributes) => { const el = document.createElementNS(ns, tag); for (const [name, value] of Object.entries(attributes)) el.setAttribute(name, displayText(value)); return el; };
-  const shorten = (value, length) => Array.from(value).length > length ? Array.from(value).slice(0, length).join("") + "…" : value;
+  const graphemes = typeof Intl?.Segmenter === "function" ? new Intl.Segmenter(undefined, { granularity: "grapheme" }) : null;
+  const shorten = (value, length) => {
+    let result = "", count = 0;
+    for (const part of graphemes ? graphemes.segment(String(value)) : Array.from(String(value))) { if (count++ === length) return result + "…"; result += part.segment ?? part; }
+    return result;
+  };
   const measure = document.createElement("canvas").getContext("2d");
   const measuredExtents = new WeakMap();
+  const cardIndexes = new WeakMap(), mapCaches = new WeakMap(), readingStates = new WeakMap(), modelMetrics = new WeakMap();
+  const mapOpenStates = new WeakMap(), mapDisclosures = new WeakMap(), mapScrollStates = new WeakMap();
+  const suppressedMetrics = new WeakMap();
+  let fontEpoch = 0, metricFrame = null;
+  function cardIndex(graph = activeGraph) {
+    if (!cardIndexes.has(graph)) cardIndexes.set(graph, explorerCards.create(data, graph, graph === data.graph ? "project" : "code"));
+    return cardIndexes.get(graph);
+  }
+  function metrics() {
+    const root = typeof getComputedStyle === "function" ? getComputedStyle(document.documentElement) : null;
+    const size = parseFloat(root?.fontSize) || 14, width = Math.min(288, Math.max(200, ($("graph").clientWidth || 1000) - 40));
+    const viewportHeight = globalThis.innerHeight || document.documentElement.clientHeight || $("graph").clientHeight || 700;
+    return { size, width, key: JSON.stringify([size, width, viewportHeight, root?.fontFamily || "system-ui", fontEpoch]) };
+  }
+  function openedMap(graph = activeGraph) {
+    if (!mapOpenStates.has(graph)) mapOpenStates.set(graph, new Set()); return mapOpenStates.get(graph);
+  }
+  function mapScroll(graph = activeGraph) {
+    if (!mapScrollStates.has(graph)) mapScrollStates.set(graph, new Map()); return mapScrollStates.get(graph);
+  }
+  function mapContent(descriptor, expanded = false, toggle = () => {}, read = () => {}) {
+    const body = text("div", "", "map-card"), header = text("div", "", "map-card-header");
+    header.setAttribute("data-card-header", "");
+    const control = button(expanded ? "−" : "+", event => { event.stopPropagation(); toggle(); });
+    control.setAttribute("data-card-control", ""); control.setAttribute("aria-expanded", String(expanded));
+    control.setAttribute("aria-label", `${expanded ? "Collapse" : "Expand"} details: ${descriptor.title}`);
+    header.append(text("h3", descriptor.title, "map-card-title"), control);
+    const content = text("div", "", "map-card-body"); content.setAttribute("data-card-body", "");
+    content.append(text("p", descriptor.kind, "map-card-kind"));
+    content.append(text("p", descriptor.body ? shorten(descriptor.body, 420) : "Body not included in this export.", "map-card-excerpt"));
+    if (descriptor.conditions.length) content.append(text("p", descriptor.conditions.join(" · "), "map-card-conditions"));
+    if (descriptor.groups.length) content.append(text("p", descriptor.groups.slice(0, 2).map(group => `${group.type}: ${group.title}`).join(" · ")
+      + (descriptor.groups.length > 2 ? ` · +${descriptor.groups.length - 2} memberships in the reading card` : ""), "map-card-memberships"));
+    if (descriptor.source) content.append(text("p", descriptor.source, "map-card-source"));
+    content.append(text("p", descriptor.excerptNotice, "map-card-notice"));
+    const full = button("Read full record", event => { event.stopPropagation(); read(); }); full.setAttribute("data-card-control", ""); content.append(full);
+    hide(content, !expanded);
+    body.append(header, content); return body;
+  }
   const textWidth = (value, size) => {
     if (!measure) return Array.from(value).length * size;
     measure.font = `${size}px system-ui, sans-serif`; return measure.measureText(value).width;
   };
-  function nodeExtent(node) {
-    if (measuredExtents.has(node)) return measuredExtents.get(node);
-    // Match the SVG's actual system font and include both label rows, the
-    // selected circle, stroke and breathing room. No DOM text is executed.
-    const half = Math.max(27, textWidth(shorten(label(node), 23), 12) / 2, textWidth(`${node.kind} · pinned`, 10) / 2) + 18;
-    const extent = { left: half, right: half, top: 45, bottom: 85 };
-    measuredExtents.set(node, extent); return extent;
+  function nodeExtent(node, graph = activeGraph) {
+    const basis = metrics(), cached = measuredExtents.get(node), expanded = mapDisclosures.get(graph)?.get(node.nodeId) ?? openedMap(graph).has(node.nodeId);
+    const measurementKey = JSON.stringify([basis.key, expanded]);
+    if (cached?.key === measurementKey && cached.graph === graph) return cached.extent;
+    const descriptor = cardIndex(graph).describe(node);
+    const lines = (value, size) => Math.max(1, Math.ceil(textWidth(value, size) / Math.max(1, basis.width - 28)));
+    // The fallback is only an estimate when DOM layout is unavailable. Real
+    // browsers measure the same HTML/CSS used by visible foreignObject cards.
+    let collapsedHeight = 24 + basis.size * Math.min(2, lines(descriptor.title, basis.size)) * 1.4;
+    let height = expanded ? 30 + basis.size * (1.4 + Math.min(2, lines(descriptor.title, basis.size)) * 1.4
+      + Math.min(3, lines(shorten(descriptor.body, 420), basis.size)) * 1.45
+      + lines(descriptor.conditions.join(" · "), basis.size * .86) * 1.3
+      + (descriptor.groups.length ? lines(descriptor.groups.slice(0, 2).map(group => group.title).join(" · "), basis.size * .86) * 1.3 : 0) + 2.7) : collapsedHeight;
+    let measured = false;
+    if (document.body && typeof getComputedStyle === "function") {
+      const probe = mapContent(descriptor, expanded); probe.className += " map-measure"; probe.style.width = `${basis.width}px`;
+      document.body.append(probe);
+      try {
+        const value = probe.getBoundingClientRect().height;
+        if (Number.isFinite(value) && value > 0) {
+          height = value; measured = true;
+          if (expanded) { hide(probe.children[1], true); collapsedHeight = probe.getBoundingClientRect().height || collapsedHeight; }
+          else collapsedHeight = height;
+        }
+      }
+      finally { probe.remove(); }
+    }
+    // Keep the title/header at its previous vertical anchor when opening.
+    const extent = { left: basis.width / 2 + 2, right: basis.width / 2 + 2, top: collapsedHeight / 2 + 2, bottom: height - collapsedHeight / 2 + 2 };
+    measuredExtents.set(node, { key: measurementKey, graph, extent, actual: measured });
+    document.documentElement.dataset.explorerCardMeasures = String(Number(document.documentElement.dataset.explorerCardMeasures || 0) + 1);
+    return extent;
   }
-  function captionPlacement(point, extent, viewport) {
-    const [left, top, width, height] = viewport;
-    const half = Math.min(Math.max(extent.left, extent.right), Math.max(0, width / 2 - 12));
-    const center = Math.max(left + half + 12, Math.min(left + width - half - 12, point.x));
-    const baseline = Math.max(top + 12, Math.min(top + height - 24, point.y + 49));
-    return { x: center - point.x, y: baseline - point.y, maxWidth: Math.max(1, width - 24) };
-  }
-  const newModel = graph => explorerModel.create(graph, node => isCode(node) ? "code" : "context", nodeExtent);
+  const newModel = graph => {
+    const index = cardIndex(graph), result = explorerModel.create(graph, node => isCode(node) ? "code" : "context", node => nodeExtent(node, graph), (id, positions) => index.anchor(id, positions));
+    modelMetrics.set(result, metrics().key); return result;
+  };
   let model = newModel(activeGraph);
-  const kindName = value => value?.origin?.layer === "sessionWork" ? "Agent-authored work record"
-    : ({ ProjectDirection: "Caller-conveyed project direction", FileRevision: "Source file revision", SymbolRevision: "Source symbol revision",
-      File: "Source file", Symbol: "Source declaration", LodeSessionStateReference: "Logical Session record", HeadSessionStateReference: "Logical Session record",
-      Run: "Recorded execution Run", ResultPacket: "Recorded execution result", ReviewDecision: "Recorded review decision", ChangeSet: "Recorded source changes",
-      ProductModelRevision: "Recorded Product Model revision", Feature: "Product feature", Requirement: "Product requirement", Constraint: "Product constraint" })[value?.kind] || value?.kind || "Recorded relationship";
+  const kindName = explorerCards.kindName;
+  function reconcile(parent, desired, fallback = parent) {
+    const keep = new Set(desired), active = document.activeElement;
+    for (const child of [...parent.children]) if (!keep.has(child)) {
+      if (active && (active === child || child.contains?.(active))) { fallback.setAttribute("tabindex", "-1"); fallback.focus({ preventScroll: true }); }
+      child.remove();
+    }
+    desired.forEach((child, index) => { if (parent.children[index] !== child) parent.insertBefore(child, parent.children[index] || null); });
+  }
+  function savedReading(entry) {
+    const state = { paths: [], connectionPage: entry.connectionPage || 0, groupPages: entry.groupPages || [] };
+    const walk = (element, path) => {
+      if (element.tagName?.toLowerCase() === "details" || element.scrollTop || element.scrollLeft)
+        state.paths.push({ path, tag: element.tagName, open: element.open, top: element.scrollTop || 0, left: element.scrollLeft || 0 });
+      [...element.children].forEach((child, index) => walk(child, [...path, index]));
+    }; walk(entry.card, []); return state;
+  }
+  function restoreReading(entry, state) {
+    if (!state) return;
+    entry.connectionPage = state.connectionPage; entry.groupPages = state.groupPages || []; entry.refreshConnections();
+    for (const item of state.paths) if (item.open !== undefined) {
+      const element = item.path.reduce((parent, index) => parent?.children[index], entry.card);
+      if (element?.tagName === item.tag) element.open = item.open;
+    }
+    entry.refreshGroups?.();
+    for (const item of state.paths) {
+      const element = item.path.reduce((parent, index) => parent?.children[index], entry.card);
+      if (!element || element.tagName !== item.tag) continue;
+      if (item.open !== undefined) element.open = item.open; element.scrollTop = item.top; element.scrollLeft = item.left;
+    }
+  }
+  function geometryChanged() {
+    const basis = metrics().key;
+    if (busy || jobKind || drag || mapMode === "overview" || metricFrame !== null || suppressedMetrics.get(model) === basis || modelMetrics.get(model) === basis) return;
+    metricFrame = requestAnimationFrame(() => { metricFrame = null; if (!busy && !jobKind && !drag && mapMode !== "overview") resizeCards().catch(calculationFailed); });
+  }
+  const deferredInitial = () => Boolean(document.body && typeof getComputedStyle === "function");
+  function startNeighborhood(node, reset = false) {
+    const options = { placeNeighbors: !deferredInitial() };
+    if (reset) model.reset(node.nodeId, options); else model.visit(node.nodeId, true, options);
+    // A readable starting view, not an inventory/neighbor cap. The remaining
+    // direct neighborhood is measured/placed below with yielding and cancel.
+    if (deferredInitial()) for (const id of model.neighbors(node.nodeId).filter(id => inEvidenceScope(model.nodes.get(id))).slice(0, 2)) model.place(id);
+    modelMetrics.set(model, metrics().key);
+  }
+  async function prepareNeighborhood() {
+    const target = model, basis = metrics().key, ids = [...model.visible].filter(id => !model.positions.has(id) && inEvidenceScope(model.nodes.get(id)));
+    if (!ids.length) return;
+    cancelWork(false); const serial = ++jobSerial; jobKind = "initial"; $("cancel-work").disabled = false;
+    $("operation-status").textContent = `Preparing ${ids.length} direct-neighbor card positions. All metadata, reading and explicit exploration remain available; preparation can be cancelled.`;
+    // Initial preparation is not a busy gate. A user operation can supersede it.
+    await yieldWork();
+    if (serial !== jobSerial || target !== model) return;
+    const applied = await target.placeBatch(ids, { cancelled: () => serial !== jobSerial || target !== model || metrics().key !== basis, yieldWork });
+    if (serial !== jobSerial || target !== model) return;
+    jobKind = null; $("cancel-work").disabled = true;
+    $("operation-status").textContent = applied ? "Direct-neighbor positions prepared; earlier cards, camera and reading state retained."
+      : "Direct-neighbor preparation superseded; only committed positions shown. Unplaced records remain searchable and readable; Focus or Explored map can place them.";
+    render();
+  }
+  async function resizeCards() {
+    const target = model, basis = metrics().key;
+    if (modelMetrics.get(target) === basis) return;
+    const ids = [...target.positions.keys()];
+    cancelWork(false); const serial = ++jobSerial; busy = true; jobKind = "geometry"; $("cancel-work").disabled = false;
+    $("operation-status").textContent = "Measuring changed card sizes; existing positions retained until the adjustment completes…";
+    const applied = await target.remeasure(ids, { cancelled: () => serial !== jobSerial || target !== model || metrics().key !== basis, yieldWork });
+    if (!applied) {
+      if (serial === jobSerial && target === model) {
+        busy = false; jobKind = null; $("cancel-work").disabled = true;
+        $("operation-status").textContent = "Card size calculation superseded; previous committed layout retained."; geometryChanged();
+      }
+      return;
+    }
+    if (serial !== jobSerial || target !== model) return;
+    modelMetrics.set(target, basis); busy = false; jobKind = null; $("cancel-work").disabled = true;
+    $("operation-status").textContent = "Changed card sizes applied; pins, unaffected coordinates, camera and reading state retained."; render();
+  }
   function recordKey(value) {
     if (value.nodeId) return `node:${value.nodeId}`;
     if (!edgeKeys.has(value)) edgeKeys.set(value, `edge:${value.edgeId || activeGraph.edges.indexOf(value)}`);
@@ -73,16 +211,40 @@
   function selectionValues() { return [...model.chosen].map(id => model.nodes.get(id)).concat([...chosenEdges]); }
   function filterState() { return Object.fromEntries(filterIds.map(id => [id, $(id).type === "checkbox" || ["include-history", "hide-nonmatches"].includes(id) ? $(id).checked : $(id).value])); }
   function restoreFilters(state) { for (const id of filterIds) { if (typeof state[id] === "boolean") $(id).checked = state[id]; else $(id).value = state[id]; } scopeCache = null; }
-  function viewState(title) { return { title, model: model.capture(), selected, chosenEdges: [...chosenEdges], box: [...box], mapMode, filters: filterState(), connectionResult, connectionKey, operationStatus: $("operation-status").textContent }; }
+  function viewState(title) { return { title, model: model.capture(), selected, chosenEdges: [...chosenEdges], box: [...box], mapMode, cardPage, filters: filterState(), connectionResult, connectionKey, operationStatus: $("operation-status").textContent }; }
   function remember(title) { viewHistory.splice(viewCursor + 1); viewHistory.push(viewState(title)); viewCursor = viewHistory.length - 1; renderTrail(); }
   function travelView(index) {
     const state = viewHistory[index]; if (!state) return;
     cancelWork(false); viewCursor = index; model.restore(state.model); selected = state.selected; chosenEdges = new Set(state.chosenEdges); edgeVersion++;
     box = [...state.box]; mapMode = state.mapMode; restoreFilters(state.filters); connectionResult = state.connectionResult; connectionKey = state.connectionKey;
     $("operation-status").textContent = state.operationStatus;
-    cardsCache = comparisonsCache = null; render();
+    cardPage = state.cardPage || 0; comparisonsCache = null; render();
   }
-  function cancelWork(announce = true) { jobSerial++; if (busy && announce) $("operation-status").textContent = "Cancelled calculation; previous committed view and selection retained."; busy = false; jobKind = null; $("cancel-work").disabled = true; }
+  function cancelWork(announce = true, keepDisclosures = false) {
+    if (!keepDisclosures) mapDisclosures.get(activeGraph)?.clear();
+    if (jobKind === "geometry" && announce) suppressedMetrics.set(model, metrics().key);
+    jobSerial++; if (announce && (busy || jobKind)) $("operation-status").textContent = jobKind === "initial"
+      ? "Cancelled neighbor preparation; previous committed positions retained. Unplaced neighbors remain searchable/readable, not a completed layout."
+      : "Cancelled calculation; previous committed view and selection retained."; busy = false; jobKind = null; $("cancel-work").disabled = true;
+  }
+  async function toggleMapCard(node) {
+    const target = model, graph = activeGraph, basis = metrics().key;
+    if (target.nodes.get(node.nodeId) !== node) return;
+    if (!mapDisclosures.has(graph)) mapDisclosures.set(graph, new Map());
+    const pending = mapDisclosures.get(graph), desired = !(pending.get(node.nodeId) ?? openedMap(graph).has(node.nodeId));
+    cancelWork(false, true); pending.set(node.nodeId, desired);
+    const changes = new Map(pending), serial = ++jobSerial; jobKind = "disclosure"; $("cancel-work").disabled = false;
+    $("operation-status").textContent = "Preparing card details; other cards, pins and camera stay in place…";
+    const applied = await target.remeasure(changes.keys(), { yieldWork, yieldBeforeCommit: true,
+      area: { left: box[0] + 8, top: box[1] + 8, right: box[0] + box[2] - 8, bottom: box[1] + box[3] - 8 },
+      cancelled: () => serial !== jobSerial || target !== model || metrics().key !== basis,
+      onCommit: () => { for (const [id, open] of changes) { if (open) openedMap(graph).add(id); else openedMap(graph).delete(id); } } });
+    if (serial !== jobSerial || target !== model) return;
+    pending.clear(); jobKind = null; $("cancel-work").disabled = true;
+    $("operation-status").textContent = applied ? "Card details updated; other coordinates, pins, camera and independent reading state retained."
+      : "Card detail change cancelled/superseded; previous committed display retained.";
+    render();
+  }
   function operationKey() { const filters = filterState(); if (!filters["hide-nonmatches"]) filters.search = "";
     return JSON.stringify([[...model.chosen], [...chosenEdges].map(recordKey), filters]); }
   const historical = node => node.currentTraversalEligible === false || node.snapshotState === "historical" || node.historical === true
@@ -108,7 +270,7 @@
       execution: /Run|Result|Execution|Worker/ })[$("kind-filter").value]?.test(node.kind || "");
   }
   function setBox() { $("graph").setAttribute("viewBox", box.join(" ")); }
-  function focusCamera() {
+  function focusCamera(initial = false) {
     let point = model.positions.get(selected?.kind === "node" ? selected.value.nodeId : model.current);
     if (selected?.kind === "edge") {
       for (const id of [selected.value.from, selected.value.to]) model.reveal(id);
@@ -118,6 +280,16 @@
     if (!point) return;
     hide($("graph"), false);
     const width = $("graph").clientWidth || 1000, height = $("graph").clientHeight || 700;
+    if (initial && selected?.kind === "node") {
+      let bounds = explorerCards.bounds(point, model.extent(selected.value.nodeId)), included = 1;
+      for (const id of model.neighbors(selected.value.nodeId)) {
+        if (included >= 3 || !inEvidenceScope(model.nodes.get(id))) continue;
+        const at = model.positions.get(id); if (!at) continue;
+        const other = explorerCards.bounds(at, model.extent(id)), next = { left: Math.min(bounds.left, other.left), right: Math.max(bounds.right, other.right), top: Math.min(bounds.top, other.top), bottom: Math.max(bounds.bottom, other.bottom) };
+        if (next.right - next.left <= width - 24 && next.bottom - next.top <= height - 24) { bounds = next; included++; }
+      }
+      point = { x: (bounds.left + bounds.right) / 2, y: (bounds.top + bounds.bottom) / 2 };
+    }
     box = [point.x - width / 2, point.y - height / 2, width, height]; setBox();
   }
   function redrawCamera() {
@@ -126,7 +298,7 @@
   }
   function fit() {
     const points = [...model.positions].filter(([id]) => inEvidenceScope(model.nodes.get(id)) && model.visible.has(id))
-      .map(([id, point]) => ({ point, extent: nodeExtent(model.nodes.get(id)) }));
+      .map(([id, point]) => ({ point, extent: model.extent(id) }));
     if (!points.length) box = [0, 0, 1000, 700];
     else {
       let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
@@ -205,7 +377,10 @@
   }
   function accessibleActivate(el, action) {
     el.addEventListener("click", event => { if (!suppressClick) action(event.detail === 0, event); });
-    el.addEventListener("keydown", event => { if (["Enter", " "].includes(event.key)) { event.preventDefault(); action(true, event); } });
+    el.addEventListener("keydown", event => {
+      if (event.target !== el && (event.target.closest?.("[data-card-control]") || event.target.closest?.("[data-card-body]"))) return;
+      if (["Enter", " "].includes(event.key)) { event.preventDefault(); action(true, event); }
+    });
   }
   function renderList(found) {
     $("records").replaceChildren();
@@ -248,6 +423,8 @@
     $("restart").disabled = !model.current;
   }
   function renderGraph(found) {
+    if (!mapCaches.has(activeGraph)) mapCaches.set(activeGraph, { nodes: new Map(), edges: new Map(), groups: new Map() });
+    const cache = mapCaches.get(activeGraph), children = [], viewport = { left: box[0], top: box[1], right: box[0] + box[2], bottom: box[1] + box[3] };
     const focus = selected?.kind === "node" ? selected.value.nodeId : null, neighborhood = new Set(focus ? [focus, ...model.neighbors(focus)] : []);
     const intended = model.visible;
     // Search narrows the record list/overview, not the selected journey. Explicit
@@ -256,71 +433,102 @@
     const canvas = $("graph"), shown = scope.filter(node => {
       if (!intended.has(node.nodeId)) return false;
       const p = model.positions.get(node.nodeId); if (!p) return false;
-      const e = nodeExtent(node);
-      return p.x + e.right >= box[0] && p.x - e.left <= box[0] + box[2] && p.y + e.bottom >= box[1] && p.y - e.top <= box[1] + box[3];
+      return explorerCards.intersects(explorerCards.bounds(p, model.extent(node.nodeId)), viewport);
     }), shownIds = new Set(shown.map(node => node.nodeId)); drawnNodeIds = shownIds;
     const selectedEdges = [...new Set(shown.flatMap(node => model.links(node.nodeId)))].filter(edge => shownIds.has(edge.from) && shownIds.has(edge.to)
-      && edgeInScope(edge));
-    canvas.replaceChildren();
+      && model.positions.has(edge.from) && model.positions.has(edge.to) && edgeInScope(edge));
     const origin = model.positions.get(model.current);
     if (origin) {
-      const guides = svg("g", { class: "axis-guides", "aria-hidden": "true", "pointer-events": "none" });
-      guides.append(svg("line", { x1: origin.x - 1400, y1: origin.y, x2: origin.x + 1400, y2: origin.y }));
-      if ($("layer").value !== "code") guides.append(svg("line", { x1: origin.x, y1: origin.y - 1200, x2: origin.x, y2: origin.y + 1200 }));
-      canvas.append(guides);
+      if (!cache.guides) { cache.guides = svg("g", { class: "axis-guides", "aria-hidden": "true", "pointer-events": "none" }); cache.guides.append(svg("line", {}), svg("line", {})); }
+      for (const [name, value] of Object.entries({ x1: origin.x - 1400, y1: origin.y, x2: origin.x + 1400, y2: origin.y })) cache.guides.children[0].setAttribute(name, value);
+      for (const [name, value] of Object.entries({ x1: origin.x, y1: origin.y - 1200, x2: origin.x, y2: origin.y + 1200, opacity: $("layer").value === "code" ? 0 : 1 })) cache.guides.children[1].setAttribute(name, value);
+      children.push(cache.guides);
     }
-    const defs = svg("defs", {}), marker = svg("marker", { id: "edge-arrow", viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 5, markerHeight: 5, orient: "auto" });
-    marker.append(svg("path", { d: "M 0 0 L 10 5 L 0 10 z", fill: "#8ca6c9" })); defs.append(marker); canvas.append(defs);
+    if (!cache.defs) { cache.defs = svg("defs", {}); const marker = svg("marker", { id: "edge-arrow", viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 5, markerHeight: 5, orient: "auto" });
+      marker.append(svg("path", { d: "M 0 0 L 10 5 L 0 10 z", fill: "#8ca6c9" })); cache.defs.append(marker); }
+    children.push(cache.defs);
+    const index = cardIndex(), rectangles = new Map(shown.map(node => [node.nodeId, explorerCards.bounds(model.positions.get(node.nodeId), model.extent(node.nodeId))]));
+    const visibleGroups = new Set();
+    const detailedGroups = new Set();
+    for (const id of shownIds) if (openedMap().has(id)) for (const key of index.memberships.get(id) || []) detailedGroups.add(key);
+    const groupIndex = new Map([...detailedGroups].map(key => [key, index.groups.get(key)]));
+    for (const group of explorerCards.groupGeometry(groupIndex, index.memberships, rectangles)) {
+      visibleGroups.add(group.key);
+      if (!cache.groups.has(group.key)) { const element = svg("g", { class: "record-group", "pointer-events": "none" }); element.append(svg("rect", {}), svg("text", { class: "group-caption" })); cache.groups.set(group.key, element); }
+      const element = cache.groups.get(group.key), [background, caption] = element.children;
+      for (const [name, value] of Object.entries({ x: group.box.left, y: group.box.top, width: group.box.right - group.box.left, height: group.box.bottom - group.box.top, rx: 16, opacity: group.enclosure ? 1 : 0 })) background.setAttribute(name, value);
+      caption.setAttribute("x", group.box.left + 8); caption.setAttribute("y", group.box.top + 19);
+      caption.textContent = displayText(`${shorten(group.title, 48)} · ${group.shown} shown / ${group.exported} exported${group.enclosure ? "" : " · membership list, not an enclosure"}`);
+      children.push(element);
+    }
     const edgeGroups = new Map();
     for (const edge of selectedEdges) { const pair = JSON.stringify([edge.from, edge.to].sort()); if (!edgeGroups.has(pair)) edgeGroups.set(pair, []); edgeGroups.get(pair).push(edge); }
+    const visibleEdges = new Set();
     for (const edge of selectedEdges) {
-      if (!shownIds.has(edge.from) || !shownIds.has(edge.to)) continue;
-      const a = model.positions.get(edge.from), b = model.positions.get(edge.to), distance = Math.hypot(b.x - a.x, b.y - a.y) || 1;
-      const ux = (b.x - a.x) / distance, uy = (b.y - a.y) / distance;
+      const a = model.positions.get(edge.from), b = model.positions.get(edge.to);
       const isSelected = chosenEdges.has(edge), incident = focus && (edge.from === focus || edge.to === focus);
       const joined = model.chosen.has(edge.from) && model.chosen.has(edge.to), path = connectionResult?.edges.has(edge);
-      const group = svg("g", { class: `connection${isSelected || incident || joined || path ? " highlighted" : ""}${path ? " selected-path" : ""}` });
       const siblings = edgeGroups.get(JSON.stringify([edge.from, edge.to].sort())), offset = (siblings.indexOf(edge) - (siblings.length - 1) / 2) * 48 * (edge.from <= edge.to ? 1 : -1);
-      const cx = (a.x + b.x) / 2 - uy * offset, cy = (a.y + b.y) / 2 + ux * offset;
-      const shape = edge.from === edge.to ? `M ${a.x - 17} ${a.y - 18} C ${a.x - 90} ${a.y - 100 - offset} ${a.x + 90} ${a.y - 100 - offset} ${a.x + 17} ${a.y - 27}`
-        : `M ${a.x + ux * 25} ${a.y + uy * 25} Q ${cx} ${cy} ${b.x - ux * 32} ${b.y - uy * 32}`;
-      const attributes = { d: shape, fill: "none" };
-      const hit = svg("path", { ...attributes, class: "edge-hit", tabindex: 0, role: "button", "aria-label": `${relation(edge)}: ${label(model.nodes.get(edge.from))} to ${label(model.nodes.get(edge.to))}`, "data-edge": edge.edgeId || `${edge.from}:${edge.to}` });
-      accessibleActivate(hit, (keyboard, event) => selectEdge(edge, keyboard, event));
-      const line = svg("path", { ...attributes, "marker-end": "url(#edge-arrow)", class: "edge", "pointer-events": "none" });
-      const caption = svg("text", { x: cx, y: edge.from === edge.to ? a.y - 85 - offset : cy - 9, "text-anchor": "middle", class: "edge-label", "pointer-events": "none" }); caption.textContent = relation(edge);
-      const title = svg("title", {}); title.textContent = relation(edge); group.append(title, hit, line, caption); canvas.append(group);
+      const geometry = explorerCards.edgeGeometry(a, b, model.extent(edge.from), model.extent(edge.to), offset);
+      if (!explorerCards.intersects(geometry.bounds, viewport)) continue;
+      visibleEdges.add(edge);
+      if (!cache.edges.has(edge)) {
+        const group = svg("g", {}), title = svg("title", {}), hit = svg("path", { fill: "none", class: "edge-hit", tabindex: 0, role: "button", "data-edge": edge.edgeId || `${edge.from}:${edge.to}` });
+        accessibleActivate(hit, (keyboard, event) => selectEdge(edge, keyboard, event));
+        const line = svg("path", { fill: "none", "marker-end": "url(#edge-arrow)", class: "edge", "pointer-events": "none" });
+        const caption = svg("text", { "text-anchor": "middle", class: "edge-label", "pointer-events": "none" });
+        title.textContent = relation(edge); caption.textContent = relation(edge); group.append(title, hit, line, caption); cache.edges.set(edge, group);
+      }
+      const group = cache.edges.get(edge); group.setAttribute("class", `connection${isSelected || incident || joined || path ? " highlighted" : ""}${path ? " selected-path" : ""}`);
+      group.children[1].setAttribute("aria-label", `${relation(edge)}: ${label(model.nodes.get(edge.from))} to ${label(model.nodes.get(edge.to))}`);
+      for (const line of [group.children[1], group.children[2]]) line.setAttribute("d", geometry.path);
+      group.children[3].setAttribute("x", geometry.caption.x); group.children[3].setAttribute("y", geometry.caption.y); children.push(group);
     }
     for (const node of shown) {
       const p = model.positions.get(node.nodeId), focused = focus === node.nodeId, pinned = model.pinned.has(node.nodeId);
-      const group = svg("g", { transform: `translate(${p.x},${p.y})`, class: `node${isCode(node) ? " code" : " context"}${model.chosen.has(node.nodeId) ? " selected" : ""}${connectionResult?.nodes.has(node.nodeId) ? " selected-path" : ""}${$("search").value && foundIds.has(node.nodeId) ? " search-match" : ""}`,
-        tabindex: 0, role: "button", "aria-label": `${node.kind}: ${label(node)}${pinned ? ". Position pinned on this screen" : ""}`, "data-node": node.nodeId });
-      group.append(svg("circle", { r: focused ? 27 : 22 }));
-      group.setAttribute("aria-pressed", String(model.chosen.has(node.nodeId)));
-      const glyph = svg("text", { y: 4, "text-anchor": "middle", class: "glyph" }); glyph.textContent = model.chosen.has(node.nodeId) ? "✓" : String(node.kind || "?").slice(0, 1);
-      // Move captions only, never pin/layout/selection coordinates. A leader
-      // retains their association when camera edges require an offset.
-      const placement = captionPlacement(p, nodeExtent(node), box);
-      const caption = svg("text", { x: placement.x, y: placement.y, "text-anchor": "middle", class: "node-label" }); caption.textContent = shorten(label(node), 23);
-      const kind = svg("text", { x: placement.x, y: placement.y + 17, "text-anchor": "middle", class: "kind" }); kind.textContent = displayText(`${node.kind}${pinned ? " · pinned" : ""}`);
-      for (const [element, size] of [[caption, 12], [kind, 10]]) if (textWidth(element.textContent, size) > placement.maxWidth) {
-        element.setAttribute("textLength", placement.maxWidth); element.setAttribute("lengthAdjust", "spacingAndGlyphs");
+      const descriptor = index.describe(node), extent = model.extent(node.nodeId), width = extent.left + extent.right - 4, height = extent.top + extent.bottom - 4;
+      if (!cache.nodes.has(node.nodeId)) {
+        const group = svg("g", { tabindex: 0, role: "group", "data-node": node.nodeId }), rectangle = svg("rect", { rx: 12, class: "card-frame" }), content = svg("foreignObject", { class: "card-content" }), title = svg("title", {});
+        const graph = activeGraph, body = mapContent(descriptor, openedMap(graph).has(node.nodeId),
+          () => { toggleMapCard(node).catch(calculationFailed); },
+          () => { if (activeGraph !== graph) return; selectNode(node); const card = cardsCache?.entries.get(recordKey(node))?.card; if (card) { card.open = true; card.scrollIntoView({ block: "nearest" }); card.children[0].focus(); } });
+        body.children[1].addEventListener("scroll", () => { if (openedMap(graph).has(node.nodeId)) mapScroll(graph).set(node.nodeId, { top: body.children[1].scrollTop || 0, left: body.children[1].scrollLeft || 0 }); });
+        title.textContent = label(node); content.append(body); group.append(rectangle, content, title);
+        accessibleActivate(group, (keyboard, event) => { if (!event.target.closest?.("[data-card-body]") && !event.target.closest?.("[data-card-control]")) selectNode(node, keyboard, event); });
+        group.addEventListener("keydown", event => {
+          const delta = { ArrowLeft: [-20, 0], ArrowRight: [20, 0], ArrowUp: [0, -20], ArrowDown: [0, 20] }[event.key];
+          if (!event.shiftKey || !delta || event.target.closest?.("[data-card-control]")) return; event.preventDefault(); if (jobKind === "geometry" || jobKind === "disclosure") cancelWork(); const at = model.positions.get(node.nodeId); model.move(node.nodeId, at.x + delta[0], at.y + delta[1]); renderGraph(visibleMatches); group.focus();
+        }); cache.nodes.set(node.nodeId, group);
       }
-      if (placement.x || placement.y !== 49) group.append(svg("line", { x1: 0, y1: 25, x2: placement.x, y2: placement.y - 12, class: "caption-guide", "pointer-events": "none" }));
-      const title = svg("title", {}); title.textContent = label(node); group.append(glyph, caption, kind, title);
-      accessibleActivate(group, (keyboard, event) => selectNode(node, keyboard, event));
-      group.addEventListener("keydown", event => {
-        const delta = { ArrowLeft: [-20, 0], ArrowRight: [20, 0], ArrowUp: [0, -20], ArrowDown: [0, 20] }[event.key];
-        if (!event.shiftKey || !delta) return; event.preventDefault(); const at = model.positions.get(node.nodeId); model.move(node.nodeId, at.x + delta[0], at.y + delta[1]); renderGraph(visibleMatches);
-        const replacement = [...canvas.querySelectorAll("[data-node]")].find(el => el.getAttribute("data-node") === node.nodeId); replacement?.focus();
-      }); canvas.append(group);
+      const group = cache.nodes.get(node.nodeId);
+      const expanded = openedMap().has(node.nodeId), mapBody = group.children[1].children[0], disclosure = mapBody.children[0].children[1];
+      if (group.dataset.expanded === "true" && !expanded) mapScroll().set(node.nodeId, { top: mapBody.children[1].scrollTop || 0, left: mapBody.children[1].scrollLeft || 0 });
+      hide(mapBody.children[1], !expanded); disclosure.textContent = expanded ? "−" : "+";
+      if (expanded && group.dataset.expanded !== "true") { const state = mapScroll().get(node.nodeId); if (state) { mapBody.children[1].scrollTop = state.top; mapBody.children[1].scrollLeft = state.left; } }
+      group.dataset.expanded = String(expanded);
+      disclosure.setAttribute("aria-expanded", String(expanded)); disclosure.setAttribute("aria-label", `${expanded ? "Collapse" : "Expand"} details: ${descriptor.title}`);
+      group.setAttribute("transform", `translate(${p.x},${p.y})`);
+      group.setAttribute("class", `node${isCode(node) ? " code" : " context"}${model.chosen.has(node.nodeId) ? " selected" : ""}${connectionResult?.nodes.has(node.nodeId) ? " selected-path" : ""}${$("search").value && foundIds.has(node.nodeId) ? " search-match" : ""}`);
+      group.setAttribute("aria-label", `${model.chosen.has(node.nodeId) ? "Selected: " : ""}${descriptor.title}${expanded ? `. ${descriptor.kind}. ${descriptor.conditions.join(". ")}` : ". Details collapsed"}${pinned ? ". Position pinned on this screen" : ""}`);
+      group.dataset.pinned = String(pinned); group.dataset.focused = String(focused);
+      for (const element of [group.children[0], group.children[1]]) for (const [name, value] of Object.entries({ x: -extent.left + 2, y: -extent.top + 2, width, height })) element.setAttribute(name, value);
+      children.push(group);
     }
-    if (!shown.length) { const empty = svg("text", { x: 60, y: 90, class: "empty" }); empty.textContent = selected?.kind === "node" && !inEvidenceScope(selected.value)
+    if (!shown.length) { if (!cache.empty) cache.empty = svg("text", { x: 60, y: 90, class: "empty" }); cache.empty.textContent = selected?.kind === "node" && !inEvidenceScope(selected.value)
       ? "Selected record is outside the current evidence scope. Change scope or choose a result; it has not been removed."
-      : scope.length ? "Selected context is off-screen. Use Focus selection or pan." : "Choose a starting record from the list. Empty coverage does not prove absence."; canvas.append(empty); }
+      : scope.length ? "Selected context is off-screen. Use Focus selection or pan." : "Choose a starting record from the list. Empty coverage does not prove absence."; children.push(cache.empty); }
+    for (const [id, group] of cache.nodes) if (!shownIds.has(id) && openedMap().has(id)) {
+      const body = group.children[1].children[0].children[1]; mapScroll().set(id, { top: body.scrollTop || 0, left: body.scrollLeft || 0 });
+    }
+    reconcile(canvas, children, canvas);
+    for (const id of cache.nodes.keys()) if (!shownIds.has(id)) cache.nodes.delete(id);
+    for (const edge of cache.edges.keys()) if (!visibleEdges.has(edge)) cache.edges.delete(edge);
+    for (const key of cache.groups.keys()) if (!visibleGroups.has(key)) cache.groups.delete(key);
     const hidden = [...intended].filter(id => !scopeIds.has(id)).length, offscreen = scope.length - shown.length;
-    $("status").textContent = `${mapMode === "focus" ? "Selected & direct connections" : "Explored map"}: ${shown.length} on screen, ${offscreen} off-screen, ${hidden} unavailable/outside evidence scope / ${activeGraph.nodes.length} exported. Search narrows the list and overview; eligible selected context stays visible.${selected?.kind === "node" && !inEvidenceScope(selected.value) ? " Selected record is outside the current evidence scope; it has not been removed." : ""}${activeGraph.reasonCode ? ` ${activeGraph.reasonCode}` : ""}`;
+    const unplaced = scope.filter(node => !model.positions.has(node.nodeId)).length;
+    $("status").textContent = `${mapMode === "focus" ? "Selected & direct connections" : "Explored map"}: ${shown.length} on screen, ${offscreen - unplaced} off-screen, ${unplaced} positions not prepared, ${hidden} unavailable/outside evidence scope / ${activeGraph.nodes.length} exported. Search narrows the list and overview; eligible selected context stays visible.${selected?.kind === "node" && !inEvidenceScope(selected.value) ? " Selected record is outside the current evidence scope; it has not been removed." : ""}${activeGraph.reasonCode ? ` ${activeGraph.reasonCode}` : ""}`;
     setBox();
+    if (deferredInitial()) geometryChanged();
   }
   function renderSelectionCards() {
     const values = selectionValues(), focusedKey = selected ? recordKey(selected.value) : null;
@@ -333,21 +541,21 @@
     $("cards-prev").disabled = cardPage === 0; $("cards-next").disabled = (cardPage + 1) * PAGE_SIZE >= values.length;
     const same = cardsCache?.model === model && cardsCache.version === model.selectionVersion && cardsCache.edgeVersion === edgeVersion && cardsCache.page === cardPage;
     if (!same) {
-      const body = $("selection-cards"); body.replaceChildren();
-      const entries = new Map();
+      const body = $("selection-cards"), previous = cardsCache;
+      if (!readingStates.has(activeGraph)) readingStates.set(activeGraph, new Map());
+      const states = readingStates.get(activeGraph), entries = new Map(), children = [], index = cardIndex();
       for (const value of values.slice(cardPage * PAGE_SIZE, (cardPage + 1) * PAGE_SIZE)) {
-        const node = Boolean(value.nodeId), card = text("article", "", "selection-card"), identity = recordKey(value);
-        card.setAttribute("data-record", identity); card.append(text("h3", node ? label(value) : relation(value)));
-        card.append(text("p", `${kindName(value)} · ${value.kind || value.type || "relationship"}`, "record-kind"));
-        const conditions = [value.freshness, value.reviewState, value.status, value.state,
-          historical(value) ? "historical / non-current" : null, value.contentPartial || value.workContentCoverage?.partial || value.directionContentCoverage?.partial ? "partial excerpt" : null,
+        const identity = recordKey(value), scopeIdentity = index.identity(value), retained = previous?.model === model && previous.entries.get(identity);
+        if (retained && retained.value === value && retained.scopeIdentity === scopeIdentity) { entries.set(identity, retained); children.push(retained.card); continue; }
+        const descriptor = index.describe(value), node = Boolean(value.nodeId), entryModel = model, card = text("details", "", "selection-card");
+        card.setAttribute("data-record", identity); card.append(text("summary", node ? label(value) : relation(value)));
+        card.append(text("p", `${descriptor.kind} · ${value.kind || value.type || "relationship"}`, "record-kind"));
+        const conditions = [...descriptor.conditions,
           node && !inDisplayScope(value) || !node && !edgeInScope(value) ? "outside evidence scope — selection retained" : null].filter(item => typeof item === "string" && item);
         const conditionsElement = text("p", conditions.join(" · "), "card-conditions"); card.append(conditionsElement);
-        if (value.origin?.layer === "sessionWork") card.append(text("p", "Agent-authored work; not a captured user utterance.", "hint"));
-        if (value.kind === "ProjectDirection") card.append(text("p", "Caller-conveyed direction; not automatic transcript capture.", "hint"));
-        card.append(text("p", value.workContent?.summary || value.description || value.summary || value.directionEvidence?.goal || value.rationale || value.outcome || value.statement || value.path || (node ? "No summary included." : `${label(model.nodes.get(value.from))} → ${label(model.nodes.get(value.to))}`)));
-        for (const [heading, facts] of [["Recorded judgments", value.workContent?.judgments], ["Pending", value.workContent?.pending], ["Unknown", value.workContent?.unknowns || value.unknowns],
-          ["Constraints", value.directionEvidence?.constraints], ["Cancelled actions", value.directionEvidence?.cancelledActions]]) if (Array.isArray(facts) && facts.length) {
+        for (const note of descriptor.notes) card.append(text("p", note, "hint"));
+        card.append(text("p", descriptor.body || (node ? "Body not included in this export." : `${label(model.nodes.get(value.from))} → ${label(model.nodes.get(value.to))}`)));
+        for (const [heading, facts] of descriptor.facts) {
           card.append(text("strong", heading)); const list = text("ul", "", "record-facts");
           for (const fact of facts) {
             const row = text("li", typeof fact === "string" ? fact : fact.assessment || "Recorded judgment");
@@ -362,31 +570,66 @@
             if (node) selectNode(value, false, { only: true });
             else { model.clearSelection(); chosenEdges = new Set([value]); edgeVersion++; selected = { kind: "edge", value }; cancelWork(); remember("Select one relationship"); render(); }
           }), button("Remove", () => node ? selectNode(value, false, { toggle: true }) : selectEdge(value, false, { ctrlKey: true })));
+        if (node && (activeGraph.contextLineage?.files || []).some(file => fileMatches(value, file))) actions.append(button("Recorded code context", () => {
+          selectNode(value); $("context-lineage").open = true;
+          const at = comparisonFiles.findIndex(section => section.dataset.sourcePath === (value.path || value.sourceReference?.path));
+          if (at >= 0) { fileCursor = at; comparisonFiles[at].scrollIntoView({ block: "nearest" }); comparisonFiles[at].focus(); comparisonPosition(); }
+          else $("context-lineage").scrollIntoView({ block: "nearest" });
+        }));
         card.append(actions);
         const links = node ? model.links(value.nodeId) : [value];
         const connections = text("details", ""); connections.append(text("summary", `${links.length} actual relationships (direction and type)`));
-        const rows = text("ul", ""), pages = text("nav", "", "list-pages"); let page = 0;
+        const rows = text("ul", ""), pages = text("nav", "", "list-pages"), range = text("span", ""); let page = 0;
+        const previousPage = button("Previous", () => { page--; listConnections(); }), nextPage = button("Next", () => { page++; listConnections(); });
+        pages.append(range, previousPage, nextPage);
         const listConnections = () => {
-          rows.replaceChildren();
+          const children = [];
           for (const edge of links.slice(page * 20, (page + 1) * 20)) {
-            const from = model.nodes.get(edge.from), to = model.nodes.get(edge.to), row = text("li", "");
+            const from = entryModel.nodes.get(edge.from), to = entryModel.nodes.get(edge.to), row = text("li", "");
             row.append(text("p", `${from ? label(from) : "Endpoint not exported"} → ${to ? label(to) : "Endpoint not exported"} · ${relation(edge)}${edgeInScope(edge) ? "" : " · outside current relationship scope"}`));
-            row.append(button("Read relationship", () => selectEdge(edge))); rows.append(row);
+            row.append(button("Read relationship", () => selectEdge(edge))); children.push(row);
           }
-          pages.replaceChildren(text("span", `${page * 20 + (links.length ? 1 : 0)}–${Math.min(links.length, (page + 1) * 20)} / ${links.length}`));
-          const previous = button("Previous", () => { page--; listConnections(); }), next = button("Next", () => { page++; listConnections(); });
-          previous.disabled = page === 0; next.disabled = (page + 1) * 20 >= links.length; pages.append(previous, next);
+          reconcile(rows, children, connections.children[0]);
+          range.textContent = `${page * 20 + (links.length ? 1 : 0)}–${Math.min(links.length, (page + 1) * 20)} / ${links.length}`;
+          previousPage.disabled = page === 0; nextPage.disabled = (page + 1) * 20 >= links.length;
         }; listConnections(); connections.append(rows, pages); card.append(connections);
+        const groupReaders = [];
+        for (const membership of descriptor.groups) {
+          const section = text("details", "", "record-membership"), rows = text("ul", ""), pages = text("nav", "", "list-pages"), range = text("span", ""); let page = 0;
+          section.append(text("summary", `${membership.type}: ${membership.title} · ${membership.members.size} exported members including root`));
+          const members = [...membership.members];
+          const update = () => {
+            if (!section.open) return;
+            const children = [];
+            for (const id of members.slice(page * 20, (page + 1) * 20)) {
+              const member = entryModel.nodes.get(id); if (member) { const row = text("li", ""); row.append(button(label(member), () => selectNode(member))); children.push(row); }
+            }
+            reconcile(rows, children, section.children[0]);
+            prev.disabled = page === 0; next.disabled = (page + 1) * 20 >= members.length;
+            range.textContent = `${page * 20 + 1}–${Math.min(members.length, (page + 1) * 20)} / ${members.length}`;
+          };
+          const prev = button("Previous members", () => { page--; update(); }), next = button("Next members", () => { page++; update(); }); pages.append(range, prev, next);
+          section.addEventListener("toggle", update); section.append(rows, pages); card.append(section);
+          groupReaders.push({ update, get page() { return page; }, set page(value) { page = value; } });
+        }
         const original = data.originals[key(value.sourceReference || value.provenance)], detail = text("details", "");
         detail.append(text("summary", "Exact original & identity"));
         detail.append(text("p", original?.status || "Exact original not included", "hint"));
         if (original?.reasonCode) detail.append(text("p", original.reasonCode, "hint"));
         if (original?.text) detail.append(text("pre", readableOriginal(original.text, value) ?? original.text));
         const raw = text("details", ""); raw.append(text("summary", "Raw original / unknown fields / identifiers"), text("pre", original?.text || "Original not included"), text("pre", JSON.stringify(value, null, 2))); detail.append(raw); card.append(detail);
-        entries.set(identity, { card, value, conditionsElement, refreshConnections: listConnections }); body.append(card);
+        const entry = { card, value, descriptor, scopeIdentity, conditionsElement, refreshConnections: listConnections, refreshGroups: () => groupReaders.forEach(reader => reader.update()),
+          get groupPages() { return groupReaders.map(reader => reader.page); }, set groupPages(values) { groupReaders.forEach((reader, index) => { reader.page = values[index] || 0; }); },
+          get connectionPage() { return page; }, set connectionPage(value) { page = value; } };
+        let beforeFold = null;
+        card.children[0].addEventListener("click", () => { if (card.open) beforeFold = savedReading(entry); });
+        card.addEventListener("toggle", () => { if (card.open && beforeFold) restoreReading(entry, beforeFold); });
+        restoreReading(entry, scopeIdentity ? states.get(scopeIdentity) : null); entries.set(identity, entry); children.push(card);
       }
-      if (!values.length) body.append(text("p", "Select records to read together. The explored map remains intact.", "hint"));
-      cardsCache = { model, version: model.selectionVersion, edgeVersion, page: cardPage, scope: scopeCache.key, entries };
+      if (previous?.graph === activeGraph) for (const [identity, entry] of previous.entries) if (!entries.has(identity) && entry.scopeIdentity) states.set(entry.scopeIdentity, savedReading(entry));
+      if (!values.length) children.push(text("p", "Select records to read together. The explored map remains intact.", "hint"));
+      reconcile(body, children, $("reading-range"));
+      cardsCache = { model, graph: activeGraph, version: model.selectionVersion, edgeVersion, page: cardPage, scope: scopeCache.key, entries };
     }
     if (cardsCache.scope !== scopeCache.key) {
       for (const entry of cardsCache.entries.values()) entry.refreshConnections();
@@ -394,9 +637,8 @@
     }
     for (const [identity, entry] of cardsCache.entries) {
       const { card, value, conditionsElement } = entry;
-      card.dataset.focused = String(identity === focusedKey); card.setAttribute("aria-label", identity === focusedKey ? "Reading focus" : "Selected record");
-      conditionsElement.textContent = displayText([value.freshness, value.reviewState, value.status, value.state,
-        historical(value) ? "historical / non-current" : null, value.contentPartial || value.workContentCoverage?.partial || value.directionContentCoverage?.partial ? "partial excerpt" : null,
+      card.dataset.focused = String(identity === focusedKey); card.setAttribute("aria-label", `${identity === focusedKey ? "Reading focus" : "Selected record"}: ${value.nodeId ? label(value) : relation(value)}`);
+      conditionsElement.textContent = displayText([...entry.descriptor.conditions,
         value.nodeId ? !inDisplayScope(value) ? "outside evidence scope — selection retained" : null : !edgeInScope(value) ? "outside relationship scope — selection retained" : null].filter(item => typeof item === "string" && item).join(" · "));
     }
     $("connection-roots").replaceChildren();
@@ -412,32 +654,37 @@
     $("roots-prev").disabled = !connectionResult || rootPage === 0; $("roots-next").disabled = !connectionResult || (rootPage + 1) * PAGE_SIZE >= connectionResult.roots.length;
   }
   async function runExpansion() {
-    cancelWork(false); const serial = ++jobSerial; busy = true; jobKind = "expand"; $("cancel-work").disabled = false;
+    cancelWork(false); const serial = ++jobSerial, basis = metrics().key; busy = true; jobKind = "expand"; $("cancel-work").disabled = false;
     $("operation-status").textContent = "Finding the next unexpanded boundary…"; renderSelectionCards();
-    const result = await model.expandWave({ key: operationKey(), allowed: operationNode, edgeAllowed: edgeInScope, cancelled: () => serial !== jobSerial, yieldWork,
+    const result = await model.expandWave({ key: operationKey(), allowed: operationNode, edgeAllowed: edgeInScope, cancelled: () => serial !== jobSerial || metrics().key !== basis, yieldWork,
       progress: value => { $("operation-status").textContent = `Examining boundary: ${value.examinedEdges} actual relationships; not yet committed.`; } });
-    if (serial !== jobSerial) return; busy = false; jobKind = null; $("cancel-work").disabled = true;
+    if (serial !== jobSerial) return; if (result.status === "cancelled") { supersededCalculation(serial); return; } busy = false; jobKind = null; $("cancel-work").disabled = true;
     $("operation-status").textContent = `${result.status}: ${result.added || 0} newly exposed records · ${result.edges || 0} actual relationships · ${result.frontier || 0} next-boundary records. Camera, mode, prior positions and selection retained.`;
     remember(`Expand ${result.added || 0}`); render();
   }
   async function runConnections() {
-    cancelWork(false); const serial = ++jobSerial, basis = operationKey(); busy = true; jobKind = "connections"; $("cancel-work").disabled = false;
+    cancelWork(false); const serial = ++jobSerial, basis = operationKey(), geometryBasis = metrics().key; busy = true; jobKind = "connections"; $("cancel-work").disabled = false;
     $("operation-status").textContent = "Computing selected connection branches within this export and filters…"; renderSelectionCards();
     const result = await model.connectSelection({ allowed: operationNode, edgeAllowed: edgeInScope, reference: selected?.kind === "node" ? selected.value.nodeId : null,
-      cancelled: () => serial !== jobSerial, yieldWork });
-    if (serial !== jobSerial || result.status === "cancelled") return;
-    if (!await model.showConnections(result, { cancelled: () => serial !== jobSerial, yieldWork })) return;
+      cancelled: () => serial !== jobSerial || metrics().key !== geometryBasis, yieldWork });
+    if (serial !== jobSerial) return;
+    if (result.status === "cancelled") { supersededCalculation(serial); return; }
+    if (!await model.showConnections(result, { cancelled: () => serial !== jobSerial || metrics().key !== geometryBasis, yieldWork })) { supersededCalculation(serial); return; }
     if (serial !== jobSerial) return;
     connectionResult = result; connectionKey = basis; rootPage = 0; busy = false; jobKind = null; $("cancel-work").disabled = true;
     $("operation-status").textContent = `Connection result ready: ${result.nodes.size} records, ${result.edges.size} actual relationships; reference fixed until an explicit new calculation.`;
     remember("Selected connections"); render();
   }
   async function fitExplored() {
-    cancelWork(false); const serial = ++jobSerial; busy = true; jobKind = "fit"; $("cancel-work").disabled = false;
+    cancelWork(false); const serial = ++jobSerial, basis = metrics().key; busy = true; jobKind = "fit"; $("cancel-work").disabled = false;
     $("operation-status").textContent = "Placing previously unplaced explored records; existing positions remain fixed…";
-    if (!await model.placeBatch([...model.visible].filter(id => inDisplayScope(model.nodes.get(id))), { cancelled: () => serial !== jobSerial, yieldWork })) return;
+    if (!await model.placeBatch([...model.visible].filter(id => inDisplayScope(model.nodes.get(id))), { cancelled: () => serial !== jobSerial || metrics().key !== basis, yieldWork })) { supersededCalculation(serial); return; }
     if (serial !== jobSerial) return;
     busy = false; jobKind = null; $("cancel-work").disabled = true; mapMode = "explored"; fit(); remember("Fit explored map"); render();
+  }
+  function supersededCalculation(serial) {
+    if (serial !== jobSerial) return;
+    cancelWork(false); $("operation-status").textContent = "Calculation superseded by changed geometry; previous committed selection, coordinates and camera retained."; render();
   }
   function renderDetail() {
     renderContextLineage();
@@ -549,13 +796,18 @@
     return lines.join("\n\n");
   }
   function pairMatches(value, file, pair) {
-    if ([pair.changeSet?.nodeId, pair.recordedReviewDecisionId, pair.recordedResultPacketId, pair.leftRecord?.nodeId, pair.rightRecord?.nodeId].some(id => id && id === value.nodeId)) return true;
+    if (activeGraph === data.graph && [pair.changeSet?.nodeId, pair.recordedReviewDecisionId, pair.recordedResultPacketId, pair.leftRecord?.nodeId, pair.rightRecord?.nodeId].some(id => id && id === value.nodeId)) return true;
     const digests = new Set([pair.before?.digest, pair.after?.digest, pair.citedReference?.digest, pair.gap?.expectedDigest,
       ...(pair.gaps || []).map(gap => gap.expectedDigest)].filter(Boolean));
     if ((value.path === file.path || value.sourceReference?.path === file.path) && digests.has(value.digest || value.fileDigest || value.sourceReference?.digest)) return true;
-    return (file.associations || []).some(item => item.nodeId === value.nodeId && digests.has(item.source?.digest));
+    return activeGraph === data.graph && (file.associations || []).some(item => item.nodeId === value.nodeId && digests.has(item.source?.digest));
   }
   function fileMatches(value, file) {
+    if (activeGraph !== data.graph) {
+      const digest = value.digest || value.fileDigest || value.sourceReference?.digest;
+      return Boolean(digest && (value.path === file.path || value.sourceReference?.path === file.path) && file.current?.digest === digest)
+        || (file.comparisons || []).some(pair => pairMatches(value, file, pair));
+    }
     return value.path === file.path || value.sourceReference?.path === file.path || (file.associations || []).some(item => item.nodeId === value.nodeId)
       || (file.comparisons || []).some(pair => pairMatches(value, file, pair));
   }
@@ -573,9 +825,9 @@
     if (!context) return;
     body.append(text("p", "Recorded reasons, byte changes and associations are different evidence. No historical cause or current permission is inferred.", "hint"));
     if (context.status === "unavailable") { body.append(text("p", context.reasonCode || "Context unavailable", "hint")); return; }
-    const values = selectionValues(), selectedIds = new Set(values.map(value => value.nodeId).filter(Boolean));
+    const values = selectionValues(), selectedIds = new Set(activeGraph === data.graph ? values.map(value => value.nodeId).filter(Boolean) : []);
     const selectionKey = JSON.stringify(values.map(recordKey));
-    if (contextSelection !== selectionKey) { panel.open = Boolean(values.length && context.status !== "unavailable"); contextSelection = selectionKey; }
+    if (contextSelection !== selectionKey) contextSelection = selectionKey;
     for (const event of (context.events || []).filter(item => selectedIds.has(item.nodeId))) {
       body.append(text("p", event.sourceRole === "HEAD-authored-P3-work-evidence-not-user-transcript"
         ? "Agent-authored work evidence; not a captured user transcript" : event.sourceRole, "hint"));
@@ -589,9 +841,9 @@
     for (const value of values) if (!candidates.some(file => fileMatches(value, file))) body.append(text("p", `${value.nodeId ? label(value) : relation(value)}: No exact code comparison included. This does not mean unchanged.`, "hint"));
     const outerBody = body;
     for (const file of candidates) {
-      const body = text("section", "", "file-comparison"); outerBody.append(body); comparisonFiles.push(body); body.tabIndex = -1;
+      const body = text("section", "", "file-comparison"); body.dataset.sourcePath = file.path; outerBody.append(body); comparisonFiles.push(body); body.tabIndex = -1;
       const fileIndex = comparisonFiles.length - 1, entry = text("li", "");
-      entry.append(button(file.path, () => { fileCursor = fileIndex; body.scrollIntoView({ block: "nearest" }); body.focus(); comparisonPosition(); })); $("comparison-files").append(entry);
+      entry.append(button(file.path, () => { panel.open = true; fileCursor = fileIndex; body.scrollIntoView({ block: "nearest" }); body.focus(); comparisonPosition(); })); $("comparison-files").append(entry);
       const owners = values.filter(value => fileMatches(value, file));
       body.append(text("h3", file.path));
       body.append(text("p", `Selected references: ${owners.map(value => value.nodeId ? label(value) : relation(value)).join(" · ")}`, "hint"));
@@ -705,19 +957,28 @@
   $("records-prev").addEventListener("click", () => { listPage--; renderList(visibleMatches); });
   $("records-next").addEventListener("click", () => { listPage++; renderList(visibleMatches); });
   $("layer").addEventListener("change", () => {
+    if (cardsCache?.graph) {
+      if (!readingStates.has(cardsCache.graph)) readingStates.set(cardsCache.graph, new Map());
+      for (const entry of cardsCache.entries.values()) if (entry.scopeIdentity) readingStates.get(cardsCache.graph).set(entry.scopeIdentity, savedReading(entry));
+    }
+    const operationStatus = jobKind ? "Earlier calculation not completed; committed state retained. Unplaced records remain available." : $("operation-status").textContent;
     cancelWork(false); const next = $("layer").value;
-    layerStates.set(activeGraph === data.graph ? "project" : "code", { model, selected, chosenEdges, box: [...box], mapMode, listPage, cardPage, viewHistory, viewCursor, filters: filterState(), connectionResult, connectionKey });
+    layerStates.set(activeGraph === data.graph ? "project" : "code", { model, selected, chosenEdges, box: [...box], mapMode, listPage, cardPage, viewHistory, viewCursor, filters: filterState(), connectionResult, connectionKey, operationStatus, comparisonOpen: $("context-lineage").open });
     activeGraph = next === "code" ? data.codeGraph : data.graph;
     const retained = layerStates.get(next); model = retained?.model || newModel(activeGraph); selected = retained?.selected || null; box = retained?.box || [0, 0, 1000, 700];
+    $("operation-status").textContent = retained?.operationStatus || "";
+    $("context-lineage").open = retained?.comparisonOpen || false;
     chosenEdges = retained?.chosenEdges || new Set(); edgeVersion++; viewHistory = retained?.viewHistory || []; viewCursor = retained?.viewCursor ?? -1;
     connectionResult = retained?.connectionResult || null; connectionKey = retained?.connectionKey || null; cardPage = retained?.cardPage || 0;
     mapMode = retained?.mapMode || "focus"; listPage = retained?.listPage || 0; populateRelationships();
     $("view").value = "all"; $("axis").value = "all"; $("view").disabled = $("axis").disabled = next === "code";
-    if (retained) restoreFilters(retained.filters); scopeCache = cardsCache = comparisonsCache = null;
+    restoreFilters(retained?.filters || { search: "", "hide-nonmatches": false, axis: "all", view: "all", "include-history": false, "relation-filter": "all", "kind-filter": "all" });
+    scopeCache = cardsCache = comparisonsCache = null;
     $("legend-left").textContent = next === "code" ? "Structural evidence" : "Code & sources"; $("legend-right").textContent = next === "code" ? "Existing imports & calls" : "Purpose & work";
     $("layer-info").textContent = next === "code" ? "Complete verified structural metadata; no synthetic Project joins. Non-current evidence is labelled separately." : "Project purpose, work and retained lineage. No Session is selected by this map.";
     $("coverage").textContent = `${activeGraph.coverage?.state || activeGraph.status || "unavailable"} · snapshot, not live`;
-    const first = matches()[0]; if (!retained && first) { model.visit(first.nodeId); model.choose(first.nodeId); selected = { kind: "node", value: first }; focusCamera(); remember(`Start ${shorten(label(first), 24)}`); } render();
+    const first = matches()[0]; if (!retained && first) { startNeighborhood(first); model.choose(first.nodeId); selected = { kind: "node", value: first }; focusCamera(true); remember(`Start ${shorten(label(first), 24)}`); } render();
+    if (!retained && first) prepareNeighborhood().catch(calculationFailed); geometryChanged();
   });
   const calculationFailed = error => { cancelWork(false); $("operation-status").textContent = `Calculation failed (${error?.name || "unknown"}); no partial result is presented as complete.`; render(); };
   $("expand").addEventListener("click", () => { runExpansion().catch(calculationFailed); });
@@ -725,7 +986,7 @@
   $("collapse").addEventListener("click", () => { cancelWork(false); const step = model.collapse(); $("operation-status").textContent = step ? "Folded the last addition only. Shared, selected, pinned and pre-existing records remain." : "No addition to fold."; remember("Fold last addition"); render(); });
   $("cancel-work").addEventListener("click", () => { cancelWork(); render(); });
   for (const [id, direction] of [["back", -1], ["forward", 1]]) $(id).addEventListener("click", () => travelView(viewCursor + direction));
-  $("restart").addEventListener("click", () => { if (model.current) { cancelWork(false); const id = model.current; model.reset(id); model.choose(id); chosenEdges.clear(); edgeVersion++; selected = { kind: "node", value: model.nodes.get(id) }; connectionResult = null; mapMode = "focus"; focusCamera(); remember("Start here"); render(); } });
+  $("restart").addEventListener("click", () => { if (model.current) { cancelWork(false); const id = model.current; startNeighborhood(model.nodes.get(id), true); model.choose(id); chosenEdges.clear(); edgeVersion++; selected = { kind: "node", value: model.nodes.get(id) }; connectionResult = null; mapMode = "focus"; focusCamera(true); remember("Start here"); render(); prepareNeighborhood().catch(calculationFailed); } });
   $("zoom-in").addEventListener("click", () => { zoom(.8); remember("Zoom in"); }); $("zoom-out").addEventListener("click", () => { zoom(1.25); remember("Zoom out"); });
   $("focus").addEventListener("click", () => { if (model.focus) model.place(model.focus); mapMode = "focus"; focusCamera(); remember("Center reading focus"); render(); });
   $("reset").addEventListener("click", () => { fitExplored().catch(calculationFailed); });
@@ -744,9 +1005,11 @@
   $("cards-prev").addEventListener("click", () => { cardPage--; renderSelectionCards(); }); $("cards-next").addEventListener("click", () => { cardPage++; renderSelectionCards(); });
   $("roots-prev").addEventListener("click", () => { rootPage--; renderSelectionCards(); }); $("roots-next").addEventListener("click", () => { rootPage++; renderSelectionCards(); });
   for (const [id, delta] of [["file-prev", -1], ["file-next", 1]]) $(id).addEventListener("click", () => {
+    $("context-lineage").open = true;
     fileCursor = Math.max(0, Math.min(comparisonFiles.length - 1, fileCursor + delta)); const target = comparisonFiles[fileCursor]; if (target) { target.scrollIntoView({ block: "nearest" }); target.focus(); } comparisonPosition();
   });
   for (const [id, delta] of [["change-prev", -1], ["change-next", 1]]) $(id).addEventListener("click", () => {
+    $("context-lineage").open = true;
     changeCursor = Math.max(0, Math.min(changeHunks.length - 1, changeCursor + delta)); const target = changeHunks[changeCursor]; if (target) { fileCursor = target.file; target.element.scrollIntoView({ block: "nearest" }); target.element.focus(); } comparisonPosition();
   });
   $("show-code-diff").addEventListener("click", () => { $("context-lineage").open = true; $("context-lineage").scrollIntoView({ block: "nearest" }); });
@@ -756,12 +1019,13 @@
   }
   function bindMap(canvas, overview) {
   const camera = () => explorerModel.viewport(box, canvas.getBoundingClientRect());
-  canvas.addEventListener("wheel", event => { event.preventDefault(); zoom(event.deltaY > 0 ? 1.12 : .89); }, { passive: false });
+  canvas.addEventListener("wheel", event => { if (event.ctrlKey || event.metaKey || event.target.closest?.("[data-card-body]")) return; event.preventDefault(); zoom(event.deltaY > 0 ? 1.12 : .89); }, { passive: false });
   canvas.addEventListener("pointerdown", event => {
-    if (event.button !== 0 || event.target.closest("[data-edge]")) return;
-    if (jobKind === "fit") cancelWork();
+    if (event.button !== 0 || event.target.closest("[data-edge]") || event.target.closest("[data-card-control]")) return;
+    if (jobKind === "fit" || jobKind === "geometry" || jobKind === "disclosure") cancelWork();
     const transform = camera(), at = transform.fromClient(event.clientX, event.clientY);
     const node = event.target.closest("[data-node]"), id = overview ? overviewModel().hit(at.x, at.y, scopeCache.shownIds, 8 / transform.scale) : node?.getAttribute("data-node");
+    if (!overview && node && event.target !== node && !event.target.closest("[data-card-header]")) return;
     const rectangle = $("rectangle-mode").checked || event.shiftKey && !id;
     const original = id ? (overview ? overviewModel().points : model.positions).get(id) : null;
     drag = { id: rectangle ? null : id, rectangle, transform, at, overview, original: original && { ...original }, wasPinned: model.pinned.has(id), clientX: event.clientX, clientY: event.clientY, box: [...box], moved: false };
@@ -792,11 +1056,17 @@
       const finish = state.transform.fromClient(event.clientX, event.clientY), left = Math.min(state.at.x, finish.x), right = Math.max(state.at.x, finish.x), top = Math.min(state.at.y, finish.y), bottom = Math.max(state.at.y, finish.y);
       const positions = overview ? overviewModel().points : model.positions, included = overview ? scopeCache.shownIds : drawnNodeIds, picked = [];
       cancelWork(false);
-      for (const id of included) { const point = positions.get(id); if (point && point.x >= Math.max(left, box[0]) && point.x <= Math.min(right, box[0] + box[2]) && point.y >= Math.max(top, box[1]) && point.y <= Math.min(bottom, box[1] + box[3])) picked.push(id); }
-      const serial = ++jobSerial, previous = selected; busy = true; jobKind = "rectangle"; $("cancel-work").disabled = false;
+      const selection = { left: Math.max(left, box[0]), right: Math.min(right, box[0] + box[2]), top: Math.max(top, box[1]), bottom: Math.min(bottom, box[1] + box[3]) };
+      for (const id of included) {
+        const point = positions.get(id); if (!point) continue;
+        if (overview ? point.x >= selection.left && point.x <= selection.right && point.y >= selection.top && point.y <= selection.bottom
+          : explorerCards.intersects(selection, explorerCards.bounds(point, model.extent(id)))) picked.push(id);
+      }
+      const serial = ++jobSerial, previous = selected, basis = metrics().key; busy = true; jobKind = "rectangle"; $("cancel-work").disabled = false;
       $("operation-status").textContent = `Selecting ${picked.length} visible records…`;
-      model.chooseBatch(picked, { position: !overview, yieldWork, cancelled: () => serial !== jobSerial }).then(applied => {
-        if (!applied || serial !== jobSerial) return;
+      model.chooseBatch(picked, { position: !overview, yieldWork, cancelled: () => serial !== jobSerial || metrics().key !== basis }).then(applied => {
+        if (serial !== jobSerial) return;
+        if (!applied) { supersededCalculation(serial); return; }
         if (selected !== previous && selected?.kind === "node") model.choose(selected.value.nodeId, { position: !overview });
         else selected = model.focus ? { kind: "node", value: model.nodes.get(model.focus) } : selected;
         busy = false; jobKind = null; $("cancel-work").disabled = true; $("operation-status").textContent = `Added the rectangle's ${picked.length} records to selection; camera and mode retained.`; remember("Rectangle selection"); render();
@@ -809,7 +1079,15 @@
   canvas.addEventListener("keydown", event => { if (event.key === "Escape") { event.preventDefault(); cancelGesture(); cancelWork(); render(); } });
   }
   bindMap($("graph"), false); bindMap($("overview"), true);
-  if (typeof globalThis.addEventListener === "function") { globalThis.addEventListener("resize", redrawCamera); globalThis.addEventListener("keydown", event => { if (event.key === "Escape") { cancelGesture(); cancelWork(); render(); } }); }
+  if (typeof globalThis.addEventListener === "function") { globalThis.addEventListener("resize", () => { geometryChanged(); redrawCamera(); }); globalThis.addEventListener("keydown", event => { if (event.key === "Escape") { cancelGesture(); cancelWork(); render(); } }); }
+  if (typeof ResizeObserver === "function") new ResizeObserver(geometryChanged).observe(document.documentElement);
+  if (document.fonts) {
+    const loaded = () => { fontEpoch++; geometryChanged(); };
+    // An already-resolved fonts.ready is not a metric change: treating it as
+    // one would supersede every initial async neighborhood in real browsers.
+    if (typeof document.fonts.addEventListener === "function") document.fonts.addEventListener("loadingdone", loaded);
+    else if (document.fonts.status === "loading") document.fonts.ready?.then(loaded);
+  }
   if (typeof matchMedia === "function") {
     const narrow = matchMedia("(max-width:650px)").matches;
     $("selection-tools").open = !narrow;
@@ -817,6 +1095,7 @@
   }
   populateRelationships();
   const first = matches().find(node => node.nodeId === activeGraph.initialNodeId) || matches()[0];
-  if (first) { model.visit(first.nodeId); model.choose(first.nodeId); selected = { kind: "node", value: first }; focusCamera(); remember(`Start ${shorten(label(first), 24)}`); } render();
+  if (first) { startNeighborhood(first); model.choose(first.nodeId); selected = { kind: "node", value: first }; focusCamera(true); remember(`Start ${shorten(label(first), 24)}`); } render();
+  if (first) prepareNeighborhood().catch(calculationFailed);
   document.documentElement.dataset.explorerReady = "true"; document.documentElement.dataset.explorerInitialRenderMs = String(performance.now() - initialTime);
 })();

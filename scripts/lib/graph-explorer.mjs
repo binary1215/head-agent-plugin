@@ -89,6 +89,9 @@ export async function buildGraphExplorerSnapshot({ root = ".", query = "", histo
       codeGraph = { status: current ? "current" : "non-current-retained", worldModelId: structural.worldModelId,
         ...(!current ? { fallback: "original-source", reasonCode: "WORLD_CODE_EVIDENCE_NOT_CURRENT" } : {}),
         semanticGraphId: code.semanticGraphId, freshness: structural.freshness, layer: "structural-code-evidence", sourceAnchor,
+        // Same verified Project's existing exact comparisons, not a code-ID or
+        // path-only graph join. The UI binds each pair by source path + digest.
+        contextLineage: graph.contextLineage,
         nodes: code.nodes.map(node => ({ ...node, nodeId: node.id, revisionId: code.semanticGraphId,
           currentTraversalEligible: current, freshness: current ? "snapshot-evidence" : "domain-not-current",
           sourceReference: node.path && (node.digest || node.fileDigest) ? { path: node.path, digest: node.digest || node.fileDigest } : null })),

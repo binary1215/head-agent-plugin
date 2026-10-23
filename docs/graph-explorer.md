@@ -52,10 +52,10 @@ an ID again. Manual pin positions stay stable.
 Code neighbors expand horizontally; purpose, product and operational records expand vertically.
 These axes are layout guidance, not a new hierarchy or invented relationship.
 Previously explored nodes
-keep their positions. Drag a node to pin its screen position, or use `Shift` and
+keep their positions. Drag a card header to pin its screen position, or use `Shift` and
 arrow keys on a focused node. Back, forward and the exploration path return to
 earlier view stages. These are temporary display choices, not saved product knowledge.
-New automatic placements reserve room for the node and its label rows, including
+New automatic placements reserve the card rectangle, including
 when starting from a disconnected record. Manual dragging can intentionally place
 nodes together; expanding another node does not undo your positioning.
 The initial record and a starting neighborhood open automatically. Focus selection
@@ -78,15 +78,81 @@ Current evidence is the default. Include historical / non-current evidence
 reveals retained records and exact relationships with their original state.
 This switch cannot make them current or authorize an effect.
 
-Selected records stay together in reading cards. Reading another card does not
-replace the others. Widen reading area opens a broader reading flow; narrow screens
+Selected records stay together in individually folded reading cards. Open the
+record you want to read; selecting another does not open every body or replace
+the others. Adding or removing another selection, changing focus/filters,
+Back/Forward, and paging away and back preserve unaffected cards' expansion and
+scroll state within this HTML. State is isolated by Project, layer and revision;
+an item without enough identity starts its own reading state afresh, without
+blocking reading. Widen reading area opens a broader reading flow; narrow screens
 stack it vertically. Card/record/reference pages are display batches, never a
 selection or evidence cap. Read actual directed relationships in each card or the
 focused connection list. Exact originals, unknown fields and IDs remain optional
-details. Shared cautions are collected in a legend; partial/missing/cancelled and
-unreviewed conditions remain close to their item. Selecting a historical
+details. Partial/missing/cancelled and unreviewed conditions are retained next to
+the expanded content, not discarded when its card is folded. Selecting a historical
 Session changes this picture only; the exporter does not infer a native Host
 selection or change the Session used for work.
+
+## Content cards and recorded groups
+
+The focus/explored map starts with recorded titles and a small + disclosure
+only. Open a card for its type, recorded excerpt, conditions, source and known
+memberships; − folds it again. Map and reading-card disclosure are independent
+display preferences, not evidence or authority changes. Read full record opens
+that independent reading card. This is existing text, not a generated summary.
+Expanded work is labelled as
+agent-authored evidence, not a captured user utterance or live completion. Known
+pending questions, cancellations, constraints, unreviewed and partial/historical
+conditions stay separate from the shortened excerpt. A qualifier anywhere else
+in free text may fall outside it: read the selected record and exact original for
+the full wording. Missing bodies are disclosed, never invented. Raw metadata
+remains an optional detail rather than the required way to understand a card.
+
+Cards group only by verified declared work roots or exact Product/world
+FeatureGroup membership in the same source/model basis. Shared Sessions, names,
+paths, times and generic containment do not imply membership. Each exact node
+has one card even when it belongs to several groups; the reading card lists all
+known memberships and their directly recorded members. There is no inferred
+transitive membership, new graph edge, primary group or group-editing operation.
+Visible/exported member counts differ. Group backgrounds appear for expanded
+members only; a background surrounds only actual
+visible member rectangles. If a shared member or unrelated card would make an
+enclosure misleading, the map uses a title/count and the membership list instead.
+Groups are optional layout hints, not hierarchy or authority.
+
+Expanded body text can be selected and scrolled without dragging or zooming the
+map. The disclosure button does not select/pin the node; Enter/Space on it retain
+native button behavior. Header drag, background
+pan, Shift-drag rectangle selection and keyboard controls remain distinct.
+Rectangle selection picks a card even when only its corner intersects by a
+positive area; the Canvas whole-inventory overview keeps point selection.
+Edges retain their real direction, parallel/self relationships and typed lists;
+arrows end outside opaque card bounds. Only viewport-relevant cards/edges have
+map DOM; off-screen evidence remains reachable in complete paged lists.
+
+Ordinary expansion places new records only. No force simulation or rearrangement
+button moves earlier cards. Visible cards use measurements of their displayed
+HTML before first placement, including cards placed off-screen. Starting cards
+appear first; high-degree direct neighborhoods are measured/placed in yielding,
+cancellable batches. The complete inventory/search and ordinary reading remain
+available during preparation; a new explicit operation supersedes that work.
+Unprepared positions are counted separately from off-screen positions, not
+presented as a completed layout. Untouched inventory bodies are not measured.
+Pan, focus, normal map zoom and first viewport entry reuse committed geometry.
+Opening/folding a map card measures its new bounds and adjusts only that
+unpinned card when required, preferring free space within the current view.
+Other coordinates, pins and camera remain unchanged; pinned overlap is not
+silently undone. The expanded body has an internal scroll area and a full-record
+reading action. A cancelled disclosure keeps the prior committed display.
+Font/available-width changes update affected measurements and, if needed,
+adjust only affected unpinned coordinates in a temporary calculation. Completion
+applies the layout together; cancellation preserves its previous geometry and
+does not immediately replay the same size calculation. A later actual metric
+change can retry. Cancelled sizing or deliberately overlapping pins can leave
+overlapping content; the independent reading cards remain available. Camera,
+pins and unaffected reading state are retained. Ctrl/Cmd-wheel stays available
+to native browser accessibility zoom. The page does not create saved UI state,
+fetch fonts or add a server.
 
 Show selected connections searches the current export/layer and explicit filters
 using bidirectional adjacency. In each connected component it fixes one selected
@@ -137,6 +203,15 @@ text. Partial excerpts and recorded-after versus current remain distinct; this
 is not a complete file diff or a semantic verdict. Query, original-read and
 rendering costs are separate measurements.
 
+The Source layer shares already exported exact comparisons from the same Project.
+A code record reaches a comparison only with matching source path and digest,
+not a same-path guess or coincident IDs from another graph layer. When included,
+Recorded code context in the expanded reading card opens its file context; Show
+recorded code changes opens the shared comparison panel. Selection alone leaves
+it folded; an intentionally opened panel stays open. File/hunk navigation opens
+the requested comparison explicitly. Missing bounded detail remains unavailable
+and can require a new query-focused export, never a runtime read from this HTML.
+
 Selected changes and their files can be read together. Only existing, exact-linked
 comparison pairs are displayed: recorded snapshot before/after, cited A/B, or a
 cited revision versus export-observed current. Selection/click order, matching
@@ -176,11 +251,12 @@ of fulfillment or turn HEAD-authored work into a verbatim user message.
 
 ## Compact controls and unavailable current paths
 
-On a narrow screen, evidence-display and selection tools start folded. Their
-controls and all exported metadata remain available. Camera-edge captions use
-display offsets and a leader, without changing node layout, pins, selection,
-recorded relationships or direction. This source/VM behavior is not an actual
-browser acceptance result; actual GUI verification remains separately pending.
+On a narrow screen, the map comes before the folded evidence-display and
+selection tools. Their controls and all exported metadata remain available.
+Cards replace the former circle labels; glyphs are not squeezed to fit a fixed
+caption width. Source/VM tests, including explicitly modeled font/width changes,
+do not prove actual browser layout, mobile reading, 200% text, real gestures or
+performance. Actual GUI verification remains separately pending.
 
 When the current path is not found, an exact cited digest can still locate
 bounded historical raw Git bytes locally. The excerpt is separate from an

@@ -8,7 +8,7 @@ export function renderGraphExplorer(snapshot) {
   const assets = path.resolve(import.meta.dirname, "../graph-explorer");
   const css = fs.readFileSync(path.join(assets, "style.css"), "utf8");
   const codec = fs.readFileSync(path.join(assets, "codec.js"), "utf8").replace(/^export const explorerCodec =/m, "const explorerCodec =");
-  const script = codec + "\n" + fs.readFileSync(path.join(assets, "exploration.js"), "utf8") + "\n" + fs.readFileSync(path.join(assets, "browser.js"), "utf8");
+  const script = codec + "\n" + ["cards.js", "exploration.js", "browser.js"].map(file => fs.readFileSync(path.join(assets, file), "utf8")).join("\n");
   const json = JSON.stringify(explorerCodec.encode(snapshot)).replaceAll("<", "\\u003c").replaceAll(">", "\\u003e")
     .replaceAll("&", "\\u0026").replaceAll("\u2028", "\\u2028").replaceAll("\u2029", "\\u2029");
   const html = `<!doctype html>
@@ -16,7 +16,7 @@ export function renderGraphExplorer(snapshot) {
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; connect-src 'none'; img-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'">
 <title>Lode Graph Explorer</title><style nonce="${nonce}">${css}</style></head><body>
 <header><div><span class="eyebrow">LODE / LOCAL EVIDENCE</span><h1>Graph Explorer</h1><p id="project"></p></div><div class="snapshot"><strong>Read-only snapshot</strong><span id="generated"></span><span id="coverage"></span></div></header>
-<p class="hint" id="report-notice">HTML size: __LODE_REPORT_BYTE_COUNT__ bytes. Large reports can take substantial browser memory and time; no node/edge cutoff is applied. ${snapshot.metadataPolicy?.mode === "share-generated-metadata" ? "Shared-report mode omits generated local execution/project paths only. " : "Local report includes generated machine paths. "}Original evidence may contain sensitive paths or content. This is not anonymization.</p>
+<details class="report-disclosure"><summary>Read-only local report · originals may contain sensitive content</summary><p class="hint" id="report-notice">HTML size: __LODE_REPORT_BYTE_COUNT__ bytes. Large reports can take substantial browser memory and time; no node/edge cutoff is applied. ${snapshot.metadataPolicy?.mode === "share-generated-metadata" ? "Shared-report mode omits generated local execution/project paths only. " : "Local report includes generated machine paths. "}Original evidence may contain sensitive paths or content. This is not anonymization.</p></details>
 <main><aside class="controls" aria-label="Graph controls"><label for="search">Search all exported metadata</label><input id="search" type="search" placeholder="Name, exact ID, source, decision…">
 <label class="check"><input id="hide-nonmatches" type="checkbox"> Hide nonmatches (selection stays)</label>
 <details id="display-options" open><summary>Evidence scope &amp; display</summary>
@@ -35,7 +35,7 @@ export function renderGraphExplorer(snapshot) {
 <canvas id="overview" width="1000" height="700" hidden role="group" tabindex="0" aria-label="All filtered exported metadata and actual relationships. Pan with arrow keys. Select a point or use the complete searchable record list."></canvas>
 <svg id="selection-box" hidden aria-hidden="true"><rect id="selection-rect" x="0" y="0" width="0" height="0"></rect></svg>
 <p id="overview-note" class="hint canvas-note" hidden>Whole-inventory overview. Direction, parallel relationships and readable labels are available after selecting a record. Layout is not meaning or authority.</p>
-<div id="status" role="status" aria-live="polite"></div><p class="hint canvas-note">Click/Enter adds and reads; Ctrl/Cmd, checkbox or Space toggles. Shift + background drag selects a rectangle; background drag pans, node drag pins. Code ↔ · purpose/product/operations ↕ are display guides. Connections are recorded evidence, not cause, approval or live activity.</p></section>
+<div id="status" role="status" aria-live="polite"></div><p class="hint canvas-note">Titles first: + opens details; reading cards also open individually. Headers select or drag to pin; Ctrl/Cmd, checkbox or Space toggles selection. Expanded body text selects and scrolls normally. Shift + background drag selects intersecting cards; background drag pans. Code ↔ · purpose/product/operations ↕ are display guides, not authority.</p></section>
 <section class="records-panel" aria-label="Complete searchable metadata"><h2>All exported records</h2><p id="count" class="hint"></p><p id="inventory-gaps" class="hint"></p><ul id="records" aria-label="Exported graph records"></ul><nav class="list-pages" aria-label="Record pages"><button id="records-prev">Previous page</button><button id="records-next">Next page</button></nav></section>
 <section class="detail" aria-label="Read selected evidence together"><h2>Read selected records</h2><button id="wide-reading" aria-pressed="false">Widen reading area</button>
 <div class="reading-actions"><button id="expand" disabled>Expand next boundary</button><button id="collapse">Fold last addition</button><button id="connect-selection">Show selected connections</button><button id="cancel-work" disabled>Cancel calculation</button></div>
